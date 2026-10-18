@@ -13,7 +13,7 @@ edition = "2021"
 rust-version = "1.75"
 license = "GPL-2.0-or-later"
 authors = ["gander contributors"]
-repository = "https://github.com/example/gander"
+repository = "https://github.com/pandasir/gander"
 
 [workspace.dependencies]
 gander-core = { path = "crates/core" }

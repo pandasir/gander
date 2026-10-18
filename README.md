@@ -6,10 +6,18 @@
 *candidate feature set*, built with an immediate-mode TUI (ratatui) and an
 Elm-style state/update/view loop instead of htop's retained-mode Panel stack.
 
-**Status: M0 skeleton.** Compiles, 157 tests (macOS) / 135 (Linux) pass, runs on **Linux and macOS**.
+**Status: M0 skeleton.** Compiles, 232 tests (macOS) / 215 (Linux) pass, runs on **Linux and macOS**.
 See [docs/DESIGN.md](docs/DESIGN.md) for the design,
 [docs/ROADMAP.md](docs/ROADMAP.md) for progress, and
 [docs/PORTABILITY.md](docs/PORTABILITY.md) for the per-platform details.
+
+## The interface
+
+The default screen is **not** htop's arrangement. It is a vertical system column,
+a leaner process table with bars painted behind the CPU and memory numbers, and a
+persistent inspector that shows the wrapped command line and exact figures without
+leaving the list. `L` switches to the classic htop layout, which is fully
+supported. The reasoning is in [docs/LAYOUT.md](docs/LAYOUT.md).
 
 ## Why not a 1:1 port?
 
@@ -75,7 +83,7 @@ Details and the budget breakdown: [docs/DESIGN.md § 9 Performance](docs/DESIGN.
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 157 on macOS, 135 on Linux
+cargo test                 # 232 on macOS, 215 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
