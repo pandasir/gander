@@ -109,6 +109,7 @@ impl Sampler {
             uptime,
             clk_tck: self.clk_tck,
             page_size: self.page_size,
+            tasks: task_stats(&rows),
         };
         (snapshot, rows)
     }
@@ -205,5 +206,14 @@ impl Sampler {
 
         self.prev_rows = next_prev;
         out
+    }
+}
+
+/// Summarise the process table for the `Tasks` meter.
+fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
+    crate::system::TaskStats {
+        total: rows.len(),
+        running: rows.iter().filter(|r| r.state == b'R').count(),
+        threads: rows.iter().map(|r| r.nlwp.max(1) as usize).sum(),
     }
 }

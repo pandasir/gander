@@ -343,6 +343,20 @@ impl MemInfo {
     }
 }
 
+/// Process-table counts, so meters can summarise processes without reaching into
+/// the table themselves.
+///
+/// htop prints `Tasks: 472, 1664 thr, 1 running`; these are those numbers.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct TaskStats {
+    /// Rows in the process table.
+    pub total: usize,
+    /// Processes in state `R`.
+    pub running: usize,
+    /// Sum of `NLWP` across the table.
+    pub threads: usize,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SwapInfo {
     pub total: u64,
@@ -364,6 +378,8 @@ pub struct SystemSnapshot {
     pub uptime: u64,
     pub clk_tck: u64,
     pub page_size: u64,
+    /// Filled in by the sampler once the process table has been read.
+    pub tasks: TaskStats,
 }
 
 impl Default for SystemSnapshot {
@@ -378,6 +394,7 @@ impl Default for SystemSnapshot {
             uptime: 0,
             clk_tck: 100,
             page_size: 4096,
+            tasks: TaskStats::default(),
         }
     }
 }

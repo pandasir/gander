@@ -30,7 +30,57 @@ pub fn bytes_human(bytes: u64) -> ArrayString<16> {
     out
 }
 
+/// Format a duration with explicit units, for places with room to spell it out.
+///
+/// htop prints uptime as `4-23:13:30`, which requires the reader to remember
+/// that the leading field is days. The meter has space, so it says so:
+///
+/// | input | output |
+/// |---|---|
+/// | 45 s | `45s` |
+/// | 13 min 30 s | `13m 30s` |
+/// | 23 h 13 min | `23h 13m` |
+/// | 4 d 23 h | `4d 23h` |
+/// | 400 d | `400d` |
+///
+/// The largest two fields are kept; seconds are dropped once days appear, because
+/// nobody reading a process viewer needs second-resolution uptime measured in
+/// months.
+pub fn duration_verbose(secs: u64) -> ArrayString<24> {
+    let mut out = ArrayString::new();
+    let d = secs / 86_400;
+    let h = (secs % 86_400) / 3_600;
+    let m = (secs % 3_600) / 60;
+    let s = secs % 60;
+
+    let _ = if d > 0 {
+        if h > 0 {
+            write!(out, "{d}d {h}h")
+        } else {
+            write!(out, "{d}d")
+        }
+    } else if h > 0 {
+        if m > 0 {
+            write!(out, "{h}h {m}m")
+        } else {
+            write!(out, "{h}h")
+        }
+    } else if m > 0 {
+        if s > 0 {
+            write!(out, "{m}m {s}s")
+        } else {
+            write!(out, "{m}m")
+        }
+    } else {
+        write!(out, "{s}s")
+    };
+    out
+}
+
 /// Format a duration as `MM:SS` or `H:MM:SS` / `D-HH:MM:SS` (htop's TIME+ style).
+///
+/// Used for table cells, where a compact, fixed-width value matters more than
+/// immediate legibility. Prefer [`duration_verbose`] when there is room.
 pub fn duration_human(secs: u64) -> ArrayString<16> {
     let mut out = ArrayString::new();
     let d = secs / 86_400;
@@ -92,6 +142,31 @@ mod tests {
         assert_eq!(&*duration_human(75), "01:15");
         assert_eq!(&*duration_human(3_725), "1:02:05");
         assert_eq!(&*duration_human(90_061), "1-01:01:01");
+    }
+
+    #[test]
+    fn verbose_durations_have_units() {
+        assert_eq!(&*duration_verbose(0), "0s");
+        assert_eq!(&*duration_verbose(45), "45s");
+        assert_eq!(&*duration_verbose(60), "1m");
+        assert_eq!(&*duration_verbose(90), "1m 30s");
+        assert_eq!(&*duration_verbose(3_600), "1h");
+        assert_eq!(&*duration_verbose(3_725), "1h 2m");
+        assert_eq!(&*duration_verbose(86_400), "1d");
+        assert_eq!(&*duration_verbose(90_061), "1d 1h");
+        assert_eq!(
+            &*duration_verbose(4 * 86_400 + 23 * 3_600 + 13 * 60),
+            "4d 23h"
+        );
+    }
+
+    #[test]
+    fn verbose_durations_fit_the_buffer() {
+        // 24 chars: the longest realistic value is a machine up for ~10 years.
+        let ten_years = 10 * 365 * 86_400u64;
+        let text = duration_verbose(ten_years);
+        assert!(!text.is_empty());
+        assert!(text.len() < 24, "got {text:?}");
     }
 
     #[test]

@@ -108,6 +108,28 @@ Known difference from htop: htop interleaves cores across the two halves
 (`0,4,1,5,2,6,3,7`); gander splits them contiguously (`0,1,2,3` / `4,5,6,7`).
 Cosmetic, not a data error.
 
+## Readable units in the header
+
+Two meters copied htop's compact notation, which is fine in a dense table but not
+in a header where there is room to spell things out:
+
+| meter | before | after |
+|---|---|---|
+| Uptime | `Uptime 4-23:13:30` | `Uptime 4d 23h` |
+| Tasks | `Tasks -` (never populated) | `Tasks 484 procs, 1 running, 1824 threads` |
+
+`format::duration_verbose` keeps the two most significant units and drops the
+rest: seconds are omitted once days appear, because nobody reading a process
+viewer needs second-resolution uptime measured in months. `duration_human` is
+unchanged and still used for the `ELAPSED` table column, where fixed width
+matters more than immediate legibility.
+
+`Tasks` was a hard-coded `-` because `Meter::sample` only received the host
+snapshot and the process counts live in the table. `SystemSnapshot` now carries
+`TaskStats { total, running, threads }`, filled by the sampler from the rows it
+just produced, so the meter has real data without the trait needing a second
+parameter.
+
 ## Memory accounting (this was wrong once)
 
 The macOS memory figure is the single easiest thing to get wrong, because

@@ -1,8 +1,9 @@
 //! Memory, swap, load, uptime, task and clock meters.
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 
-use gander_core::format::{bytes_human, duration_human};
+use gander_core::format::{bytes_human, duration_verbose};
 use gander_core::system::SystemSnapshot;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -345,17 +346,27 @@ impl Meter for LoadMeter {
 
 simple_meter!(
     right:
-    /// Seconds since boot.
+    /// Time since boot, spelled out with units (`4d 23h`, `1h 2m`).
+    ///
+    /// htop renders this as `4-23:13:30`, which needs the reader to remember
+    /// that the leading field is days. There is room here, so say so.
     UptimeMeter,
     "Uptime",
-    12,
+    14,
     |this: &mut Self, snap: &SystemSnapshot| {
-        this.text = duration_human(snap.uptime).to_string();
+        this.text = duration_verbose(snap.uptime).to_string();
         this.value = 0.0;
     },
     |this: &Self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode| {
         put_str(buf, area.x, area.y, "Uptime", theme.meter_label, 7);
-        put_str(buf, area.x + 7, area.y, &this.text, theme.meter_value, area.width.saturating_sub(7));
+        put_str(
+            buf,
+            area.x + 7,
+            area.y,
+            &this.text,
+            theme.meter_value,
+            area.width.saturating_sub(7),
+        );
     }
 );
 
@@ -365,15 +376,18 @@ simple_meter!(
 
 simple_meter!(
     right:
-    /// Process count summary. The counts themselves are filled in by the app,
-    /// which owns the process table.
+    /// Process-count summary, spelled out rather than in htop's terse
+    /// `472, 1664 thr` shorthand.
     TasksMeter,
     "Tasks",
-    12,
-    |this: &mut Self, _snap: &SystemSnapshot| {
-        if this.text.is_empty() {
-            this.text = String::from("-");
-        }
+    16,
+    |this: &mut Self, snap: &SystemSnapshot| {
+        this.text = task_summary(&snap.tasks);
+        this.value = if snap.tasks.total > 0 {
+            snap.tasks.running as f32 / snap.tasks.total as f32
+        } else {
+            0.0
+        };
     },
     |this: &Self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode| {
         put_str(buf, area.x, area.y, "Tasks", theme.meter_label, 6);
@@ -381,11 +395,18 @@ simple_meter!(
     }
 );
 
-impl TasksMeter {
-    /// Update the summary text from the process table.
-    pub fn set_counts(&mut self, running: usize, total: usize, threads: usize) {
-        self.text = format!("{running} running / {total} total, {threads} thr");
+/// `472 procs, 3 running, 1664 threads`
+pub fn task_summary(tasks: &gander_core::system::TaskStats) -> String {
+    let mut text = format!("{} procs", tasks.total);
+    if tasks.running > 0 {
+        let _ = write!(text, ", {} running", tasks.running);
     }
+    // Only mention threads when they differ from the process count, otherwise it
+    // is noise on single-threaded systems.
+    if tasks.threads > tasks.total {
+        let _ = write!(text, ", {} threads", tasks.threads);
+    }
+    text
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +681,57 @@ mod tests {
             assert!(meter_by_name(name).is_some(), "{name} must construct");
         }
         assert!(meter_by_name("nope").is_none());
+    }
+
+    #[test]
+    fn task_summary_is_readable() {
+        use gander_core::system::TaskStats;
+
+        let t = TaskStats {
+            total: 484,
+            running: 1,
+            threads: 1824,
+        };
+        assert_eq!(task_summary(&t), "484 procs, 1 running, 1824 threads");
+
+        // No running processes: omit the clause rather than printing ", 0".
+        let t = TaskStats {
+            total: 12,
+            running: 0,
+            threads: 12,
+        };
+        assert_eq!(task_summary(&t), "12 procs");
+
+        // Threads equal to the process count is noise; leave it out.
+        let t = TaskStats {
+            total: 5,
+            running: 2,
+            threads: 5,
+        };
+        assert_eq!(task_summary(&t), "5 procs, 2 running");
+    }
+
+    #[test]
+    fn uptime_uses_units_not_field_positions() {
+        let mut m = UptimeMeter::new();
+        let mut snap = sample_snapshot();
+        snap.uptime = 4 * 86_400 + 23 * 3_600 + 13 * 60 + 30;
+
+        m.sample(&snap);
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        m.render(area, &mut buf, &Theme::default(), MeterMode::Text);
+        let line: String = (0..30).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+
+        assert!(line.contains("Uptime"), "got {line:?}");
+        assert!(
+            line.contains("4d 23h"),
+            "expected unit suffixes, got {line:?}"
+        );
+        assert!(
+            !line.contains("4-23"),
+            "must not use htop's day-hyphen notation: {line:?}"
+        );
     }
 
     #[test]
