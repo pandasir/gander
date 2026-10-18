@@ -20,6 +20,7 @@ pub mod row;
 pub mod system;
 pub mod table;
 pub mod tree;
+pub mod users;
 
 /// The `/proc` backend. Compiles on any unix because the IO layer is
 /// parameterised by a root path; only Linux has a live `/proc` to point it at.

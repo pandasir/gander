@@ -77,6 +77,15 @@ pub struct App {
     /// Body height of the last rendered frame, so paging and scroll-following
     /// know how much room they have. Zero until the first draw.
     pub viewport: usize,
+    /// uid -> name cache, so the USER column does not print numbers.
+    pub users: gander_core::users::Users,
+    /// When set, only this uid's processes are listed.
+    pub user_filter: Option<u32>,
+    /// Set while the `F2` screen is open.
+    pub setup: Option<crate::setup::Setup>,
+    /// The combined visibility predicate (text filter, user, kernel threads).
+    /// Kept in sync by `refresh_visibility`.
+    visibility: gander_core::table::Visibility,
     pub tags: std::collections::HashSet<gander_core::Pid>,
     pub filter: Option<Filter>,
     pub input: Input,
@@ -113,6 +122,13 @@ impl App {
             offset: 0,
             h_offset: 0,
             viewport: 0,
+            users: gander_core::users::Users::new(),
+            user_filter: None,
+            setup: None,
+            visibility: gander_core::table::Visibility {
+                show_kernel_threads: true,
+                ..Default::default()
+            },
             tags: Default::default(),
             filter: None,
             input: Input::default(),
@@ -135,7 +151,7 @@ impl App {
             meter.sample(&snapshot);
         }
         self.table.rows = rows;
-        self.table.reorder(self.filter.as_ref());
+        self.reorder();
         self.snapshot = snapshot;
         self.clamp_selection();
     }
@@ -166,7 +182,7 @@ impl App {
     pub fn handle_key(&mut self, key: Key) -> Reaction {
         let reaction = self.dispatch(key);
         if reaction == Reaction::Reorder {
-            self.table.reorder(self.filter.as_ref());
+            self.reorder();
             self.clamp_selection();
         }
         reaction
@@ -184,12 +200,7 @@ impl App {
             }
             Screen::Info { .. } => self.handle_info_key(key),
             Screen::SignalPicker { .. } => self.handle_signal_key(key),
-            Screen::Setup => {
-                if key == Key::Char('q') || key == Key::Esc || key == Key::F(10) {
-                    self.screen = Screen::ProcessList;
-                }
-                Reaction::Continue
-            }
+            Screen::Setup => self.handle_setup_key(key),
             Screen::ProcessList => self.handle_list_key(key),
         }
     }
@@ -207,6 +218,7 @@ impl App {
                 Reaction::Continue
             }
             Key::F(2) => {
+                self.setup = Some(crate::setup::Setup::new(&self.config));
                 self.screen = Screen::Setup;
                 Reaction::Continue
             }
@@ -292,12 +304,8 @@ impl App {
                 Reaction::Continue
             }
             Key::Char('u') => {
-                let mut users: Vec<u32> = self.table.rows.iter().map(|r| r.uid).collect();
-                users.sort_unstable();
-                users.dedup();
-                let _ = users;
-                self.status = Some("user filter not implemented yet".into());
-                Reaction::Continue
+                self.cycle_user_filter();
+                Reaction::Reorder
             }
             Key::Char('K') => {
                 self.table.show_kernel_threads = !self.table.show_kernel_threads;
@@ -315,6 +323,8 @@ impl App {
                 self.config.delay_ms = (self.config.delay_ms + 100).min(10_000);
                 Reaction::Recalc
             }
+            Key::Char('Z') => self.show_security_context(),
+            Key::Char('b') => self.show_backtrace(),
             Key::Char('e') => self.show_env(),
             Key::Char('w') => self.show_command(),
             Key::Char('l') => self.show_open_files(),
@@ -433,6 +443,64 @@ impl App {
         Reaction::Continue
     }
 
+    /// Keys for the `F2` setup screen.
+    ///
+    /// Edits go to a draft config. `Esc` discards, `S`/`F10` applies — the same
+    /// bargain htop makes, and the reason a half-finished edit cannot break the
+    /// live view.
+    fn handle_setup_key(&mut self, key: Key) -> Reaction {
+        // Take the setup state out so the `&mut self` methods below can run while
+        // it is being edited; it is put back unless the screen closes.
+        let Some(mut setup) = self.setup.take() else {
+            self.screen = Screen::ProcessList;
+            return Reaction::Continue;
+        };
+
+        let mut reaction = Reaction::Continue;
+        match key {
+            Key::Esc | Key::Char('q') => {
+                self.screen = Screen::ProcessList;
+                self.status = Some("setup discarded".into());
+                return Reaction::Continue;
+            }
+            Key::F(10) | Key::Char('S') | Key::Enter => {
+                self.screen = Screen::ProcessList;
+                self.apply_draft_config(setup.draft.clone());
+                self.status = Some("setup applied".into());
+                return Reaction::Continue;
+            }
+            Key::Tab => setup.next_page(),
+            Key::BackTab => setup.prev_page(),
+            Key::Up => setup.cursor_up(),
+            Key::Down => setup.cursor_down(),
+            Key::Char(' ') => {
+                setup.activate();
+                self.apply_draft_config(setup.draft.clone());
+                reaction = Reaction::Continue;
+            }
+            Key::Char('[') => {
+                setup.move_column(true);
+                self.apply_draft_config(setup.draft.clone());
+            }
+            Key::Char(']') => {
+                setup.move_column(false);
+                self.apply_draft_config(setup.draft.clone());
+            }
+            _ => {}
+        }
+
+        self.setup = Some(setup);
+        reaction
+    }
+
+    /// Adopt an edited config: theme, toggles and column list.
+    fn apply_draft_config(&mut self, draft: Config) {
+        self.theme = Theme::named(&draft.color_scheme).unwrap_or_default();
+        self.table.tree_mode = draft.tree_mode;
+        self.table.show_kernel_threads = draft.show_kernel_threads;
+        self.config = draft;
+    }
+
     /// Keys for the signal picker.
     ///
     /// This is the one place that actually kills processes, so it resolves the
@@ -545,6 +613,40 @@ impl App {
         });
     }
 
+    /// Cycle `u` through "no filter" and each uid present in the table.
+    ///
+    /// htop's `u` opens a picker; cycling is the same information with no extra
+    /// dialog and works fine for the handful of users a machine has.
+    pub fn cycle_user_filter(&mut self) {
+        let mut uids: Vec<u32> = self.table.rows.iter().map(|r| r.uid).collect();
+        uids.sort_unstable();
+        uids.dedup();
+
+        if uids.is_empty() {
+            self.user_filter = None;
+            self.status = Some("no processes to filter".into());
+            return;
+        }
+
+        self.user_filter = match self.user_filter {
+            None => Some(uids[0]),
+            Some(current) => match uids.iter().position(|u| *u == current) {
+                // Wrap past the end back to "show everyone".
+                Some(i) if i + 1 < uids.len() => Some(uids[i + 1]),
+                _ => None,
+            },
+        };
+
+        self.status = Some(match self.user_filter {
+            Some(uid) => {
+                let name = self.users.name(uid).to_string();
+                let count = self.table.rows.iter().filter(|r| r.uid == uid).count();
+                format!("showing user {name} ({count} processes)")
+            }
+            None => "showing all users".to_string(),
+        });
+    }
+
     pub fn toggle_tree(&mut self) {
         self.table.tree_mode = !self.table.tree_mode;
         self.config.tree_mode = self.table.tree_mode;
@@ -582,6 +684,17 @@ impl App {
         let next = self.selected as isize + delta;
         self.selected = next.clamp(0, n as isize - 1) as usize;
         self.scroll_to_selection();
+    }
+
+    /// Rebuild the visibility predicate and apply it.
+    pub fn reorder(&mut self) {
+        self.visibility = gander_core::table::Visibility {
+            text: self.filter.clone(),
+            uid: self.user_filter,
+            show_kernel_threads: self.table.show_kernel_threads,
+        };
+        self.table.reorder(&self.visibility);
+        self.clamp_selection();
     }
 
     /// Keep the selected row inside the viewport.
@@ -658,6 +771,72 @@ impl App {
         self.screen = Screen::Info {
             title: format!("Environment of {pid}"),
             lines,
+            scroll: 0,
+        };
+        Reaction::Continue
+    }
+
+    /// `Z`: the SELinux security context of the selected process.
+    ///
+    /// Linux-only in practice: the context lives in `/proc/<pid>/attr/current`.
+    /// Rather than hide the key, it explains why it is empty.
+    fn show_security_context(&mut self) -> Reaction {
+        let Some(row) = self.selected_row() else {
+            return Reaction::Continue;
+        };
+        let pid = row.pid;
+
+        let path = format!("/proc/{pid}/attr/current");
+        let lines: Vec<String> = match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    vec!["no security context recorded".to_string()]
+                } else {
+                    vec![trimmed.to_string()]
+                }
+            }
+            Err(e) => vec![
+                format!("cannot read {path}: {e}"),
+                String::new(),
+                "SELinux contexts are only exposed through /proc on Linux.".to_string(),
+                "On macOS the equivalent is the code-signing entitlement set,".to_string(),
+                "which needs a different API.".to_string(),
+            ],
+        };
+
+        self.screen = Screen::Info {
+            title: format!("Security context of {pid}"),
+            lines,
+            scroll: 0,
+        };
+        Reaction::Continue
+    }
+
+    /// `b`: a stack trace of the selected process.
+    ///
+    /// Needs `libunwind-ptrace` (Linux) or `thread_get_state` (macOS), neither of
+    /// which is wired up. Saying so is better than a key that silently does
+    /// nothing, which is how `F9` used to behave.
+    fn show_backtrace(&mut self) -> Reaction {
+        let Some(row) = self.selected_row() else {
+            return Reaction::Continue;
+        };
+        let pid = row.pid;
+
+        self.screen = Screen::Info {
+            title: format!("Backtrace of {pid}"),
+            lines: vec![
+                "Backtraces are not implemented yet.".to_string(),
+                String::new(),
+                "This needs a debugger interface:".to_string(),
+                "  Linux: libunwind-ptrace, attached with ptrace(2)".to_string(),
+                "  macOS: thread_get_state plus a Mach-O symbol resolver".to_string(),
+                String::new(),
+                "In the meantime, attach a debugger directly:".to_string(),
+                format!("  lldb -p {pid}"),
+                format!("  gdb -p {pid}"),
+            ],
             scroll: 0,
         };
         Reaction::Continue
@@ -801,7 +980,11 @@ impl App {
                     *cursor,
                 );
             }
-            Screen::Setup => draw_setup(chunks[1], frame.buffer_mut(), &self.theme),
+            Screen::Setup => {
+                if let Some(setup) = &self.setup {
+                    setup.draw(chunks[1], frame.buffer_mut(), &self.theme);
+                }
+            }
         }
 
         self.draw_function_bar(chunks[2], frame.buffer_mut());
@@ -905,7 +1088,10 @@ impl App {
 
     fn draw_table(&mut self, area: Rect, buf: &mut Buffer) {
         let fields = self.columns();
-        let theme = &self.theme;
+        // Taken out of `self` so the row loop can borrow `self.table` immutably
+        // while resolving names.
+        let mut users = std::mem::take(&mut self.users);
+        let theme = self.theme.clone();
 
         if fields.is_empty() || area.height == 0 {
             return;
@@ -1002,7 +1188,7 @@ impl App {
                 let draw_x = cx.max(clip_left);
                 let draw_end = (cx + w).min(clip_right);
                 if draw_end > draw_x {
-                    let mut text = render_field(row, *field, &self.snapshot);
+                    let mut text = render_field(row, *field, &self.snapshot, &mut users);
                     // In tree mode the Command column carries the branch prefix.
                     if self.table.tree_mode && *field == Field::Comm {
                         if let Some(mark) = marks.iter().find(|m| m.data_index == data_idx) {
@@ -1024,6 +1210,8 @@ impl App {
                 cx += w;
             }
         }
+
+        self.users = users;
     }
 
     fn draw_function_bar(&self, area: Rect, buf: &mut Buffer) {
@@ -1077,16 +1265,16 @@ impl App {
                 ("F10", "Quit"),
             ],
             Screen::Setup => [
-                ("Esc", "Done"),
+                ("Esc", "Cancel"),
+                ("Tab", "Page"),
+                ("Space", "Toggle"),
+                ("[ ]", "Move"),
                 ("", ""),
                 ("", ""),
                 ("", ""),
                 ("", ""),
-                ("", ""),
-                ("", ""),
-                ("", ""),
-                ("", ""),
-                ("F10", "Quit"),
+                ("S", "Apply"),
+                ("F10", "Apply"),
             ],
         };
 
@@ -1208,14 +1396,19 @@ fn default_width(field: Field) -> u16 {
 }
 
 /// Render one field to text. Formatting happens here, never during a scan.
-pub fn render_field(row: &Row, field: Field, snapshot: &SystemSnapshot) -> String {
+pub fn render_field(
+    row: &Row,
+    field: Field,
+    snapshot: &SystemSnapshot,
+    users: &mut gander_core::users::Users,
+) -> String {
     match field {
         Field::Pid => row.pid.to_string(),
         Field::Ppid => row.ppid.to_string(),
         Field::Pgrp => row.pgrp.to_string(),
         Field::Comm => row.display_command().to_string(),
         Field::State => (row.state as char).to_string(),
-        Field::User => row.uid.to_string(),
+        Field::User => users.name(row.uid).to_string(),
         Field::Priority => row.priority.to_string(),
         Field::Nice => row.nice.to_string(),
         Field::PercentCpu => format::percent_human(row.percent_cpu).to_string(),
@@ -1307,7 +1500,7 @@ fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
     ratatui::widgets::Widget::render(para, inner, buf);
 }
 
-fn span_title<'a>(text: &'a str, theme: &Theme) -> ratatui::text::Span<'a> {
+pub fn span_title<'a>(text: &'a str, theme: &Theme) -> ratatui::text::Span<'a> {
     ratatui::text::Span::styled(text, theme.dialog_title)
 }
 
@@ -1384,18 +1577,6 @@ fn draw_signal_picker(
         })
         .collect();
     let para = Paragraph::new(lines).style(theme.row_normal);
-    ratatui::widgets::Widget::render(para, inner, buf);
-}
-
-fn draw_setup(area: Rect, buf: &mut Buffer, theme: &Theme) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.dialog_border)
-        .title(span_title("Setup", theme));
-    let inner = block.inner(area);
-    ratatui::widgets::Widget::render(block, area, buf);
-    let text = "Setup screen is not implemented yet.\n\nPress Esc to return.\n\nPlanned pages: Header, Columns, Display, Colors, Tabs.";
-    let para = Paragraph::new(text).style(theme.row_normal);
     ratatui::widgets::Widget::render(para, inner, buf);
 }
 
@@ -1758,6 +1939,7 @@ mod tests {
     fn render_field_formats_without_panicking() {
         let snap = SystemSnapshot::default();
         let r = row(1, "x");
+        let mut users = gander_core::users::Users::new();
         for f in [
             Field::Pid,
             Field::Comm,
@@ -1770,7 +1952,7 @@ mod tests {
             Field::User,
             Field::State,
         ] {
-            let _ = render_field(&r, f, &snap);
+            let _ = render_field(&r, f, &snap, &mut users);
         }
     }
 

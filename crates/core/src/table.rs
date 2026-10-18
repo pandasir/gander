@@ -132,6 +132,7 @@ pub fn sort_order(rows: &[Row], order: &mut [usize], sort: Sort) {
 }
 
 /// Case-insensitive fixed-string filter, `|`-separated, matching htop's F4.
+#[derive(Clone, Debug)]
 pub struct Filter {
     terms: Vec<String>,
 }
@@ -178,6 +179,37 @@ pub fn find_next(rows: &[Row], order: &[usize], from: usize, needle: &str) -> Op
     None
 }
 
+/// The complete visibility predicate: command filter, owner, kernel threads.
+///
+/// Kept in one place so the table, the tree view and any future export all agree
+/// on what "visible" means.
+#[derive(Clone, Debug, Default)]
+pub struct Visibility {
+    /// Command-line terms from `F4`.
+    pub text: Option<Filter>,
+    /// Only this uid, from `u`.
+    pub uid: Option<u32>,
+    /// Whether kernel threads are shown (from `K` / `H`).
+    pub show_kernel_threads: bool,
+}
+
+impl Visibility {
+    pub fn allows(&self, row: &Row) -> bool {
+        if !self.show_kernel_threads && row.flags.contains(RowFlags::KERNEL_THREAD) {
+            return false;
+        }
+        if let Some(uid) = self.uid {
+            if row.uid != uid {
+                return false;
+            }
+        }
+        match &self.text {
+            Some(f) => f.matches(row),
+            None => true,
+        }
+    }
+}
+
 /// Apply the current filter to produce the display order.
 pub fn apply_filter(rows: &[Row], filter: Option<&Filter>) -> Vec<usize> {
     match filter {
@@ -209,16 +241,20 @@ impl Default for ProcTable {
 
 impl ProcTable {
     /// Recompute the display order from the current rows.
-    pub fn reorder(&mut self, filter: Option<&Filter>) {
+    pub fn reorder(&mut self, visibility: &Visibility) {
+        let mut order: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| visibility.allows(&self.rows[i]))
+            .collect();
+
         if self.tree_mode {
-            let order = tree::build(&mut self.rows);
-            self.view.order = order;
+            // The tree needs every row present to reconstruct parentage, so it is
+            // built over the full set and the visible subset is taken afterwards.
+            let full = tree::build(&mut self.rows);
+            let visible: std::collections::HashSet<usize> = order.into_iter().collect();
+            self.view.order = full.into_iter().filter(|i| visible.contains(i)).collect();
             return;
         }
-        let mut order = apply_filter(&self.rows, filter);
-        if !self.show_kernel_threads {
-            order.retain(|&i| !self.rows[i].flags.contains(RowFlags::KERNEL_THREAD));
-        }
+
         sort_order(&self.rows, &mut order, self.sort);
         self.view.order = order;
     }

@@ -130,6 +130,25 @@ snapshot and the process counts live in the table. `SystemSnapshot` now carries
 just produced, so the meter has real data without the trait needing a second
 parameter.
 
+## Process ownership
+
+The uid comes from `KERN_PROC_ALL` (`e_ucred.cr_uid` at offset 392) and is
+displayed as a login name resolved through `getpwuid_r`.
+
+Two bugs lived here:
+
+1. The `USER` column printed the raw numeric uid, because no name lookup existed
+   at all. `core::users` now wraps `getpwuid_r` with a cache — a scan asks for the
+   same handful of uids thousands of times, and directory-service lookups are not
+   cheap.
+2. The sampler overwrote the uid it had just read with `0` while fetching the
+   per-process identity, so every process displayed as `root`. The identity cache
+   does not carry uid any more; it comes straight from the process list.
+
+`kinfo::tests::uid_is_the_real_owner` asserts both that the calling process's uid
+matches `getuid()` and that the table contains more than one distinct uid on a
+non-root account, which is what would have caught bug 2.
+
 ## Memory accounting (this was wrong once)
 
 The macOS memory figure is the single easiest thing to get wrong, because

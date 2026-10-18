@@ -13,6 +13,7 @@ pub mod marks;
 pub mod meters;
 pub mod meters_impl;
 pub mod runtime;
+pub mod setup;
 pub mod theme;
 
 pub use app::{App, Key, Reaction, Screen};

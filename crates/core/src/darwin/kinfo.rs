@@ -286,6 +286,30 @@ mod tests {
         }
     }
 
+    /// The uid must come from `KERN_PROC_ALL` and must not be clobbered later.
+    ///
+    /// A previous version overwrote it with `0` while fetching the identity, so
+    /// every process in the table showed up as `root`.
+    #[test]
+    fn uid_is_the_real_owner() {
+        let procs = list_processes().unwrap();
+        let me = std::process::id();
+        let this = procs.iter().find(|p| p.pid == me).expect("own pid");
+        // SAFETY: `getuid` has no preconditions.
+        let real = unsafe { libc::getuid() };
+        assert_eq!(this.uid, real);
+
+        // And across the table there must be more than one distinct uid on any
+        // machine running as a normal user.
+        if real != 0 {
+            let distinct: std::collections::HashSet<u32> = procs.iter().map(|p| p.uid).collect();
+            assert!(
+                distinct.len() > 1,
+                "every process reported uid {real}; the owner is being lost"
+            );
+        }
+    }
+
     #[test]
     fn own_ppid_matches_getppid() {
         let procs = list_processes().unwrap();

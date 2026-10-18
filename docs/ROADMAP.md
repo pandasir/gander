@@ -27,7 +27,7 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 144 tests, zero clippy warnings | done |
+| 157 tests, zero clippy warnings | done |
 
 ## Next: finish M0
 
@@ -39,13 +39,19 @@ Done:
 - [x] Scroll-following so the selection stays on screen
 - [x] `Tasks` meter shortens itself to fit narrow headers
 - [x] Function bar separates key and label, drops keys instead of cutting words
+- [x] `u` user filter (cycles through the uids present)
+- [x] `USER` column shows names, not numeric uids
+- [x] `F2` setup screen: Columns, Display, Colors, About
+- [x] `Z` security context and `b` backtrace explain themselves instead of
+      silently doing nothing
 
 Remaining:
 
-- [ ] `u` user filter, `Z` SELinux context, `b` backtrace stub
-- [ ] Setup screen (F2) with the five pages htop has
 - [ ] Screen tabs (`Tab` / `Shift+Tab`) with per-tab columns and sort
+- [ ] Header editing in the setup screen
 - [ ] Affinity panel (`a`) and I/O priority (`i`)
+- [ ] Thread enumeration as rows
+
 
 ## Then: M1 / M2 / M3
 

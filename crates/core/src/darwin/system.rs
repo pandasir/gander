@@ -245,7 +245,6 @@ impl Sampler {
             // the BSD info is all we get, and that is what htop shows too.
             if ti.is_some() {
                 let stable = self.identity(pid, start_usec);
-                row.uid = stable.uid;
                 row.cmdline = stable.cmdline;
                 row.exe = stable.exe;
                 row.flags = row
@@ -263,15 +262,17 @@ impl Sampler {
         out
     }
 
+    /// Immutable per-process identity: exe path, command line, kernel-thread flag.
+    ///
+    /// The uid is *not* part of this: it comes from `KERN_PROC_ALL` on every scan
+    /// and needs no lookup. It used to be overwritten with `0` here, which made
+    /// every process show up as `root`.
     fn identity(&mut self, pid: Pid, key: u64) -> Stable {
         if let Some(hit) = self.cache.get(pid, key) {
             return hit.clone();
         }
 
         let mut stable = Stable::default();
-        // uid is filled by the caller from the BSD info; it never changes for a
-        // live process, so it does not need to be cached separately.
-        stable.uid = 0;
 
         stable.exe = scan::exe_path(pid).map(String::into_boxed_str);
         stable.cmdline = scan::procargs2(pid)

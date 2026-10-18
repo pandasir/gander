@@ -10,7 +10,7 @@ use std::path::Path;
 
 use gander_core::linux::system::Sampler;
 use gander_core::row::RowFlags;
-use gander_core::table::{self, Dir, Filter, ProcTable, Sort};
+use gander_core::table::{self, Dir, Filter, ProcTable, Sort, Visibility};
 
 fn fixture_root() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proc"))
@@ -139,7 +139,10 @@ fn sorting_and_filtering_round_trip() {
         field: gander_core::row::Field::Pid,
         dir: Dir::Asc,
     };
-    table.reorder(None);
+    table.reorder(&Visibility {
+        show_kernel_threads: true,
+        ..Default::default()
+    });
 
     let pids: Vec<u32> = table
         .view
@@ -150,7 +153,10 @@ fn sorting_and_filtering_round_trip() {
     assert_eq!(pids, vec![1, 42, 1337, 2048]);
 
     table.sort.dir = Dir::Desc;
-    table.reorder(None);
+    table.reorder(&Visibility {
+        show_kernel_threads: true,
+        ..Default::default()
+    });
     let pids: Vec<u32> = table
         .view
         .order
@@ -160,7 +166,11 @@ fn sorting_and_filtering_round_trip() {
     assert_eq!(pids, vec![2048, 1337, 42, 1]);
 
     let filter = Filter::parse("weird").unwrap();
-    table.reorder(Some(&filter));
+    table.reorder(&Visibility {
+        text: Some(filter),
+        show_kernel_threads: true,
+        ..Default::default()
+    });
     assert_eq!(table.visible(), 1);
     assert_eq!(table.row_at(0).unwrap().pid, 42);
 }
@@ -175,7 +185,10 @@ fn tree_mode_orders_parent_before_child() {
         tree_mode: true,
         ..Default::default()
     };
-    table.reorder(None);
+    table.reorder(&Visibility {
+        show_kernel_threads: true,
+        ..Default::default()
+    });
 
     let order: Vec<u32> = table
         .view
@@ -223,7 +236,10 @@ fn proc_table_reorder_is_a_permutation() {
     ] {
         for dir in [Dir::Asc, Dir::Desc] {
             table.sort = Sort { field, dir };
-            table.reorder(None);
+            table.reorder(&Visibility {
+                show_kernel_threads: true,
+                ..Default::default()
+            });
             let mut sorted = table.view.order.clone();
             sorted.sort_unstable();
             assert_eq!(
