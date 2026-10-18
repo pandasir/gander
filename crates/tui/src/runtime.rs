@@ -14,7 +14,7 @@ use crate::app::{App, Key};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -29,6 +29,23 @@ mod platform {
     use ratatui::Terminal;
 
     use crate::app::{App, Reaction};
+
+    /// The sample delay, shared between the UI and the sampler threads.
+    ///
+    /// `+`/`-` change it at runtime, and the sampler has to see the new value on
+    /// its next cycle. Passing a `Duration` by value to `spawn_sampler` meant the
+    /// thread kept the value it started with, so changing the speed appeared to
+    /// do nothing until a restart — the same class of bug as the thread-view
+    /// flag, which is why both are shared now.
+    type DelayMs = Arc<AtomicU64>;
+
+    /// Sample delay in milliseconds, clamped to htop's documented range.
+    ///
+    /// A zero delay would spin the sampler at full speed, so it is floored at
+    /// 100 ms even if a config or an arithmetic slip asks for less.
+    pub(crate) fn clamp_delay_ms(ms: u64) -> u64 {
+        ms.clamp(100, 10_000)
+    }
 
     /// One completed sample handed from the sampler to the UI.
     pub struct Sample {
@@ -67,10 +84,12 @@ mod platform {
         app.apply_sample(snapshot, rows);
 
         let threads = Arc::new(AtomicBool::new(app.table.show_userland_threads));
-        let (handle, stop) = spawn_sampler(slot.clone(), app.config.delay(), threads.clone());
+        let delay_ms = Arc::new(AtomicU64::new(clamp_delay_ms(app.config.delay_ms)));
+        let (handle, stop) =
+            spawn_sampler(slot.clone(), delay_ms.clone(), threads.clone());
 
         let mut terminal = init_terminal()?;
-        let result = event_loop(&mut terminal, &mut app, &slot, &threads);
+        let result = event_loop(&mut terminal, &mut app, &slot, &threads, &delay_ms);
 
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
@@ -85,7 +104,7 @@ mod platform {
 
     fn spawn_sampler(
         slot: Slot,
-        delay: Duration,
+        delay_ms: DelayMs,
         threads: ThreadsFlag,
     ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let stop = Arc::new(AtomicBool::new(false));
@@ -104,8 +123,13 @@ mod platform {
                     let (snapshot, rows) = sampler.sample();
                     slot.store(Arc::new(Some(Sample { snapshot, rows })));
 
+                    // The delay is re-read every cycle, so `+`/`-` take effect on
+                    // the next one rather than at the next restart.
+                    let delay = Duration::from_millis(delay_ms.load(Ordering::Relaxed));
+
                     // Sleep the remainder in small steps so a quit is honoured
-                    // promptly even with a long sample delay.
+                    // promptly even with a long sample delay, and so a delay that
+                    // gets *shorter* is noticed instead of finishing the old one.
                     let step = Duration::from_millis(20).min(delay);
                     while started.elapsed() < delay && !stop_flag.load(Ordering::Relaxed) {
                         std::thread::sleep(step);
@@ -122,6 +146,7 @@ mod platform {
         app: &mut App,
         slot: &Slot,
         threads: &ThreadsFlag,
+        delay_ms: &DelayMs,
     ) -> std::io::Result<()> {
         let mut last_draw = Instant::now() - TICK;
 
@@ -148,9 +173,12 @@ mod platform {
                             if app.handle_key(k) == Reaction::Quit || app.quit {
                                 return Ok(());
                             }
-                            // `H` may have flipped it; the sampler reads this
-                            // before its next scan.
+                            // Publish everything the sampler thread reads, after
+                            // every key. It used to publish only the thread flag;
+                            // the delay was passed by value at startup, so `+`/`-`
+                            // changed nothing until the next run.
                             threads.store(app.table.show_userland_threads, Ordering::Relaxed);
+                            delay_ms.store(clamp_delay_ms(app.config.delay_ms), Ordering::Relaxed);
                         }
                     }
                     Event::Resize(_, _) => {
@@ -238,6 +266,32 @@ pub fn translate(key: KeyEvent) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sampler reads its delay from shared state, so a change has to be
+    /// visible to the thread that is already running.
+    ///
+    /// This pins the mechanism, not the wiring: `+`/`-` used to change only
+    /// `app.config.delay_ms` while the sampler kept the `Duration` it was spawned
+    /// with, so the speed keys did nothing until a restart.
+    #[test]
+    fn the_sample_delay_is_shared_and_clamped() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        assert_eq!(platform::clamp_delay_ms(0), 100, "never spin the sampler");
+        assert_eq!(platform::clamp_delay_ms(50), 100);
+        assert_eq!(platform::clamp_delay_ms(1_500), 1_500);
+        assert_eq!(platform::clamp_delay_ms(99_999), 10_000);
+
+        let shared = Arc::new(AtomicU64::new(platform::clamp_delay_ms(1_500)));
+        let seen_by_sampler = shared.clone();
+        shared.store(platform::clamp_delay_ms(100), Ordering::Relaxed);
+        assert_eq!(
+            seen_by_sampler.load(Ordering::Relaxed),
+            100,
+            "a change made on the UI thread must reach the sampler"
+        );
+    }
 
     #[test]
     fn translates_function_keys() {

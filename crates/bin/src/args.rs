@@ -130,7 +130,9 @@ KEYS (in the TUI):
     F1 h ?   help        F2     setup        F3 /   search
     F4 \\     filter      F5 t   tree         F6 < > sort
     F7 F8    nice -/+    F9 k   kill         F10 q  quit
+    L        layout      H      threads      K      kernel threads
     Space    tag         c      tag children U      untag all
+    a        affinity    i      I/O priority
     e        env         w      command line l      open files
     x        locks       I      meter mode   + -    speed
 
