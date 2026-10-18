@@ -8,10 +8,10 @@ anything. Column/key semantics are taken from htop's `htop.1` and `Action.c`.
 | Key | Action |
 |---|---|
 | `Up` / `Down` | Move the selection |
-| `PgUp` / `PgDn` | Page scroll *(M0: not wired to viewport height)* |
+| `PgUp` / `PgDn` | Page scroll |
 | `Home` / `End`, `g` / `G` | Jump to first / last row |
-| `Left` / `Right` | Scroll the table horizontally *(M0: state only)* |
-| `Tab` / `Shift-Tab` | Switch screen tab *(M2)* |
+| `Left` / `Right` | Scroll the table horizontally |
+| `Tab` / `Shift-Tab` | Switch screen tab |
 | `Space` | Tag / untag the selected process |
 | `c` | Tag the selected process and its children |
 | `U` | Untag everything |
@@ -35,8 +35,8 @@ matching is enough. Separate terms with `|`.
 |---|---|
 | `F9` / `k` | Open the signal picker |
 | `F7` / `F8` | Lower / raise nice (renice) |
-| `a` | CPU affinity panel *(M2)* |
-| `i` | I/O priority panel *(M2)* |
+| `a` | CPU affinity panel (real mask on Linux) |
+| `i` | I/O priority panel (Linux only) |
 | `e` | Environment of the selected process |
 | `w` | Full command line, wrapped |
 | `l` | Open file descriptors |
@@ -48,11 +48,11 @@ matching is enough. Separate terms with `|`.
 
 | Key | Action |
 |---|---|
-| `I` | Cycle meter mode: text → bar → graph |
+| `I` | Cycle every meter's mode: text → bar → graph (per meter, persisted) |
 | `K` | Toggle kernel threads |
 | `H` | Hide kernel threads |
 | `+` / `-` | Faster / slower sampling (100 ms … 10 s) |
-| `F2` | Setup screen *(M2)* |
+| `F2` | Setup screen: Header, Columns, Tabs, Display, Colors |
 | `F1` / `h` / `?` | Help |
 | `F10` / `q` | Quit; configuration is saved on clean exit only |
 | `Ctrl-C` | Quit immediately |

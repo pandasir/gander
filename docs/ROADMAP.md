@@ -21,13 +21,14 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | Meters: CPU (bar/text/graph), memory, swap, load, uptime, tasks, clock, date, hostname, blank | done |
 | Themes: `default`, `monochrome`, `midnight` | done |
 | Config: TOML load/save, `htoprc` importer with the `id - 1` offset handled | done |
+| Config: per-meter header layout with per-meter display mode | done |
 | Batch mode: `-n`, `--json`, `--filter`, `--sort`, `--limit` | done |
 | Kill / renice | done |
-| htop keybindings for implemented features (`a`, `i`, `Delete` still unbound) | partial |
+| htop keybindings for implemented features (`a`, `i` and `Delete` now bound) | done |
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 157 tests on macOS, 135 on Linux, zero clippy warnings on both | done |
+| 207 tests on macOS, zero clippy warnings | done |
 | Live Linux verification in a container | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
@@ -42,21 +43,33 @@ Done:
 - [x] Function bar separates key and label, drops keys instead of cutting words
 - [x] `u` user filter (cycles through the uids present)
 - [x] `USER` column shows names, not numeric uids
-- [x] `F2` setup screen: Columns, Display, Colors, About
+- [x] `F2` setup screen: Header, Columns, Tabs, Display, Colors, About
 - [x] `Z` security context and `b` backtrace explain themselves instead of
       silently doing nothing
+- [x] Screen tabs (`Tab` / `Shift+Tab`) with per-tab columns and sort, plus a
+      Tabs page in the setup screen (add/select/delete)
+- [x] Header editing in the setup screen (a Header page: add, delete, reorder
+      and set each meter's mode)
+- [x] Affinity panel (`a`): real read/write on Linux via
+      `sched_getaffinity`/`sched_setaffinity`; macOS explains that it only has a
+      scheduler hint
+- [x] I/O priority panel (`i`): real read/write on Linux via
+      `ioprio_get`/`ioprio_set`; unsupported platforms say why
+- [x] Per-meter display mode: `I` cycles each meter independently, and the choice
+      is persisted per meter in the config
+- [x] `runtime.rs` moves the sample out of the `ArcSwap` instead of cloning the
+      row vector, so a sample no longer copies thousands of `Box<str>`
+- [x] `Clock` / `Date` use the real local time zone (`localtime_r`), not UTC
+- [x] `Hostname` uses `gethostname(2)` on macOS, where `/proc` does not exist
+- [x] htoprc import handles `column_meters_N`, `column_meter_modes_N` and
+      `screen:NAME=` tab sections
 
 Remaining:
 
-- [ ] Screen tabs (`Tab` / `Shift+Tab`) with per-tab columns and sort
-- [ ] Header editing in the setup screen
-- [ ] Affinity panel (`a`) and I/O priority (`i`) — the keys do nothing today
-- [ ] Thread enumeration as rows
-- [ ] Per-meter display mode: `I` currently cycles every meter at once, but htop
-      changes only the meter under the cursor
-- [ ] `runtime.rs` clones the whole row vector on every sample; `Row` holds three
-      `Box<str>`, so this allocates thousands of strings per second and violates
-      DESIGN.md § 9.4
+- [ ] Thread enumeration as rows (macOS has no cheap per-thread enumeration; the
+      Linux side needs a `Task`-style secondary list)
+- [ ] Per-meter cursor in the header, so `Left`/`Right` can select the meter that
+      `I` operates on without cycling all of them
 
 
 ## Then: M1 / M2 / M3
@@ -78,10 +91,14 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 
 ## Known limitations
 
-- `LOCAL_OFFSET_SECS` is `0`, so `Clock`/`Date` meters display UTC. Wire up
-  `localtime_r` before shipping.
 - Threads are not enumerated yet on either platform; `NLWP` is displayed but the
   thread list is not.
+- On macOS the per-process state is only trustworthy for `stopped` and `zombie`.
+  Current Darwin reports `SRUN` for a process blocked in `read(2)`, so runnability
+  comes from `proc_taskinfo.pti_numrunning` instead. Processes owned by another
+  user cannot be inspected that way, and are shown as `?` rather than guessed at.
+- macOS has no per-process CPU affinity mask and no I/O priority; both panels say
+  so instead of failing silently.
 - Rayon parallelism is only exercised at 512+ processes; the 4-process fixture
   path is sequential by design.
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not

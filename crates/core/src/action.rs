@@ -174,3 +174,242 @@ mod tests {
         assert!(signals.contains(&9) && signals.contains(&15));
     }
 }
+
+/// I/O scheduling class, as Linux's `ioprio_set` understands it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum IoClass {
+    None,
+    Realtime,
+    BestEffort,
+    Idle,
+}
+
+impl IoClass {
+    /// The `IOPRIO_CLASS_*` value.
+    pub fn bits(self) -> u32 {
+        match self {
+            IoClass::None => 0,
+            IoClass::Realtime => 1,
+            IoClass::BestEffort => 2,
+            IoClass::Idle => 3,
+        }
+    }
+
+    pub fn from_bits(bits: u32) -> Option<Self> {
+        Some(match bits {
+            0 => IoClass::None,
+            1 => IoClass::Realtime,
+            2 => IoClass::BestEffort,
+            3 => IoClass::Idle,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            IoClass::None => "none",
+            IoClass::Realtime => "realtime",
+            IoClass::BestEffort => "best-effort",
+            IoClass::Idle => "idle",
+        }
+    }
+
+    /// The next class in the cycle the panel walks.
+    pub fn next(self) -> Self {
+        match self {
+            IoClass::None => IoClass::BestEffort,
+            IoClass::BestEffort => IoClass::Idle,
+            IoClass::Idle => IoClass::Realtime,
+            IoClass::Realtime => IoClass::None,
+        }
+    }
+}
+
+/// An I/O priority: a class plus a 0..=7 level within that class.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct IoPriority {
+    pub class: IoClass,
+    pub level: u8,
+}
+
+impl Default for IoPriority {
+    fn default() -> Self {
+        Self {
+            class: IoClass::None,
+            level: 0,
+        }
+    }
+}
+
+impl IoPriority {
+    pub fn new(class: IoClass, level: u8) -> Self {
+        Self {
+            class,
+            level: level.min(7),
+        }
+    }
+
+    /// The packed `ioprio` value the syscall takes.
+    pub fn to_bits(self) -> i32 {
+        (((self.class.bits() as i32) << 13) | self.level as i32) & 0xFFFF
+    }
+
+    pub fn from_bits(bits: i32) -> Self {
+        let class = IoClass::from_bits(((bits >> 13) & 0x7) as u32).unwrap_or(IoClass::None);
+        Self {
+            class,
+            level: (bits & 0x7) as u8,
+        }
+    }
+
+    /// `class/level`, e.g. `best-effort/4`.
+    pub fn label(self) -> String {
+        format!("{}/{}", self.class.name(), self.level)
+    }
+}
+
+/// Whether this build can read and set I/O priority.
+pub fn ioprio_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Read a process's I/O priority.
+///
+/// Linux only; elsewhere this returns `Err` with an explanation, because unlike
+/// CPU affinity there is no partial story to tell.
+#[cfg(target_os = "linux")]
+pub fn ioprio_get(pid: Pid) -> Result<IoPriority, std::io::Error> {
+    use std::io;
+    // SAFETY: `ioprio_get` is a plain syscall taking integers.
+    let rc = unsafe { libc::syscall(libc::SYS_ioprio_get, 1 /* IOPRIO_WHO_PROCESS */, pid) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(IoPriority::from_bits(rc as i32))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn ioprio_get(_pid: Pid) -> Result<IoPriority, std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "I/O priority is a Linux feature (ioprio_get)",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+pub fn ioprio_set(pid: Pid, priority: IoPriority) -> Result<(), std::io::Error> {
+    use std::io;
+    // SAFETY: `ioprio_set` is a plain syscall taking integers.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ioprio_set,
+            1, /* IOPRIO_WHO_PROCESS */
+            pid,
+            priority.to_bits(),
+        )
+    };
+    if rc < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn ioprio_set(_pid: Pid, _priority: IoPriority) -> Result<(), std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "I/O priority is a Linux feature (ioprio_set)",
+    ))
+}
+
+#[cfg(test)]
+mod ioprio_tests {
+    use super::*;
+
+    #[test]
+    fn bits_pack_and_unpack() {
+        for class in [
+            IoClass::None,
+            IoClass::Realtime,
+            IoClass::BestEffort,
+            IoClass::Idle,
+        ] {
+            for level in 0..=7u8 {
+                let p = IoPriority::new(class, level);
+                let back = IoPriority::from_bits(p.to_bits());
+                assert_eq!(back, p, "{:?}/{}", class, level);
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_is_class_none() {
+        let p = IoPriority::default();
+        assert_eq!(p.class, IoClass::None);
+        assert_eq!(p.level, 0);
+        assert_eq!(p.to_bits(), 0);
+    }
+
+    #[test]
+    fn levels_are_clamped_to_seven() {
+        let p = IoPriority::new(IoClass::BestEffort, 200);
+        assert_eq!(p.level, 7);
+    }
+
+    #[test]
+    fn classes_cycle_through_every_variant() {
+        let mut c = IoClass::None;
+        let mut seen = vec![c];
+        for _ in 0..3 {
+            c = c.next();
+            seen.push(c);
+        }
+        assert_eq!(seen.len(), 4);
+        assert_eq!(c.next(), IoClass::None, "the cycle closes");
+    }
+
+    #[test]
+    fn labels_are_readable() {
+        let p = IoPriority::new(IoClass::BestEffort, 4);
+        assert_eq!(p.label(), "best-effort/4");
+    }
+
+    #[test]
+    fn an_out_of_range_class_degrades_to_none() {
+        let p = IoPriority::from_bits((7 << 13) | 3);
+        assert_eq!(p.class, IoClass::None);
+        assert_eq!(p.level, 3);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reading_our_own_ioprio_works() {
+        let p = ioprio_get(std::process::id()).expect("ioprio_get on self");
+        // Any class is fine; the call must simply succeed.
+        assert!(matches!(
+            p.class,
+            IoClass::None | IoClass::Realtime | IoClass::BestEffort | IoClass::Idle
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn setting_our_own_ioprio_round_trips() {
+        let original = ioprio_get(std::process::id()).unwrap();
+        let target = IoPriority::new(IoClass::BestEffort, 6);
+        if ioprio_set(std::process::id(), target).is_ok() {
+            assert_eq!(ioprio_get(std::process::id()).unwrap(), target);
+        }
+        let _ = ioprio_set(std::process::id(), original);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn unsupported_platforms_explain_themselves() {
+        assert!(!ioprio_supported());
+        let err = ioprio_get(std::process::id()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("Linux"));
+    }
+}

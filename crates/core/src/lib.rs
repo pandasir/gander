@@ -15,6 +15,7 @@
 //! See `docs/DESIGN.md` and `docs/PORTABILITY.md`.
 
 pub mod action;
+pub mod affinity;
 pub mod format;
 pub mod row;
 pub mod system;
