@@ -25,7 +25,8 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | Kill / renice | done |
 | Identical keybindings to htop | done |
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
-| 116 tests, zero clippy warnings | done |
+| Correct memory accounting on both platforms (see PORTABILITY.md) | done |
+| 122 tests, zero clippy warnings | done |
 
 ## Next: finish M0
 
@@ -68,3 +69,6 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
   fixture-tested, but only macOS has been exercised against a live OS. Run
   `cargo test` on Linux before trusting it.
 - The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
+- macOS `used` omits a few hundred MiB of pages that no `vm_statistics64`
+  counter covers. It reads slightly below `top` by design; the alternative
+  (`total - free`) also counts pages the kernel has not classified yet.

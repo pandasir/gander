@@ -40,8 +40,13 @@ pub struct Theme {
     pub cpu_idle: Color,
 
     pub mem_used: Color,
-    pub mem_buffers: Color,
+    /// Kernel-wired pages (macOS).
+    pub mem_wired: Color,
+    /// Compressor-held pages (macOS).
+    pub mem_compressed: Color,
+    /// Reclaimable page cache / inactive pages.
     pub mem_cache: Color,
+    pub mem_buffers: Color,
     pub mem_shared: Color,
     pub mem_free: Color,
 
@@ -123,8 +128,10 @@ impl Theme {
             cpu_idle: Color::Black,
 
             mem_used: Color::Green,
-            mem_buffers: Color::Blue,
+            mem_wired: Color::Red,
+            mem_compressed: Color::Magenta,
             mem_cache: Color::Yellow,
+            mem_buffers: Color::Blue,
             mem_shared: Color::Magenta,
             mem_free: Color::Black,
 
@@ -178,8 +185,10 @@ impl Theme {
             cpu_iowait: Color::Gray,
             cpu_idle: Color::Black,
             mem_used: Color::White,
-            mem_buffers: Color::Gray,
+            mem_wired: Color::White,
+            mem_compressed: Color::Gray,
             mem_cache: Color::Gray,
+            mem_buffers: Color::Gray,
             mem_shared: Color::Gray,
             mem_free: Color::Black,
             swap_used: Color::White,

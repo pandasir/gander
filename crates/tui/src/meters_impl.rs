@@ -120,23 +120,113 @@ fn labelled_bar(
 // Memory
 // ---------------------------------------------------------------------------
 
-simple_meter!(
-    /// `used / total` memory, with htop's cache adjustments.
-    MemoryMeter,
-    "Memory",
-    10,
-    |this: &mut Self, snap: &SystemSnapshot| {
-        this.value = snap.mem_usage();
-        this.text = format!("{}/{}", bytes_human(snap.mem.used), bytes_human(snap.mem.total));
-    },
-    |this: &Self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode| {
-        let segs = [
-            Segment { value: this.value, color: theme.mem_used },
-            Segment { value: 1.0 - this.value, color: theme.mem_free },
-        ];
-        labelled_bar("Mem", this.value, &this.text, &segs, area, buf, theme, mode);
+/// A memory meter that keeps the whole breakdown, not just used/total.
+///
+/// The bar is drawn as the platform's real classes (wired / active / compressed
+/// / cache / free), so what you see matches what the label claims.
+pub struct MemoryMeter {
+    value: f32,
+    text: String,
+    segments: Vec<Segment>,
+    history: VecDeque<f32>,
+}
+
+impl MemoryMeter {
+    pub fn new() -> Self {
+        Self {
+            value: 0.0,
+            text: String::new(),
+            segments: Vec::with_capacity(6),
+            history: VecDeque::with_capacity(crate::meters::GRAPH_HISTORY),
+        }
     }
-);
+}
+
+impl Default for MemoryMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for MemoryMeter {
+    fn name(&self) -> &'static str {
+        "Memory"
+    }
+
+    fn min_width(&self) -> u16 {
+        10
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        let mem = &snapshot.mem;
+        self.value = snapshot.mem_usage();
+        self.text = format!("{}/{}", bytes_human(mem.used), bytes_human(mem.total));
+
+        // Fraction of physical memory for each class. Zero-valued classes are
+        // dropped so the bar is only as busy as the platform requires.
+        let mut segs = Vec::with_capacity(6);
+        let mut push = |bytes: u64, color| {
+            if bytes > 0 && mem.total > 0 {
+                segs.push(Segment {
+                    value: bytes as f32 / mem.total as f32,
+                    color,
+                });
+            }
+        };
+        push(mem.wired, self.theme_wired());
+        push(mem.active.saturating_sub(mem.purgeable), self.theme_used());
+        push(mem.compressed, self.theme_compressed());
+        push(mem.inactive, self.theme_cache());
+        push(mem.free, self.theme_free());
+        self.segments = segs;
+
+        if self.history.len() == crate::meters::GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            crate::meters::draw_graph(buf, area, &self.history, theme, 1.0);
+            return;
+        }
+        // Recolor on render so a theme change takes effect without a new sample.
+        let mut segs = self.segments.clone();
+        for (i, seg) in segs.iter_mut().enumerate() {
+            seg.color = match i {
+                0 => theme.mem_wired,
+                1 => theme.mem_used,
+                2 => theme.mem_compressed,
+                3 => theme.mem_cache,
+                _ => theme.mem_free,
+            };
+        }
+        labelled_bar("Mem", self.value, &self.text, &segs, area, buf, theme, mode);
+    }
+}
+
+impl MemoryMeter {
+    fn theme_wired(&self) -> ratatui::style::Color {
+        ratatui::style::Color::Red
+    }
+    fn theme_used(&self) -> ratatui::style::Color {
+        ratatui::style::Color::Green
+    }
+    fn theme_compressed(&self) -> ratatui::style::Color {
+        ratatui::style::Color::Magenta
+    }
+    fn theme_cache(&self) -> ratatui::style::Color {
+        ratatui::style::Color::Yellow
+    }
+    fn theme_free(&self) -> ratatui::style::Color {
+        ratatui::style::Color::Black
+    }
+}
 
 simple_meter!(
     /// Swap usage.

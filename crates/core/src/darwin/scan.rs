@@ -413,7 +413,15 @@ pub fn cpu_ticks() -> Vec<crate::system::CpuTimes> {
     out
 }
 
-/// Memory page counts from `host_statistics64`.
+/// Memory page counts from `host_statistics64`, converted to bytes.
+///
+/// The class semantics that matter for accounting (verified against
+/// `top`/Activity Monitor on macOS 15):
+///
+/// * `internal_page_count` counts anonymous pages and **already includes** the
+///   wired and compressed pages.
+/// * `external_page_count` is the file cache and is reclaimable.
+/// * `inactive_count` holds dirty anonymous pages, not only cache.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct VmStats {
     pub free: u64,
@@ -421,9 +429,10 @@ pub struct VmStats {
     pub inactive: u64,
     pub wired: u64,
     pub speculative: u64,
-    pub compressor: u64,
-    /// Bytes that can be handed out without evicting anything.
-    pub available_hint: u64,
+    pub compressed: u64,
+    pub purgeable: u64,
+    pub internal: u64,
+    pub external: u64,
 }
 
 pub fn vm_stats() -> VmStats {
@@ -448,15 +457,18 @@ pub fn vm_stats() -> VmStats {
     // SAFETY: a zero return means the struct was filled.
     let stats = unsafe { stats.assume_init() };
     let page = page_size();
+    let b = |pages: u64| pages.saturating_mul(page);
 
     VmStats {
-        free: stats.free_count as u64,
-        active: stats.active_count as u64,
-        inactive: stats.inactive_count as u64,
-        wired: stats.wire_count as u64,
-        speculative: stats.speculative_count as u64,
-        compressor: stats.compressor_page_count as u64,
-        available_hint: (stats.free_count as u64 + stats.inactive_count as u64) * page,
+        free: b(stats.free_count as u64),
+        active: b(stats.active_count as u64),
+        inactive: b(stats.inactive_count as u64),
+        wired: b(stats.wire_count as u64),
+        speculative: b(stats.speculative_count as u64),
+        compressed: b(stats.compressor_page_count as u64),
+        purgeable: b(stats.purgeable_count as u64),
+        internal: b(stats.internal_page_count as u64),
+        external: b(stats.external_page_count as u64),
     }
 }
 

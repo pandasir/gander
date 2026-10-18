@@ -81,22 +81,22 @@ impl PlatformSampler for Sampler {
         };
 
         let vm = scan::vm_stats();
-        let page = self.page_size;
         let total = scan::total_memory();
-        let wired = vm.wired * page;
-        let compressed = vm.compressor * page;
-        let cached = (vm.inactive + vm.speculative) * page;
         let mut mem = MemInfo {
             total,
-            free: vm.free * page,
-            available: total.saturating_sub(wired).saturating_sub(compressed),
-            cached,
+            free: vm.free,
+            active: vm.active,
+            inactive: vm.inactive,
+            wired: vm.wired,
+            compressed: vm.compressed,
+            purgeable: vm.purgeable,
+            speculative: vm.speculative,
+            // File-backed pages are reclaimable cache; reported for completeness
+            // even though `finish_darwin` does not need them.
+            cached: vm.external,
             ..Default::default()
         };
-        mem.used = wired
-            .saturating_add(compressed)
-            .saturating_add(vm.active.saturating_mul(page))
-            .min(total);
+        mem.finish_darwin();
 
         let swap = scan::swap_usage();
 

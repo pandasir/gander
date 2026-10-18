@@ -53,6 +53,53 @@ reintroduced:
    BSD and task structures in one call, which is fewer syscalls than htop's
    `sysctl(KERN_PROC_ALL)` + `proc_pidinfo` pair.
 
+## Memory accounting (this was wrong once)
+
+The macOS memory figure is the single easiest thing to get wrong, because
+`vm_statistics64` exposes **two overlapping families of counters**:
+
+- by usage: `active`, `inactive`, `wire`, `compressor`, `free`, `speculative`
+- by backing store: `internal` (anonymous), `external` (file-backed)
+
+Summing across families double-counts. The correct derivation, verified against
+`top` and Activity Monitor on an 8 GB M-series machine:
+
+```text
+used = (active - purgeable) + wired + compressed + inactive
+available = total - used
+```
+
+Numbers from one real sample (MiB):
+
+| counter | value |
+|---|---|
+| active | 1878 |
+| inactive | 1778 |
+| wired | 1631 |
+| compressed | 2187 |
+| purgeable | 99 |
+| free | 156 |
+| **used** | **7375** |
+| `top` reports | 7257–7491 |
+
+Two mistakes were shipped before this landed, both visible in the meter:
+
+1. `used = wired + active + compressed` (**5590 MiB**) — `inactive` was left out,
+   so an 8 GB machine under load displayed ~5.7 GB.
+2. `available = total - wired - compressed` while `used` was computed separately,
+   so `used + available = 9.3 GB` on an 8 GB machine. That contradiction is what
+   prompted the fix.
+
+`MemInfo::is_exactly_partitioned()` encodes the invariant and is asserted by
+`crates/core/tests/mem_accounting.rs` on every macOS test run.
+
+**Linux is different on purpose.** There `used` follows GNU `free`
+(`total - free - cached - sreclaimable - buffers`) and `available` comes from
+`MemAvailable`. They are *not* complementary — `MemAvailable` includes
+reclaimable cache that `used` also accounts for — so `used + available > total`
+is correct on Linux. An earlier revision tried to force the complement and
+clamped `MemAvailable` down to `total - used`, understating available memory.
+
 ## Permission model
 
 Both platforms hide information for processes you do not own:

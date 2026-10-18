@@ -163,7 +163,7 @@ pub fn parse_meminfo(buf: &[u8], mem: &mut MemInfo, swap: &mut SwapInfo) {
             _ => {}
         }
     }
-    mem.compute_used();
+    mem.finish_linux();
     swap.used = swap.total.saturating_sub(swap.free);
 }
 
@@ -281,14 +281,24 @@ mod tests {
     const MEMINFO: &[u8] = b"MemTotal:       16000000 kB\nMemFree:         1000000 kB\nMemAvailable:    8000000 kB\nBuffers:          100000 kB\nCached:          2000000 kB\nSReclaimable:     500000 kB\nShmem:            200000 kB\nSwapTotal:       2000000 kB\nSwapFree:        1500000 kB\n";
 
     #[test]
-    fn meminfo_parsing_and_used() {
+    fn meminfo_matches_free_accounting() {
         let mut mem = MemInfo::default();
         let mut swap = SwapInfo::default();
         parse_meminfo(MEMINFO, &mut mem, &mut swap);
         assert_eq!(mem.total, 16_000_000 * 1024);
         assert_eq!(swap.used, 500_000 * 1024);
-        // 16e6 - 8e6 - (5e5 - 2e5) = 7.7e6 kB
-        assert_eq!(mem.used, 7_700_000 * 1024);
+
+        // used = total - free - cached - sreclaimable - buffers
+        //      = 16e6 - 1e6 - 2e6 - 5e5 - 1e5 = 12.4e6 kB
+        assert_eq!(mem.used, 12_400_000 * 1024);
+        // MemAvailable is reported verbatim; making it complement `used` would
+        // clamp it to 3.6e6 kB and understate reclaimable cache.
+        assert_eq!(mem.available, 8_000_000 * 1024);
+        assert!(mem.is_consistent(), "{mem:?}");
+        // used + available exceeds total on Linux; that overlap is the
+        // reclaimable cache counted by both.
+        assert!(!mem.is_exactly_partitioned());
+        assert!(mem.used + mem.available > mem.total);
     }
 
     const PROC_STAT: &[u8] = b"cpu  100 10 50 1000 20 5 5 0 0 0\ncpu0 50 5 25 500 10 2 3 0 0 0\ncpu1 50 5 25 500 10 3 2 0 0 0\nintr 12345 0 0\nctxt 999\n";

@@ -38,7 +38,10 @@ fn first_sample_reads_every_process() {
     assert_eq!(snapshot.load, [0.52, 0.58, 0.59]);
     assert_eq!(snapshot.uptime, 3725);
     assert_eq!(snapshot.swap.used, 500_000 * 1024);
-    assert_eq!(snapshot.mem.used, 7_700_000 * 1024);
+    // GNU `free` accounting: total - free - cached - sreclaimable - buffers
+    //   = 16e6 - 1e6 - 2e6 - 5e5 - 1e5 = 12.4e6 kB
+    assert_eq!(snapshot.mem.used, 12_400_000 * 1024);
+    assert_eq!(snapshot.mem.available, 8_000_000 * 1024);
 }
 
 #[test]
