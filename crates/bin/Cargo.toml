@@ -1,0 +1,16 @@
+[package]
+name = "gander-bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Executable entry point for gander."
+
+[[bin]]
+name = "gander"
+path = "src/main.rs"
+
+[dependencies]
+gander-core.workspace = true
+gander-config.workspace = true
+gander-tui.workspace = true

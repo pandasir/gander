@@ -1,0 +1,20 @@
+[package]
+name = "gander-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Platform data collection and process model for gander. No UI dependency."
+
+[dependencies]
+memchr.workspace = true
+arrayvec.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[[bench]]
+name = "scan"
+harness = false

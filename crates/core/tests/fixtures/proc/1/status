@@ -1,0 +1,7 @@
+Name:	init
+Umask:	0022
+State:	S (sleeping)
+Tgid:	1
+Uid:	0	0	0	0
+Gid:	0	0	0	0
+Threads:	1

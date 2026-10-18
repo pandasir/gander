@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/config",
+    "crates/tui",
+    "crates/bin",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-2.0-or-later"
+authors = ["gander contributors"]
+repository = "https://github.com/example/gander"
+
+[workspace.dependencies]
+gander-core = { path = "crates/core" }
+gander-config = { path = "crates/config" }
+gander-tui = { path = "crates/tui" }
+
+# core
+memchr = "2"
+arrayvec = "0.7"
+rayon = "1"
+libc = "0.2"
+
+# config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# tui
+ratatui = "0.30"
+crossterm = "0.29"
+arc-swap = "1"
+
+# common
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
