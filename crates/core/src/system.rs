@@ -138,14 +138,19 @@ impl MemInfo {
     /// different things, and forcing it clamps `MemAvailable` down to
     /// `total - used`, which is a much smaller (wrong) number.
     pub fn finish_linux(&mut self) {
-        let cached = self.cached + self.sreclaimable - self.shmem;
+        // `used = total - free - cached - sreclaimable - buffers`, which is
+        // exactly `free(1)`'s `total - free - buff/cache`.
         let used_diff = self.free + self.cached + self.sreclaimable + self.buffers;
         self.used = if self.total >= used_diff {
             self.total - used_diff
         } else {
             self.total.saturating_sub(self.free)
         };
-        self.cached = cached;
+        // Report `cached` the way `free` does: Meminfo's `Cached` plus
+        // `SReclaimable`, minus `Shmem` which is already counted in `Cached`.
+        // Overwriting the field keeps one meaning from here on; computing `used`
+        // above used the raw values.
+        self.cached = self.cached + self.sreclaimable - self.shmem;
         self.available = if self.available != 0 {
             self.available.min(self.total)
         } else {

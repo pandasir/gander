@@ -174,6 +174,22 @@ pub fn draw_graph(buf: &mut Buffer, area: Rect, values: &VecDeque<f32>, theme: &
     }
 }
 
+/// Replace characters that must never reach the terminal.
+///
+/// Process names and command lines are arbitrary bytes: a process can name itself
+/// with a newline, an escape sequence, or a control code. Passing those to the
+/// backend either panics (`ratatui` rejects control characters) or, worse, drives
+/// the terminal itself.
+///
+/// Tabs are the one exception worth keeping readable, so they become a space.
+fn sanitize(ch: char) -> char {
+    match ch {
+        '\t' => ' ',
+        c if c.is_control() => '?',
+        c => c,
+    }
+}
+
 /// Write `text` at `(x, y)`, clipped to `max_width`.
 pub fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_width: u16) {
     let mut x = x;
@@ -183,7 +199,7 @@ pub fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_w
             break;
         }
         if let Some(cell) = buf.cell_mut((x, y)) {
-            cell.set_char(ch);
+            cell.set_char(sanitize(ch));
             cell.set_style(style);
         }
         x += 1;

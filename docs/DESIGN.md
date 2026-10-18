@@ -500,7 +500,35 @@ saves 1.5 ms — imperceptible. **The workload is syscall- and allocation-bound.
    design win, not a language win, and it is the largest single improvement.
 3. **Off-thread sampling** — latency win, not throughput. See §6.
 
-### 9.3 Realistic targets
+### 9.3 Measured on Linux
+
+Numbers from a `rust:1-slim-bookworm` container on Apple Silicon, arm64, using
+`cargo bench -p gander-core --bench scan` and `strace -c -e trace=openat`:
+
+| processes | sequential | rayon | speed-up |
+|---|---|---|---|
+| 405 | 2.25 ms | 1.50 ms | 1.50× |
+| 805 | 2.93 ms | 1.91 ms | 1.53× |
+
+The parallel win is real but modest, exactly as predicted: the work is
+syscall-bound and the kernel serialises part of it.
+
+**The cache is the bigger win.** `openat` calls per scan:
+
+| scenario | openat total | per process |
+|---|---|---|
+| cold cache, 405 procs, 1 scan | 1 626 | 4.0 |
+| warm cache, 405 procs, 20 scans | 9 397 | 1.16 |
+
+Each process needs `stat`, `status`, `cmdline`, `cgroup` and `exe` on first sight,
+then only `stat` afterwards: a 71 % reduction in syscalls. That matches the plan
+in § 3.2 and is a design win, not a language win.
+
+Not measured yet: render cost, memory footprint, and behaviour at 10 000+
+processes. Those need a host with more processes than a container can usefully
+simulate.
+
+### 9.4 Realistic targets
 
 | Scenario | Target |
 |---|---|
@@ -509,7 +537,7 @@ saves 1.5 ms — imperceptible. **The workload is syscall- and allocation-bound.
 | Responsiveness during recalc | clearly better |
 | Memory footprint | parity or slightly worse (binary is larger) |
 
-### 9.4 Anti-patterns that will make gander slower than htop
+### 9.5 Anti-patterns that will make gander slower than htop
 
 | Anti-pattern | Cost |
 |---|---|
@@ -522,7 +550,7 @@ saves 1.5 ms — imperceptible. **The workload is syscall- and allocation-bound.
 Two habits prevent all of it: **`Row` stores raw scalars; formatting happens in
 the renderer.** And: **`thread_local!` scratch buffers; `ArrayString` for names.**
 
-### 9.5 Measurement, not guessing
+### 9.6 Measurement, not guessing
 
 ```bash
 cargo bench                                    # criterion: full scan p50/p99

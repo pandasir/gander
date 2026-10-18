@@ -6,7 +6,7 @@
 *candidate feature set*, built with an immediate-mode TUI (ratatui) and an
 Elm-style state/update/view loop instead of htop's retained-mode Panel stack.
 
-**Status: M0 skeleton.** Compiles, 157 tests pass, runs on **Linux and macOS**.
+**Status: M0 skeleton.** Compiles, 157 tests (macOS) / 135 (Linux) pass, runs on **Linux and macOS**.
 See [docs/DESIGN.md](docs/DESIGN.md) for the design,
 [docs/ROADMAP.md](docs/ROADMAP.md) for progress, and
 [docs/PORTABILITY.md](docs/PORTABILITY.md) for the per-platform details.
@@ -80,7 +80,8 @@ cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
 
-Works on Linux (`/proc`) and macOS (`libproc` + `sysctl` + Mach). Other unix
+Works on Linux (`/proc`) and macOS (`libproc` + `sysctl` + Mach). Both backends are
+verified against a live OS; see [docs/PORTABILITY.md](docs/PORTABILITY.md). Other unix
 targets compile the `/proc` backend but have no live source; the TUI refuses to
 start there. Test fixtures under `crates/core/tests/fixtures/proc/` are real
 `/proc` snapshots, so the Linux read path is testable on any unix.

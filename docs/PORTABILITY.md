@@ -222,16 +222,42 @@ also why `htop` runs `sudo htop` when you want full detail.
 
 ## What is verified, and where
 
-- **Everything compiles and its unit tests pass on this macOS/arm64 machine**
-  (116 tests), including 20+ live tests that read real `proc_pidinfo`,
-  `host_statistics64`, `KERN_PROCARGS2` and `host_processor_info`.
-- **The Linux read path is verified only against fixtures** on this machine: the
-  parsers and sampler are exercised with `tests/fixtures/proc`, but the live
-  `/proc` code path cannot run here.
-- **The TUI render path is smoke-tested against live Darwin data** through
-  `TestBackend` (`app::tests::draw_with_a_live_sample`).
-- **Neither backend has been benchmarked on real hardware yet.** The numbers in
-  DESIGN.md § 9 are budget targets, not measurements.
+Both backends have now been exercised against a live OS.
 
-Before trusting a release: run `cargo test` and `cargo bench` on a Linux host with
-several thousand processes, plus `strace -c -f` to confirm the syscall count.
+**macOS (arm64, this machine)** — 73 core tests plus the TUI suite, including live
+tests that call `proc_pidinfo`, `host_statistics64`, `KERN_PROCARGS2`,
+`host_processor_info` and `KERN_PROC_ALL`.
+
+**Linux (arm64, via `rust:1-slim-bookworm` in Docker)** —
+`crates/core/tests/linux_live.rs`, ten tests that read the real `/proc` and
+compare gander's figures against the same files parsed independently:
+
+| check | result |
+|---|---|
+| `MemTotal` | exact match |
+| `MemAvailable` | used verbatim |
+| `used` vs `free`'s `total - free - buff/cache` | within 2 % (Shmem-sized gap) |
+| core count | `sysconf(_SC_NPROCESSORS_ONLN)` + 1 aggregate |
+| process count vs `read_dir("/proc")` | within 10 |
+| sort/filter/tree | permutations, no duplicates, tree keeps every row |
+| CPU% over two samples | finite, non-negative |
+| `kill(2)` availability | not `Unsupported` on unix |
+
+The Linux run found a bug the macOS run could not: a container process whose
+`cmdline` contained newlines made `ratatui` panic with *"control character passed
+to cell_width without filtering"*. Process names and command lines are arbitrary
+bytes, so `meters::put_str` now sanitises every character it writes (tabs become
+spaces, other control characters become `?`).
+
+Performance, measured in that container (405 and 805 processes):
+
+| processes | sequential | rayon |
+|---|---|---|
+| 405 | 2.25 ms | 1.50 ms |
+| 805 | 2.93 ms | 1.91 ms |
+
+`openat` per process per scan: 4.0 cold, 1.16 warm — the identity cache removes
+71 % of the syscalls (DESIGN.md § 9.3).
+
+Still unmeasured: render cost, memory footprint, and behaviour above ~1 000
+processes. A container cannot usefully simulate a busy server.

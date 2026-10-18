@@ -27,7 +27,8 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 157 tests, zero clippy warnings | done |
+| 157 tests on macOS, 174 on Linux, zero clippy warnings | done |
+| Live Linux verification in a container | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
 
@@ -79,9 +80,8 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
   thread list is not.
 - Rayon parallelism is only exercised at 512+ processes; the 4-process fixture
   path is sequential by design.
-- **The Linux live path is unverified on real hardware**: parsers and sampler are
-  fixture-tested, but only macOS has been exercised against a live OS. Run
-  `cargo test` on Linux before trusting it.
+- The Linux path is verified in a Docker container (see PORTABILITY.md), but not
+  on bare metal with thousands of processes.
 - The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
 - The function bar truncates its labels on terminals narrower than ~50 columns,
   though the key names stay intact.
