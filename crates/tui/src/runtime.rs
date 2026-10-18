@@ -21,7 +21,7 @@ mod platform {
     use arc_swap::ArcSwap;
     use gander_core::row::Row;
     use gander_core::system::SystemSnapshot;
-    use gander_core::PlatformSampler;
+    use gander_core::PlatformSampler as _;
     use ratatui::backend::CrosstermBackend;
     use ratatui::crossterm::event::{self, Event};
     use ratatui::crossterm::execute;

@@ -11,6 +11,7 @@ use std::path::Path;
 use gander_core::linux::system::Sampler;
 use gander_core::row::RowFlags;
 use gander_core::table::{self, Dir, Filter, ProcTable, Sort, Visibility};
+use gander_core::PlatformSampler;
 
 fn fixture_root() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/proc"))

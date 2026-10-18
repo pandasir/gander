@@ -55,16 +55,12 @@ impl Sampler {
         }
     }
 
-    pub fn cache_len(&self) -> usize {
-        self.cache.len()
-    }
-
     pub fn clk_tck(&self) -> u64 {
         self.clk_tck
     }
 
     /// Sample everything: system counters plus one row per process.
-    pub fn sample(&mut self) -> (SystemSnapshot, Vec<Row>) {
+    fn sample_inner(&mut self) -> (SystemSnapshot, Vec<Row>) {
         let at = std::time::Instant::now();
 
         let cpu = scan::read_proc_stat(&self.root);
@@ -215,5 +211,45 @@ fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
         total: rows.len(),
         running: rows.iter().filter(|r| r.state == b'R').count(),
         threads: rows.iter().map(|r| r.nlwp.max(1) as usize).sum(),
+    }
+}
+
+/// The unified sampler interface.
+///
+/// This was only implemented for the Darwin backend, so on Linux the trait was
+/// declared but never satisfied: `gander_core::PlatformSampler` described an
+/// interface that did not exist on the platform where it mattered most, and
+/// every `use gander_core::PlatformSampler` in a Linux-only test was dead
+/// (the inherent `sample` shadowed it). `sample` and `cache_len` now exist *only*
+/// on the trait, on both platforms, so a caller cannot accidentally depend on a
+/// method that one backend happens to have and the other does not.
+impl crate::PlatformSampler for Sampler {
+    fn sample(&mut self) -> (SystemSnapshot, Vec<Row>) {
+        self.sample_inner()
+    }
+
+    fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn backend_name() -> &'static str {
+        "linux (/proc)"
+    }
+}
+
+/// The Linux sampler must satisfy the shared trait. Gated to Linux because the
+/// `linux` module compiles on every unix (its IO layer is path-parameterised),
+/// but only Linux has a `/proc` to sample.
+#[cfg(all(test, target_os = "linux"))]
+mod platform_trait_tests {
+    use crate::PlatformSampler;
+
+    #[test]
+    fn the_linux_sampler_satisfies_the_shared_trait() {
+        assert!(<crate::Sampler as PlatformSampler>::backend_name().contains("linux"));
+        let mut s = crate::Sampler::default();
+        let (_snap, rows) = PlatformSampler::sample(&mut s);
+        assert!(!rows.is_empty(), "/proc must yield processes");
+        assert_eq!(PlatformSampler::cache_len(&s), <crate::Sampler>::cache_len(&s));
     }
 }

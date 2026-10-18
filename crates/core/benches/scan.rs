@@ -17,6 +17,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use gander_core::linux::system::Sampler;
+use gander_core::PlatformSampler;
 
 fn bench(name: &str, iterations: u32, mut f: impl FnMut()) {
     // Warm up so page/dentry caches are hot, matching steady-state behaviour.

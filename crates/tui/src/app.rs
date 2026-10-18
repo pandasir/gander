@@ -2397,10 +2397,10 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn draw_with_a_live_sample() {
-        use gander_core::PlatformSampler as _;
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
 
+        use gander_core::PlatformSampler as _;
         let mut sampler = gander_core::Sampler::default();
         let (snapshot, rows) = sampler.sample();
         assert!(!rows.is_empty(), "a live sample must contain processes");
