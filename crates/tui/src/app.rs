@@ -40,6 +40,40 @@ pub enum Screen {
     IoPriority(crate::panels::IoPriorityPanel),
 }
 
+/// Which screen arrangement is in use.
+///
+/// `Panels` is the default and the reason this fork exists: a vertical system
+/// column and a persistent inspector, so the process table is not the only thing
+/// on screen that has to share vertical space with the meters.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LayoutKind {
+    Panels,
+    Htop,
+}
+
+impl LayoutKind {
+    pub fn from_config(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "htop" | "classic" => LayoutKind::Htop,
+            _ => LayoutKind::Panels,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LayoutKind::Panels => "panels",
+            LayoutKind::Htop => "htop",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            LayoutKind::Panels => LayoutKind::Htop,
+            LayoutKind::Htop => LayoutKind::Panels,
+        }
+    }
+}
+
 /// What the runtime should do after an update.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Reaction {
@@ -101,11 +135,18 @@ pub struct App {
     /// htop's setup screen changes only the meter under the cursor, so the mode
     /// cannot be a single app-wide value.
     pub meter_modes: Vec<MeterMode>,
+    /// Aggregate CPU history for the panels layout's sparkline.
+    ///
+    /// The meters keep their own history for graph mode, but the panels layout
+    /// does not use a `CpuMeter` at all, so it needs its own series.
+    pub cpu_history: std::collections::VecDeque<f32>,
     /// Index of the header meter that `I` and the arrow keys act on.
     ///
     /// htop changes the mode of the meter *under the cursor*; a global mode made
     /// `I` flip the whole header at once, which is not the same feature.
     pub meter_cursor: usize,
+    /// Which screen arrangement is active.
+    pub layout: LayoutKind,
     /// Which config entry each meter was built from, parallel to `meters`.
     pub meter_sources: Vec<meters_impl::MeterSource>,
     /// The mode applied to meters added later, and the fallback for `I` when no
@@ -128,6 +169,7 @@ impl App {
             dir: Dir::Desc,
             ..table.sort
         };
+        let layout = LayoutKind::from_config(&config.layout);
 
         Self {
             screen: Screen::ProcessList,
@@ -156,6 +198,8 @@ impl App {
             status: None,
             meter_modes: Vec::new(),
             meter_cursor: 0,
+            cpu_history: std::collections::VecDeque::new(),
+            layout,
             meter_sources: Vec::new(),
             meter_mode: MeterMode::Bar,
             pending_g: false,
@@ -174,12 +218,44 @@ impl App {
         }
         self.table.rows = rows;
         self.reorder();
+        // The panels layout draws its own CPU sparkline, so the history is kept
+        // here rather than inside a meter it does not own.
+        {
+            let usage = snapshot.cpu_usage();
+            let value = if usage.is_finite() { usage } else { 0.0 };
+            if self.cpu_history.len() == crate::meters::GRAPH_HISTORY {
+                self.cpu_history.pop_front();
+            }
+            self.cpu_history.push_back(value);
+        }
         self.snapshot = snapshot;
         self.clamp_selection();
     }
 
     pub fn columns(&self) -> Vec<Field> {
-        self.config.active_tab().fields()
+        let configured = self.config.active_tab().fields();
+
+        // The panels layout gives ~40 cells to the command column, and its
+        // inspector already shows USER, NICE, priority, state and thread count.
+        // Repeating those as columns costs width the command line needs, so the
+        // panels layout prefers a leaner set — but only while the user has not
+        // chosen columns themselves. The moment they touch `F2`, their choice is
+        // what renders, because a layout should not silently discard an explicit
+        // configuration.
+        if self.layout == LayoutKind::Panels && !self.columns_customized(&configured) {
+            return crate::layout::DEFAULT_FIELDS.to_vec();
+        }
+
+        configured
+    }
+
+    /// Whether the active tab's columns differ from the shipped default.
+    fn columns_customized(&self, current: &[Field]) -> bool {
+        let default = Config::default();
+        let default_fields = default.tabs[0].fields();
+        // A different column set is a customization; so is the same set in a
+        // different order.
+        current != default_fields.as_slice()
     }
 
     /// Rebuild the header meters from the config, keeping their sampled state
@@ -502,6 +578,17 @@ impl App {
             Key::Char('-') => {
                 self.config.delay_ms = (self.config.delay_ms + 100).min(10_000);
                 Reaction::Recalc
+            }
+            Key::Char('L') => {
+                // Switch between the panels layout and the classic htop one.
+                self.layout = self.layout.next();
+                self.config.layout = self.layout.name().to_string();
+                let hint = match self.layout {
+                    LayoutKind::Panels => "panels: system column + inspector",
+                    LayoutKind::Htop => "htop: horizontal meters",
+                };
+                self.status = Some(format!("layout: {hint}"));
+                Reaction::Continue
             }
             Key::Char('a') => self.open_affinity(),
             Key::Char('i') => self.open_ioprio(),
@@ -1256,6 +1343,17 @@ impl App {
 
     pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        if self.layout == LayoutKind::Panels {
+            self.draw_panels(frame);
+        } else {
+            self.draw_htop(frame);
+        }
+        let _ = area;
+    }
+
+    /// The classic htop arrangement: horizontal meters, full-width table.
+    fn draw_htop(&mut self, frame: &mut Frame) {
+        let area = frame.area();
         // The header grows with the core count: 8 cores means two five-row CPU
         // meters, so a fixed four-row header would clip them.
         let header_h = self
@@ -1311,6 +1409,127 @@ impl App {
         self.draw_function_bar(chunks[2], frame.buffer_mut());
     }
 
+    /// The `panels` arrangement: system column, process table, inspector.
+    ///
+    /// See `crate::layout` for why this exists. The shape is:
+    ///
+    /// ```text
+    /// [tab strip across the top]
+    /// ┌─ system ─┬─ processes ──────────┬─ inspector ─┐
+    /// │ CPU bar  │  PID  CPU%  MEM%  CMD │ 2971 pi     │
+    /// │ cores    │  ...                  │ cmdline     │
+    /// │ MEM bar  │                       │ facts       │
+    /// └──────────┴───────────────────────┴─────────────┘
+    /// [function bar]
+    /// ```
+    fn draw_panels(&mut self, frame: &mut Frame) {
+        let area = frame.area();
+        if area.height < 4 || area.width < 30 {
+            // Too small for side panels. Fall back to the compact arrangement
+            // rather than drawing three unusable slivers.
+            self.draw_htop(frame);
+            return;
+        }
+
+        let chunks = Layout::vertical([
+            Constraint::Length(1), // tab strip
+            Constraint::Min(3),    // panels
+            Constraint::Length(1), // function bar
+        ])
+        .split(area);
+
+        // The tab strip and function bar belong to the panels layout too; only
+        // the middle band changes shape.
+        self.draw_tabs(chunks[0], frame.buffer_mut());
+
+        let widths = crate::layout::PanelWidths::resolve(chunks[1].width);
+        let columns = Layout::horizontal([
+            Constraint::Length(widths.system),
+            Constraint::Min(10),
+            Constraint::Length(widths.inspector),
+        ])
+        .split(chunks[1]);
+
+        if widths.system > 0 {
+            let buf = frame.buffer_mut();
+            crate::layout::draw_system_column(
+                columns[0],
+                buf,
+                &self.theme,
+                &self.snapshot,
+                self.cpu_history.make_contiguous(),
+                (
+                    self.table.rows.iter().filter(|r| !r.is_thread).count(),
+                    self.snapshot.tasks.running,
+                    self.snapshot.tasks.threads,
+                ),
+            );
+            draw_panel_divider(columns[0], buf, &self.theme);
+        }
+
+        // The middle band: whatever screen is active. The table is the common
+        // case; the modal screens take the whole band so they still have room.
+        let screen = self.screen.clone();
+        match &screen {
+            Screen::ProcessList => self.draw_table(columns[1], frame.buffer_mut()),
+            Screen::Help => draw_help(columns[1], frame.buffer_mut(), &self.theme),
+            Screen::Info {
+                title,
+                lines,
+                scroll,
+            } => draw_info(
+                columns[1],
+                frame.buffer_mut(),
+                &self.theme,
+                title,
+                lines,
+                *scroll,
+            ),
+            Screen::SignalPicker { cursor } => {
+                self.draw_table(columns[1], frame.buffer_mut());
+                draw_signal_picker(
+                    columns[1],
+                    frame.buffer_mut(),
+                    &self.theme,
+                    self.selected_row(),
+                    *cursor,
+                );
+            }
+            Screen::Setup => {
+                if let Some(setup) = &self.setup {
+                    setup.draw(columns[1], frame.buffer_mut(), &self.theme);
+                }
+            }
+            Screen::Affinity(panel) => panel.draw(columns[1], frame.buffer_mut(), &self.theme),
+            Screen::IoPriority(panel) => panel.draw(columns[1], frame.buffer_mut(), &self.theme),
+        }
+
+        // The inspector is the point of this layout, but it is meaningless while
+        // a modal screen hides the list; showing a stale selection then would be
+        // lying about what is on screen.
+        if widths.inspector > 0 && matches!(self.screen, Screen::ProcessList) {
+            let mut users = std::mem::take(&mut self.users);
+            let row = self.selected_row();
+            let user = row.map(|r| {
+                let uid = r.uid;
+                users.name(uid).to_string()
+            });
+            let buf = frame.buffer_mut();
+            draw_panel_divider(columns[2], buf, &self.theme);
+            crate::layout::draw_inspector(
+                columns[2],
+                buf,
+                &self.theme,
+                row,
+                &self.snapshot,
+                user.as_deref(),
+            );
+            self.users = users;
+        }
+
+        self.draw_function_bar(chunks[2], frame.buffer_mut());
+    }
+
     /// Draw the header meters in htop's two-column layout.
     ///
     /// Meters declare their column; within a column they are stacked in vector
@@ -1328,8 +1547,11 @@ impl App {
         let meter_h = area.height.saturating_sub(1);
 
         if !has_right {
+            // One column: draw every meter in it, through the same path as the
+            // split case so the meter cursor is marked identically.
             let rect = Rect::new(area.x, area.y, area.width, meter_h);
-            Self::draw_column(&mut self.meters, 0, &self.meter_modes, rect, buf, &theme, self.meter_mode);
+            let all: Vec<usize> = (0..self.meters.len()).collect();
+            self.draw_column_indices(&all, rect, buf, &theme);
             return;
         }
 
@@ -1382,6 +1604,10 @@ impl App {
             // Mark the meter `I` will act on. Without this the cursor is
             // invisible state: `Shift+Right` would change a mode the user cannot
             // see being targeted.
+            //
+            // This was only done in `draw_column`, so on a machine with more than
+            // four cores — the case the split header exists for — the cursor was
+            // never drawn at all, and `selected` was computed and then dropped.
             if selected {
                 Self::mark_header_selection(rect, buf, theme);
             }
@@ -1389,49 +1615,28 @@ impl App {
         }
     }
 
-    /// Underline the selected meter with a row of `~` in the header row below it.
+    /// Mark the selected header meter.
     ///
-    /// Deliberately not a background colour: the meters already use background
-    /// colours for their bars, and painting over them would erase the data.
+    /// This draws a reversed label in the meter's *own* first row rather than a
+    /// marker underneath it. The earlier version put a row of `~` on the line
+    /// below the meter, which is the next meter's line: a `~` under the CPU meter
+    /// appeared to belong to the Memory meter, so the cursor pointed at the wrong
+    /// thing. Underlining is only unambiguous when the rows belong to the thing
+    /// being underlined.
+    ///
+    /// The margin is used, not the data: the meter's own label sits there and is
+    /// short, so overwriting a few cells of it with reversed video is readable and
+    /// destroys no measurement.
     fn mark_header_selection(rect: Rect, buf: &mut Buffer, theme: &Theme) {
-        let y = rect.bottom();
-        if rect.height == 0 || y >= buf.area.bottom() {
+        if rect.height == 0 || rect.width == 0 {
             return;
         }
-        let width = (rect.width as usize).min(8) as u16;
+        let width = theme_cursor_width(rect.width);
         for x in rect.x..rect.x.saturating_add(width) {
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_char('~');
-                cell.set_style(theme.meter_label);
+            if let Some(cell) = buf.cell_mut((x, rect.y)) {
+                let style = cell.style().patch(theme.meter_cursor);
+                cell.set_style(style);
             }
-        }
-    }
-
-    fn draw_column(
-        meters: &mut [Box<dyn Meter>],
-        first_index: usize,
-        modes: &[MeterMode],
-        area: Rect,
-        buf: &mut Buffer,
-        theme: &Theme,
-        fallback: MeterMode,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let mut y = area.y;
-        for (offset, meter) in meters.iter_mut().enumerate() {
-            let h = meter.rows().max(1);
-            if y + h > area.bottom() {
-                break;
-            }
-            let mode = modes
-                .get(first_index + offset)
-                .copied()
-                .unwrap_or(fallback);
-            let rect = Rect::new(area.x, y, area.width, h);
-            meter.render(rect, buf, theme, mode);
-            y += h;
         }
     }
 
@@ -1523,6 +1728,17 @@ impl App {
             Vec::new()
         };
 
+        // Scale the in-table value bars against the largest value *in the whole
+        // table*, not against 100%. On a quiet machine the top process might sit
+        // at 4%, and an absolute bar would then be invisible for every row —
+        // exactly when knowing which of the 4% processes is biggest matters most.
+        //
+        // Table-wide rather than per-screenful so the bars do not rescale as you
+        // scroll, which would make them unreadable.
+        let bar_scale = self.table.rows.iter().fold((0.0f32, 0.0f32), |acc, r| {
+            (acc.0.max(r.percent_cpu), acc.1.max(r.percent_mem))
+        });
+
         // Clamp the first visible row so the bottom of the list stays filled.
         let visible = self.table.visible();
         let first = self
@@ -1581,6 +1797,40 @@ impl App {
                         base,
                         (draw_end - draw_x) as u16,
                     );
+
+                    // In the panels layout, paint a proportional bar *behind* the
+                    // CPU and memory numbers. The table is sorted by one of them,
+                    // and a filled background makes the ordering visible at a
+                    // glance instead of requiring you to read 30 numbers.
+                    //
+                    // Only when the whole column is on screen: a half-visible bar
+                    // would misrepresent the value, which is worse than no bar.
+                    if self.layout == LayoutKind::Panels
+                        && draw_x == cx
+                        && draw_end == cx + w
+                        && matches!(*field, Field::PercentCpu | Field::PercentMem)
+                    {
+                        // A small floor on the divisor keeps a lone 0.0%
+                        // process from being drawn as a full bar.
+                        let (value, max) = if *field == Field::PercentCpu {
+                            (row.percent_cpu, bar_scale.0)
+                        } else {
+                            (row.percent_mem, bar_scale.1)
+                        };
+                        let frac = if max > 0.05 {
+                            (value / max).clamp(0.0, 1.0)
+                        } else {
+                            value.clamp(0.0, 1.0)
+                        };
+                        paint_value_bar(
+                            buf,
+                            draw_x as u16,
+                            y,
+                            (draw_end - draw_x) as u16,
+                            frac,
+                            theme.row_value_bar,
+                        );
+                    }
                 }
                 cx += w;
             }
@@ -1745,6 +1995,58 @@ impl App {
                     slot_end.saturating_sub(label_x),
                 );
             }
+        }
+    }
+}
+
+/// How wide to paint the header meter cursor: a short label-sized block.
+fn theme_cursor_width(available: u16) -> u16 {
+    // 5 covers "Mem" plus a little, which reads as a deliberate marker without
+    // covering a bar's worth of data.
+    available.min(5)
+}
+
+/// Paint a value bar across `width` cells at `(x, y)`, keeping the text.
+///
+/// The bar shows *relative* magnitude within the column rather than an absolute
+/// percentage against 100: on a machine where the top process sits at 4%, an
+/// absolute bar would be invisible, which is exactly when you most want to see
+/// which of the 4% processes is the biggest.
+///
+/// The cell text is preserved; only the style changes. Overwriting the glyphs
+/// would destroy the number the bar is annotating.
+fn paint_value_bar(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    frac: f32,
+    style: Style,
+) {
+    if width == 0 {
+        return;
+    }
+    let filled = ((frac.clamp(0.0, 1.0)) * width as f32).ceil() as u16;
+    for i in 0..filled.min(width) {
+        if let Some(cell) = buf.cell_mut((x + i, y)) {
+            cell.set_style(cell.style().patch(style));
+        }
+    }
+}
+
+/// Draw a one-cell vertical rule between panels.
+///
+/// A border character rather than a `Block`: the panels are not boxes, and adding
+/// four borders around a 24-row terminal costs 4 rows and 4 columns for no
+/// information.
+fn draw_panel_divider(area: Rect, buf: &mut Buffer, theme: &Theme) {
+    let x = area.right().saturating_sub(1);
+    // The divider is drawn by the caller against the panel it follows, so the
+    // column sits on that panel's last cell.
+    for y in area.y..area.bottom() {
+        if let Some(cell) = buf.cell_mut((x, y)) {
+            cell.set_char('│');
+            cell.set_style(theme.dialog_border);
         }
     }
 }
@@ -2372,6 +2674,10 @@ mod tests {
             },
         ];
         config.active_tab = 0;
+        // This test is about the tab mechanism, not the layout: the panels
+        // layout substitutes its own leaner column set while the user has not
+        // customized anything, which would make the count assertion meaningless.
+        config.layout = "htop".into();
 
         let mut app = App::new(config);
         app.viewport = 5;
@@ -2625,6 +2931,202 @@ mod tests {
     }
 
     #[test]
+    fn the_default_layout_is_panels_and_l_switches_it() {
+        let app = App::new(Config::default());
+        assert_eq!(app.layout, LayoutKind::Panels, "panels is the default");
+
+        let mut app = app_with_n_rows(5);
+        app.handle_key(Key::Char('L'));
+        assert_eq!(app.layout, LayoutKind::Htop);
+        assert_eq!(app.config.layout, "htop", "the switch persists");
+        app.handle_key(Key::Char('L'));
+        assert_eq!(app.layout, LayoutKind::Panels);
+        assert_eq!(app.config.layout, "panels");
+    }
+
+    #[test]
+    fn the_layout_is_read_from_the_config() {
+        let config = Config {
+            layout: "htop".into(),
+            ..Config::default()
+        };
+        assert_eq!(App::new(config).layout, LayoutKind::Htop);
+
+        // Anything unrecognised falls back to the new layout rather than an
+        // empty screen.
+        let config = Config {
+            layout: "nonsense".into(),
+            ..Config::default()
+        };
+        assert_eq!(App::new(config).layout, LayoutKind::Panels);
+        assert_eq!(LayoutKind::from_config("CLASSIC"), LayoutKind::Htop);
+    }
+
+    /// The panels layout must render the system column and the inspector.
+    #[test]
+    fn the_panels_layout_draws_three_bands() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = app_with_n_rows(30);
+        app.selected = 0;
+        let mut term = Terminal::new(TestBackend::new(140, 30)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+
+        // System column: a bar label plus a fact with no other home in this layout.
+        assert!(text.contains("CPU"), "system column");
+        assert!(text.contains("LOAD"), "load belongs in the system column");
+        assert!(text.contains("MEM"), "memory bar");
+        // Inspector: the state spelled out, which no column shows.
+        assert!(
+            text.contains("sleeping") || text.contains("running") || text.contains("unknown"),
+            "the inspector should describe the state in words"
+        );
+        // Dividers.
+        assert!(text.contains('│'), "panels are separated");
+        // And the table itself.
+        assert!(text.contains("PID"), "the table is still there");
+    }
+
+    #[test]
+    fn a_narrow_terminal_falls_back_to_the_compact_layout() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = app_with_n_rows(10);
+        // 40 columns cannot hold two side panels plus a table, so the panels
+        // layout must degrade instead of drawing slivers.
+        let mut term = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("PID"), "the table survives at 40 columns");
+    }
+
+    #[test]
+    fn switching_the_selection_updates_the_inspector() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = app_with_n_rows(5);
+        let render = |app: &mut App| -> String {
+            let mut term = Terminal::new(TestBackend::new(130, 24)).unwrap();
+            term.draw(|f| app.draw(f)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect()
+        };
+
+        app.selected = 0;
+        let first = render(&mut app);
+        app.selected = 3;
+        let second = render(&mut app);
+
+        // The inspector shows the selected pid in the top-left of its panel, so
+        // the two renders must differ.
+        assert_ne!(first, second, "moving the selection must redraw the details");
+    }
+
+    /// The in-table value bars are drawn as a background style, so a text-only
+    /// assertion cannot see them; this checks the cell styles directly.
+    #[test]
+    fn the_panels_layout_paints_value_bars_behind_cpu_and_memory() {
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        use ratatui::Terminal;
+
+        let mut app = app_with_n_rows(20);
+        // Give the rows a spread of CPU% so the bars have different lengths.
+        for (i, row) in app.table.rows.iter_mut().enumerate() {
+            row.percent_cpu = (20 - i) as f32;
+            row.percent_mem = 1.0;
+        }
+        app.reorder();
+        app.selected = 0;
+
+        let mut term = Terminal::new(TestBackend::new(140, 25)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer();
+
+        // Count cells carrying the value-bar background, and the longest run on
+        // any single line: the top row must have a bar longer than the last one.
+        let is_bar = |bg: Color| bg == app.theme.row_value_bar.bg.unwrap_or(Color::Reset);
+        let runs: Vec<usize> = (0..25)
+            .map(|y| {
+                let mut best = 0usize;
+                let mut cur = 0usize;
+                for x in 0..140 {
+                    if is_bar(buf[(x, y)].style().bg.unwrap_or(Color::Reset)) {
+                        cur += 1;
+                        best = best.max(cur);
+                    } else {
+                        cur = 0;
+                    }
+                }
+                best
+            })
+            .collect();
+
+        assert!(
+            runs.iter().any(|&r| r > 0),
+            "no value bars were painted at all"
+        );
+
+        // The first data rows have the largest values, so at least one early line
+        // must show a longer bar than the shortest non-zero bar painted.
+        let non_zero: Vec<usize> = runs.iter().copied().filter(|&r| r > 0).collect();
+        assert!(
+            non_zero.iter().max() > non_zero.iter().min(),
+            "bars should vary with the value, got {non_zero:?}"
+        );
+    }
+
+    #[test]
+    fn value_bars_are_absent_from_the_htop_layout() {
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        use ratatui::Terminal;
+
+        let config = Config {
+            layout: "htop".into(),
+            ..Config::default()
+        };
+        let mut app = App::new(config);
+        let rows: Vec<Row> = (1..=10)
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.percent_cpu = 5.0;
+                r
+            })
+            .collect();
+        app.apply_sample(SystemSnapshot::default(), rows);
+
+        let mut term = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer();
+        let bar_bg = app.theme.row_value_bar.bg.unwrap_or(Color::Reset);
+        let found = (0..20).any(|y| {
+            (0..120).any(|x| buf[(x, y)].style().bg.unwrap_or(Color::Reset) == bar_bg)
+        });
+        assert!(!found, "the htop layout must not paint table value bars");
+    }
+
+    #[test]
     fn h_toggles_thread_rows_and_the_default_hides_them() {
         let mut app = app_with_n_rows(2);
         // Add a thread under pid 1.
@@ -2772,21 +3274,47 @@ mod tests {
             cpu_delta: vec![CpuTimes::default(); 9],
             ..Default::default()
         };
-        let mut app = App::new(Config::default());
+        // The header meter cursor only exists in the htop layout; the panels
+        // layout has no header.
+        let config = Config {
+            layout: "htop".into(),
+            ..Config::default()
+        };
+        let mut app = App::new(config);
         app.apply_sample(snapshot, Vec::new());
 
-        let render = |app: &mut App| -> String {
-            let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-            term.draw(|f| app.draw(f)).unwrap();
-            term.backend()
-                .buffer()
-                .content()
-                .iter()
-                .map(|c| c.symbol())
+        // The cursor is a background style on the meter's own label, so inspect
+        // cell styles rather than text: it must mark the first meter and nothing
+        // else, and it must sit on the *selected* meter's row.
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer();
+
+        // Compare the *whole* style, not just the background: the meters paint
+        // their own tracks with the same background colour, so a bg-only check
+        // cannot tell the cursor from a bar. The distinguishing feature is the
+        // foreground colour, and that is what a user sees too.
+        let cursor = app.theme.meter_cursor;
+        let is_cursor = |s: ratatui::style::Style| {
+            s.fg == cursor.fg && s.bg == cursor.bg && s.add_modifier == cursor.add_modifier
+        };
+        let marked_rows = |buf: &ratatui::buffer::Buffer| -> Vec<u16> {
+            (0..30)
+                .filter(|&y| (0..100).any(|x| is_cursor(buf[(x, y)].style())))
                 .collect()
         };
+        assert_eq!(
+            marked_rows(buf),
+            vec![0],
+            "only the first meter's own row may be marked"
+        );
 
-        assert!(render(&mut app).contains('~'), "the cursor must be drawn");
+        // Moving the cursor moves the mark, and still marks exactly one row.
+        app.handle_key(Key::HeaderNext);
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let marked = marked_rows(term.backend().buffer());
+        assert_eq!(marked.len(), 1, "still exactly one marked row, got {marked:?}");
     }
 
     #[test]

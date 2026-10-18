@@ -26,6 +26,18 @@ pub struct Theme {
     pub row_kernel_thread: Style,
     pub row_userland_thread: Style,
     pub row_stale_exe: Style,
+    /// Background style for the in-table CPU/memory bars in the panels layout.
+    ///
+    /// A background, not a foreground: the bar sits behind the number, and the
+    /// number must stay readable on top of it.
+    pub row_value_bar: Style,
+    /// Marks the header meter that `I` will act on.
+    ///
+    /// A distinct style from `row_value_bar` even though both are backgrounds:
+    /// sharing one made a test for "no table bars in the htop layout" fail, which
+    /// is the test telling the truth — two different meanings need two styles, or
+    /// neither can be asserted about.
+    pub meter_cursor: Style,
 
     /// CPU meter segments, in htop's order:
     /// nice, normal, kernel, irq, soft-irq, steal, guest, io-wait.
@@ -114,6 +126,12 @@ impl Theme {
             row_normal: Style::default().fg(Color::Cyan),
             row_selected: Style::default().fg(Color::Black).bg(Color::Cyan),
             row_tagged: Style::default().fg(Color::Yellow),
+            row_value_bar: Style::default().bg(Color::DarkGray),
+            // Magenta on black: no other style in this theme uses that pair, so
+            // the cursor is unmistakably itself. The first version reused the
+            // header's cyan-on-black, which made it invisible against the column
+            // headers and indistinguishable in a style assertion.
+            meter_cursor: Style::default().fg(Color::Magenta).bg(Color::Black),
             row_kernel_thread: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::DIM),
@@ -182,6 +200,11 @@ impl Theme {
             row_normal: Style::default(),
             row_selected: Style::default().add_modifier(Modifier::REVERSED),
             row_tagged: Style::default().add_modifier(Modifier::BOLD),
+            // Monochrome cannot tint, so the bar uses a reverse video background
+            // and the number keeps its own glyphs.
+            row_value_bar: Style::default().add_modifier(Modifier::REVERSED),
+            meter_cursor: Style::default()
+                .add_modifier(Modifier::REVERSED | Modifier::BOLD | Modifier::UNDERLINED),
             row_kernel_thread: Style::default().add_modifier(Modifier::DIM),
             row_userland_thread: Style::default().add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -239,6 +262,11 @@ impl Theme {
         t.row_selected = Style::default()
             .fg(Color::Indexed(17))
             .bg(Color::Indexed(110));
+        t.row_value_bar = Style::default().bg(Color::Indexed(24));
+        t.meter_cursor = Style::default()
+            .fg(Color::Indexed(214))
+            .bg(Color::Indexed(17))
+            .add_modifier(Modifier::BOLD);
         t.function_bar = Style::default()
             .fg(Color::Indexed(250))
             .bg(Color::Indexed(24));

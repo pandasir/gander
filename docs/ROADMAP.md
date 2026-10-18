@@ -28,8 +28,30 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 215 tests on macOS, 198 on Linux, zero clippy warnings | done |
+| 230 tests on macOS, zero clippy warnings | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
+
+## The interface
+
+The default layout is **`panels`**: a vertical system column, a leaner process
+table with in-table value bars, and a persistent inspector that shows the command
+line and exact numbers without leaving the list. `L` switches to the classic htop
+arrangement, and `layout = "htop"` makes that permanent.
+
+The reasoning is in [LAYOUT.md](LAYOUT.md). In short: htop puts its meters on the
+scarce axis (vertical), makes you leave the list to learn anything about a
+process, and spends a row per core.
+
+| Area | State |
+|---|---|
+| `panels` layout: system column, table, inspector | done |
+| Vertical system column (aggregate CPU, core grid, mem/swap, load, uptime, tasks, sparkline) | done |
+| Persistent inspector: wrapped command line, state in words, exact numbers | done |
+| In-table value bars behind `CPU%` / `MEM%`, scaled table-wide | done |
+| Lean default columns for the narrow table, without overriding an explicit `F2` choice | done |
+| Graceful degradation down to a 30x4 terminal, falling back to the htop layout | done |
+| `L` to switch, persisted in the config | done |
+| Classic htop layout still available and fully supported | done |
 
 ## Next: finish M0
 

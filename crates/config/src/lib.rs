@@ -26,6 +26,9 @@ pub struct Config {
     pub show_kernel_threads: bool,
     /// Whether to list one row per thread inside each process (`H`).
     pub show_userland_threads: bool,
+    /// Screen layout: `panels` (system column, table, inspector) or `htop`
+    /// (horizontal meters, full-width table). See `docs/LAYOUT.md`.
+    pub layout: String,
     pub highlight_base_name: bool,
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
@@ -106,6 +109,10 @@ impl Default for Config {
             tree_mode: false,
             show_kernel_threads: true,
             show_userland_threads: false,
+            // The panels layout is the default because it is the one that is
+            // actually different from htop; the htop arrangement is available
+            // for anyone who came here wanting htop.
+            layout: "panels".into(),
             highlight_base_name: false,
             highlight_deleted_exe: true,
             color_scheme: "default".into(),

@@ -48,8 +48,9 @@ matching is enough. Separate terms with `|`.
 
 | Key | Action |
 |---|---|
-| `Shift+Left` / `Shift+Right` | Move the header meter cursor |
-| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter) |
+| `L` | Switch layout: `panels` ⇄ `htop` (see [LAYOUT.md](LAYOUT.md)) |
+| `Shift+Left` / `Shift+Right` | Move the header meter cursor (htop layout) |
+| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter; htop layout) |
 | `K` | Toggle kernel threads |
 | `H` | Toggle one row per thread (Linux) |
 | `H` | Hide kernel threads |
