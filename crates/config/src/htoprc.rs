@@ -6,7 +6,7 @@
 
 use gander_core::row::Field;
 
-use crate::{Config, SortConfig, TabConfig};
+use crate::{Config, MeterConfig, SortConfig, TabConfig};
 
 /// Parse an `htoprc` document into a `Config`.
 ///
@@ -23,6 +23,12 @@ pub fn parse(text: &str) -> Config {
     let mut header_layout: Option<String> = None;
     let mut tree_view = false;
     let mut hide_kernel_threads = false;
+    // `column_meters_N` and `column_meter_modes_N` are parallel lists, one entry
+    // per meter, per header column.
+    let mut meters: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+    let mut modes: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+    // Per-tab layouts live in `screen:NAME=...` sections followed by dotted keys.
+    let mut tabs: Vec<TabConfig> = Vec::new();
 
     for raw in text.lines() {
         let line = raw.trim();
@@ -65,6 +71,67 @@ pub fn parse(text: &str) -> Config {
         }
         if let Some(rest) = line.strip_prefix("color_scheme=") {
             config.color_scheme = color_name(rest.trim()).to_string();
+            continue;
+        }
+        for (column, key) in [(0usize, "column_meters_0="), (1, "column_meters_1=")] {
+            if let Some(rest) = line.strip_prefix(key) {
+                meters[column] = rest.split_whitespace().map(str::to_string).collect();
+            }
+            let key = if column == 0 {
+                "column_meter_modes_0="
+            } else {
+                "column_meter_modes_1="
+            };
+            if let Some(rest) = line.strip_prefix(key) {
+                modes[column] = rest.split_whitespace().map(str::to_string).collect();
+            }
+        }
+        // `screen:Main=PID USER ...` opens a tab; the `.sort_key=` lines after it
+        // belong to that tab until the next `screen:` header.
+        if let Some(rest) = line.strip_prefix("screen:") {
+            if let Some((name, fields)) = rest.split_once('=') {
+                let cols = fields
+                    .split_whitespace()
+                    .filter_map(htop_field_name)
+                    .map(str::to_string)
+                    .collect();
+                tabs.push(TabConfig {
+                    name: name.trim().to_string(),
+                    columns: cols,
+                    sort: SortConfig {
+                        field: "PERCENT_CPU".into(),
+                        desc: true,
+                    },
+                });
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(".sort_key=") {
+            if let Some(tab) = tabs.last_mut() {
+                // The value is either an htop numeric id or one of htop's
+                // human-readable names (`PERCENT_MEM`, `RES`, `Command`, ...).
+                let value = rest.trim();
+                if let Some(field) = htop_field_name(value) {
+                    tab.sort.field = field.to_string();
+                } else if let Some(field) = sort_key_name(value) {
+                    tab.sort.field = field.name().to_string();
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(".sort_direction=") {
+            if let Some(tab) = tabs.last_mut() {
+                tab.sort.desc = rest.trim().parse::<i32>().unwrap_or(1) < 0;
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(".tree_view=") {
+            let _ = rest;
+            continue;
+        }
+        if line.starts_with('.') {
+            // Any other per-tab key is one we do not model yet.
+            continue;
         }
     }
 
@@ -83,18 +150,118 @@ pub fn parse(text: &str) -> Config {
 
     let field = sort_key.unwrap_or_else(|| "PERCENT_CPU".to_string());
 
-    config.tabs = vec![TabConfig {
-        name: header_layout.unwrap_or_else(|| "Main".into()),
-        columns,
-        sort: SortConfig {
-            field,
-            desc: sort_direction < 0,
-        },
-    }];
+    // `screen:` sections take precedence over the flat `fields=` list: they are
+    // what htop actually renders when screen tabs are enabled.
+    if tabs.is_empty() {
+        config.tabs = vec![TabConfig {
+            name: header_layout.unwrap_or_else(|| "Main".into()),
+            columns,
+            sort: SortConfig {
+                field,
+                desc: sort_direction < 0,
+            },
+        }];
+    } else {
+        for tab in &mut tabs {
+            if !tab.columns.iter().any(|c| c == "COMM") {
+                tab.columns.push("COMM".into());
+            }
+        }
+        config.tabs = tabs;
+    }
     config.active_tab = 0;
     config.tree_mode = tree_view;
     config.show_kernel_threads = !hide_kernel_threads;
+
+    // Header meters, when the file has them. The mode lists are parallel to the
+    // name lists and may be shorter; a missing mode stays whatever the default
+    // was for that meter.
+    let convert = |names: &[String], mods: &[String]| -> Vec<MeterConfig> {
+        names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| meter_name_known(n))
+            .map(|(i, n)| {
+                let mode = mods.get(i).map(String::as_str).unwrap_or("1");
+                MeterConfig::new(n, mode)
+            })
+            .collect()
+    };
+    let left = convert(&meters[0], &modes[0]);
+    let right = convert(&meters[1], &modes[1]);
+    if !left.is_empty() || !right.is_empty() {
+        let defaults = Config::default();
+        config.meters_left = if left.is_empty() {
+            defaults.meters_left
+        } else {
+            left
+        };
+        config.meters_right = if right.is_empty() {
+            defaults.meters_right
+        } else {
+            right
+        };
+    }
+
     config
+}
+
+/// Resolve a `sort_key=` value written as a name rather than a numeric id.
+///
+/// htop's own config uses the display names from `RowField` (`PERCENT_MEM`,
+/// `RES`, `TIME`, `Command`), which do not always match gander's field names.
+fn sort_key_name(name: &str) -> Option<Field> {
+    Some(match name {
+        "PID" => Field::Pid,
+        "Command" | "COMM" => Field::Comm,
+        "STATE" => Field::State,
+        "PPID" => Field::Ppid,
+        "PGRP" => Field::Pgrp,
+        "SESSION" => Field::Session,
+        "USER" => Field::User,
+        "PRIORITY" => Field::Priority,
+        "NICE" => Field::Nice,
+        "PERCENT_CPU" => Field::PercentCpu,
+        "PERCENT_MEM" => Field::PercentMem,
+        "TIME" => Field::Time,
+        "M_VIRT" | "VIRT" => Field::VirtMem,
+        "M_RESIDENT" | "RES" => Field::ResMem,
+        "PROCESSOR" => Field::Processor,
+        "MINFLT" => Field::MinFlt,
+        "MAJFLT" => Field::MajFlt,
+        "NLWP" => Field::Nlwp,
+        "PERCENT_NORM_CPU" => Field::PercentNormCpu,
+        "ELAPSED" => Field::Elapsed,
+        "PROC_COMM" => Field::ProcComm,
+        "PROC_EXE" => Field::ProcExe,
+        "CWD" => Field::Cwd,
+        _ => return Field::from_name(name),
+    })
+}
+
+/// Meter names this build understands.
+///
+/// Duplicated from `gander-tui` on purpose: `gander-config` must not depend on
+/// the renderer, and a name that is not in this list would silently produce an
+/// empty meter that the user cannot see or fix.
+fn meter_name_known(name: &str) -> bool {
+    matches!(
+        name,
+        "LeftCPUs"
+            | "RightCPUs"
+            | "CPU"
+            | "AllCPUs"
+            | "Memory"
+            | "Swap"
+            | "Tasks"
+            | "LoadAverage"
+            | "Load"
+            | "Uptime"
+            | "Clock"
+            | "Date"
+            | "Hostname"
+            | "Blank"
+    )
 }
 
 /// Map an htop numeric field ID to a gander field name.
@@ -225,6 +392,78 @@ header_layout=two_50_50
     fn empty_input_is_defaults() {
         let c = parse("");
         assert!(!c.active_tab().fields().is_empty());
+    }
+
+    #[test]
+    fn imports_header_meters_and_per_meter_modes() {
+        // The real shape from htop 3.3: names in one list, numeric modes in a
+        // parallel list (1 = bar, 2 = text, 3 = graph).
+        let text = "\
+column_meters_0=LeftCPUs Memory Swap
+column_meter_modes_0=1 2 1
+column_meters_1=RightCPUs Tasks LoadAverage Uptime
+column_meter_modes_1=1 2 2 2
+";
+        let c = parse(text);
+        let left: Vec<(&str, &str)> = c
+            .meters_left
+            .iter()
+            .map(|m| (m.name.as_str(), m.mode.as_str()))
+            .collect();
+        assert_eq!(
+            left,
+            vec![("LeftCPUs", "1"), ("Memory", "2"), ("Swap", "1")]
+        );
+        assert_eq!(c.meters_right.len(), 4);
+        assert_eq!(c.meters_right[1].name, "Tasks");
+        assert_eq!(c.meters_right[1].mode_name(), "text");
+        assert_eq!(c.meters_left[1].mode_name(), "text");
+        assert_eq!(c.meters_left[0].mode_name(), "bar");
+    }
+
+    #[test]
+    fn unknown_meter_names_are_dropped() {
+        let text = "column_meters_0=LeftCPUs NoSuchMeter Memory\ncolumn_meter_modes_0=1 1 2\n";
+        let c = parse(text);
+        let names: Vec<&str> = c.meters_left.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["LeftCPUs", "Memory"]);
+        // The modes must follow the *surviving* names, not their original slots.
+        assert_eq!(c.meters_left[0].mode_name(), "bar");
+        assert_eq!(c.meters_left[1].mode_name(), "text");
+    }
+
+    #[test]
+    fn named_screen_sections_become_tabs() {
+        // This is what htop writes when screen tabs are enabled.
+        let text = "\
+screen:Main=PID USER PERCENT_CPU Command
+.sort_key=PERCENT_MEM
+.sort_direction=-1
+screen:Memory=PID PERCENT_MEM RES Command
+.sort_key=RES
+.sort_direction=-1
+";
+        let c = parse(text);
+        assert_eq!(c.tabs.len(), 2, "one tab per screen: section");
+        assert_eq!(c.tabs[0].name, "Main");
+        assert_eq!(c.tabs[1].name, "Memory");
+        // `.sort_key` belongs to the tab above it.
+        assert_eq!(c.tabs[0].sort().field, Field::PercentMem);
+        assert!(c.tabs[0].sort.desc);
+        // `RES` is htop's name for the resident-size column.
+        assert_eq!(c.tabs[1].sort().field, Field::ResMem);
+        // Command is appended when the section omits it.
+        for tab in &c.tabs {
+            assert!(tab.columns.iter().any(|n| n == "COMM"), "{}", tab.name);
+        }
+    }
+
+    #[test]
+    fn a_flat_file_still_yields_one_tab() {
+        // No `screen:` sections: the old single-tab path must keep working.
+        let c = parse(SAMPLE);
+        assert_eq!(c.tabs.len(), 1);
+        assert_eq!(c.active_tab, 0);
     }
 
     #[test]

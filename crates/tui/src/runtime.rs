@@ -103,11 +103,13 @@ mod platform {
 
         loop {
             // Adopt the newest sample, if there is one. `swap` clears the slot so
-            // each sample is applied exactly once.
-            if slot.load().is_some() {
-                if let Some(sample) = slot.swap(Arc::new(None)).as_ref() {
-                    app.apply_sample(sample.snapshot.clone(), sample.rows.clone());
-                }
+            // each sample is applied exactly once. The sample is *moved* out, not
+            // cloned: `Row` owns three `Box<str>`s, so cloning the vector copied
+            // thousands of strings per second for nothing
+            // (`docs/DESIGN.md` §9.4).
+            let taken = slot.swap(Arc::new(None));
+            if let Ok(Some(sample)) = Arc::try_unwrap(taken) {
+                app.apply_sample(sample.snapshot, sample.rows);
             }
 
             if last_draw.elapsed() >= TICK {

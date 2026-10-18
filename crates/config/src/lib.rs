@@ -18,11 +18,49 @@ pub struct Config {
     pub tabs: Vec<TabConfig>,
     /// Index of the active tab.
     pub active_tab: usize,
+    /// Meters in the header's left column, top to bottom.
+    pub meters_left: Vec<MeterConfig>,
+    /// Meters in the header's right column, top to bottom.
+    pub meters_right: Vec<MeterConfig>,
     pub tree_mode: bool,
     pub show_kernel_threads: bool,
     pub highlight_base_name: bool,
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
+}
+
+/// One header meter, with its own display mode.
+///
+/// The mode is per meter, not global: htop's setup screen changes only the meter
+/// under the cursor, and having one `I` key flip the whole header was the wrong
+/// shape. The name is the same one `meters_impl::meter_by_name` accepts.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MeterConfig {
+    pub name: String,
+    /// `bar`, `text` or `graph`.
+    pub mode: String,
+}
+
+impl MeterConfig {
+    pub fn new(name: &str, mode: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            mode: mode.to_string(),
+        }
+    }
+
+    /// The mode, falling back to `bar` for anything unrecognised.
+    ///
+    /// Accepts htoprc's numeric spellings (1 = bar, 2 = text, 3 = graph) so an
+    /// imported file does not need translating first.
+    pub fn mode_name(&self) -> &'static str {
+        match self.mode.trim() {
+            "1" | "bar" | "Bar" | "BAR" => "bar",
+            "2" | "text" | "Text" | "TEXT" => "text",
+            "3" | "graph" | "Graph" | "GRAPH" => "graph",
+            _ => "bar",
+        }
+    }
 }
 
 impl Default for Config {
@@ -49,6 +87,20 @@ impl Default for Config {
                 },
             }],
             active_tab: 0,
+            // htop's default header. `LeftCPUs`/`RightCPUs` split themselves
+            // once the core count is known, so the default is stable across
+            // machines.
+            meters_left: vec![
+                MeterConfig::new("LeftCPUs", "bar"),
+                MeterConfig::new("Memory", "bar"),
+                MeterConfig::new("Swap", "bar"),
+            ],
+            meters_right: vec![
+                MeterConfig::new("RightCPUs", "bar"),
+                MeterConfig::new("Tasks", "text"),
+                MeterConfig::new("LoadAverage", "text"),
+                MeterConfig::new("Uptime", "text"),
+            ],
             tree_mode: false,
             show_kernel_threads: true,
             highlight_base_name: false,

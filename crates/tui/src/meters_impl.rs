@@ -8,7 +8,9 @@ use gander_core::system::SystemSnapshot;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
-use crate::meters::{draw_graph, draw_segments, put_str, Meter, MeterMode, Segment, GRAPH_HISTORY};
+use crate::meters::{
+    draw_graph, draw_segments, put_str, HeaderColumn, Meter, MeterMode, Segment, GRAPH_HISTORY,
+};
 use crate::theme::Theme;
 
 macro_rules! simple_meter {
@@ -582,7 +584,7 @@ fn local_date() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0) as i64;
-    let (y, mo, d) = civil_from_days(secs.div_euclid(86_400) + LOCAL_OFFSET_SECS / 86_400);
+    let (y, mo, d) = civil_from_days((secs + local_offset_secs()).div_euclid(86_400));
     format!("{y:04}-{mo:02}-{d:02}")
 }
 
@@ -591,7 +593,7 @@ fn local_hms() -> (u32, u32, u32) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let day = (secs + LOCAL_OFFSET_SECS).rem_euclid(86_400);
+    let day = (secs + local_offset_secs()).rem_euclid(86_400);
     (
         (day / 3600) as u32,
         ((day % 3600) / 60) as u32,
@@ -599,10 +601,37 @@ fn local_hms() -> (u32, u32, u32) {
     )
 }
 
-/// Offset applied to UTC. Reading the real local offset needs `localtime_r`;
-/// this is the fallback used until that is wired up, and it is honest about
-/// being UTC by default.
-const LOCAL_OFFSET_SECS: i64 = 0;
+/// Seconds east of UTC for the local time zone, right now.
+///
+/// `localtime_r` is the only portable way to learn this: the offset depends on
+/// the date (DST) and, on macOS, on the time zone rules the OS ships. It is
+/// re-read on every call rather than cached, because a long-running gander has
+/// to cross a DST boundary correctly. `localtime_r` is cheap and thread-safe.
+#[cfg(unix)]
+fn local_offset_secs() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let t = now as libc::time_t;
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::zeroed();
+    // SAFETY: `localtime_r` writes one `struct tm` through the pointer and reads
+    // the scalar time; both are valid for the call.
+    let filled = unsafe { libc::localtime_r(&t, tm.as_mut_ptr()) };
+    if filled.is_null() {
+        return 0;
+    }
+    // SAFETY: a non-null return means the struct was filled.
+    let tm = unsafe { tm.assume_init() };
+    tm.tm_gmtoff
+}
+
+/// Platforms without `localtime_r` fall back to UTC, which is what the meters
+/// displayed before this was wired up.
+#[cfg(not(unix))]
+fn local_offset_secs() -> i64 {
+    0
+}
 
 /// Howard Hinnant's `civil_from_days`: days since 1970-01-01 to Y/M/D.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -619,15 +648,40 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 fn hostname() -> String {
-    // `/proc/sys/kernel/hostname` avoids a libc dependency and works in
-    // containers where `gethostname(2)` reports the same value anyway.
+    // `/proc/sys/kernel/hostname` is the cheap path on Linux; on macOS there is
+    // no `/proc`, so `gethostname(2)` is the portable answer. Try the file first
+    // because it works inside containers where the syscall can disagree.
     if let Ok(text) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
         }
     }
-    std::env::var("HOSTNAME").unwrap_or_else(|_| String::from("localhost"))
+    hostname_syscall().unwrap_or_else(|| {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| String::from("localhost"))
+    })
+}
+
+#[cfg(unix)]
+fn hostname_syscall() -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is writable and the length matches its size.
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    let name = String::from_utf8_lossy(&buf[..len]).trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+#[cfg(not(unix))]
+fn hostname_syscall() -> Option<String> {
+    None
 }
 
 /// Build the default header: one CPU row, then memory and swap.
@@ -664,10 +718,153 @@ pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
     meters
 }
 
+/// Build the header from the user's configured meter lists.
+///
+/// Each configured meter carries its own display mode, because htop's setup
+/// screen changes the meter under the cursor rather than the whole header.
+/// Unrecognised names are skipped, so a config written by a newer gander still
+/// starts. An empty header falls back to the default one — an empty header is
+/// more likely a broken file than a deliberate choice, and htop refuses to
+/// render one at all.
+pub fn header_from_config(
+    config: &gander_config::Config,
+    cpu_count: usize,
+) -> Header {
+    let split = cpu_count > 4;
+    let half = cpu_count / 2;
+    let mut meters: Vec<Box<dyn Meter>> = Vec::new();
+    let mut modes: Vec<MeterMode> = Vec::new();
+    let mut sources: Vec<MeterSource> = Vec::new();
+
+    let add = |entries: &[gander_config::MeterConfig],
+                   column: HeaderColumn,
+                   meters: &mut Vec<Box<dyn Meter>>,
+                   modes: &mut Vec<MeterMode>,
+                   sources: &mut Vec<MeterSource>| {
+        for (index, entry) in entries.iter().enumerate() {
+            let is_cpu_pair =
+                matches!(entry.name.as_str(), "LeftCPUs" | "RightCPUs" | "CPU_CORES");
+            let mode = mode_from_name(entry.mode_name());
+
+            let meter: Option<Box<dyn Meter>> = if is_cpu_pair {
+                // `LeftCPUs`/`RightCPUs` are a *pair*: with four cores or fewer
+                // htop collapses them into one aggregate `CPU` row in the left
+                // column and leaves the right column alone. Emitting both would
+                // put two identical CPU rows on a small machine.
+                match (split, column) {
+                    (true, HeaderColumn::Left) => {
+                        Some(Box::new(crate::meters::CpuMeter::left(0..half)))
+                    }
+                    (true, HeaderColumn::Right) => {
+                        Some(Box::new(crate::meters::CpuMeter::right(half..cpu_count)))
+                    }
+                    (false, HeaderColumn::Left) => {
+                        Some(Box::new(crate::meters::CpuMeter::aggregate()))
+                    }
+                    (false, HeaderColumn::Right) => None,
+                }
+            } else {
+                meter_by_name(&entry.name)
+            };
+
+            if let Some(meter) = meter {
+                meters.push(meter);
+                modes.push(mode);
+                // Remember which config entry produced this meter, so writing a
+                // mode back does not have to guess from the flat index (which
+                // drifts as soon as a collapsed CPU pair is skipped).
+                sources.push(MeterSource { column, index });
+            }
+        }
+    };
+
+    add(
+        &config.meters_left,
+        HeaderColumn::Left,
+        &mut meters,
+        &mut modes,
+        &mut sources,
+    );
+    add(
+        &config.meters_right,
+        HeaderColumn::Right,
+        &mut meters,
+        &mut modes,
+        &mut sources,
+    );
+
+    if meters.is_empty() {
+        let defaults = default_header(cpu_count);
+        let n = defaults.len();
+        return Header {
+            meters: defaults,
+            modes: vec![MeterMode::Bar; n],
+            sources: (0..n)
+                .map(|_| MeterSource {
+                    column: HeaderColumn::Left,
+                    index: 0,
+                })
+                .collect(),
+        };
+    }
+
+    // A config that named only `RightCPUs` on a small machine would otherwise
+    // lose CPU reporting entirely.
+    if !meters.iter().any(|m| m.name().starts_with("CPU")) {
+        meters.insert(0, Box::new(crate::meters::CpuMeter::aggregate()));
+        modes.insert(0, MeterMode::Bar);
+        sources.insert(
+            0,
+            MeterSource {
+                column: HeaderColumn::Left,
+                index: 0,
+            },
+        );
+    }
+
+    Header {
+        meters,
+        modes,
+        sources,
+    }
+}
+
+/// The built header: meters, their modes, and where each came from.
+pub struct Header {
+    pub meters: Vec<Box<dyn Meter>>,
+    pub modes: Vec<MeterMode>,
+    /// For each meter, the config entry it was built from.
+    pub sources: Vec<MeterSource>,
+}
+
+/// The config entry a live meter came from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MeterSource {
+    pub column: HeaderColumn,
+    pub index: usize,
+}
+
+/// The config spelling for a meter mode.
+pub fn mode_name(mode: MeterMode) -> &'static str {
+    match mode {
+        MeterMode::Bar => "bar",
+        MeterMode::Text => "text",
+        MeterMode::Graph => "graph",
+    }
+}
+
+fn mode_from_name(name: &str) -> MeterMode {
+    match name {
+        "text" => MeterMode::Text,
+        "graph" => MeterMode::Graph,
+        _ => MeterMode::Bar,
+    }
+}
+
 /// Build a meter by config name.
 pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
     Some(match name {
-        "CPU" | "AllCPUs" | "LeftCPUs" | "RightCPUs" => {
+        "CPU" | "AllCPUs" | "LeftCPUs" | "RightCPUs" | "CPU_CORES" => {
             Box::new(crate::meters::CpuMeter::aggregate())
         }
         "Memory" => Box::new(MemoryMeter::new()),
@@ -682,6 +879,22 @@ pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
         _ => return None,
     })
 }
+
+/// Every meter name the setup screen offers, in htop's order.
+pub const METER_NAMES: &[&str] = &[
+    "LeftCPUs",
+    "RightCPUs",
+    "CPU",
+    "Memory",
+    "Swap",
+    "Tasks",
+    "LoadAverage",
+    "Uptime",
+    "Clock",
+    "Date",
+    "Hostname",
+    "Blank",
+];
 
 #[cfg(test)]
 mod tests {
@@ -738,6 +951,47 @@ mod tests {
     fn civil_dates() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19_000), (2022, 1, 8));
+    }
+
+    /// The Clock meter must show *local* time, not UTC.
+    ///
+    /// This was a real bug: `LOCAL_OFFSET_SECS` was hard-coded to `0`, so the
+    /// clock and date silently displayed UTC on every machine east or west of
+    /// Greenwich. It only looks correct in CI, which runs in UTC.
+    #[test]
+    fn clock_uses_the_local_time_zone() {
+        let offset = local_offset_secs();
+        let utc = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let utc_day = utc.rem_euclid(86_400);
+        let local_day = (utc + offset).rem_euclid(86_400);
+        let expected = (
+            (local_day / 3600) as u32,
+            ((local_day % 3600) / 60) as u32,
+            (local_day % 60) as u32,
+        );
+        assert_eq!(local_hms(), expected);
+
+        // On a machine that is not on UTC the two must disagree, which is what
+        // proves the offset is actually applied.
+        if offset != 0 {
+            let utc_hms = (
+                (utc_day / 3600) as u32,
+                ((utc_day % 3600) / 60) as u32,
+                (utc_day % 60) as u32,
+            );
+            assert_ne!(local_hms(), utc_hms, "offset {offset} was not applied");
+            assert!(local_date().len() == 10, "ISO date");
+        }
+    }
+
+    #[test]
+    fn hostname_is_not_empty() {
+        let h = hostname();
+        assert!(!h.trim().is_empty());
+        assert!(!h.contains('\n'));
     }
 
     #[test]

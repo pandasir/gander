@@ -34,6 +34,10 @@ pub enum Screen {
         cursor: usize,
     },
     Setup,
+    /// `a`: the CPU affinity mask of one process.
+    Affinity(crate::panels::AffinityPanel),
+    /// `i`: the I/O priority of one process.
+    IoPriority(crate::panels::IoPriorityPanel),
 }
 
 /// What the runtime should do after an update.
@@ -92,6 +96,15 @@ pub struct App {
     pub command_column_interactive: bool,
     pub quit: bool,
     pub status: Option<String>,
+    /// Display mode per meter, parallel to `meters`.
+    ///
+    /// htop's setup screen changes only the meter under the cursor, so the mode
+    /// cannot be a single app-wide value.
+    pub meter_modes: Vec<MeterMode>,
+    /// Which config entry each meter was built from, parallel to `meters`.
+    pub meter_sources: Vec<meters_impl::MeterSource>,
+    /// The mode applied to meters added later, and the fallback for `I` when no
+    /// meter is selected.
     pub meter_mode: MeterMode,
     pub pending_g: bool,
 }
@@ -135,6 +148,8 @@ impl App {
             command_column_interactive: true,
             quit: false,
             status: None,
+            meter_modes: Vec::new(),
+            meter_sources: Vec::new(),
             meter_mode: MeterMode::Bar,
             pending_g: false,
         }
@@ -145,7 +160,7 @@ impl App {
         // The header depends on the core count, which is only known once the
         // first snapshot arrives.
         if self.meters.is_empty() {
-            self.meters = meters_impl::default_header(snapshot.cpu_count());
+            self.rebuild_header(snapshot.cpu_count());
         }
         for meter in &mut self.meters {
             meter.sample(&snapshot);
@@ -158,6 +173,120 @@ impl App {
 
     pub fn columns(&self) -> Vec<Field> {
         self.config.active_tab().fields()
+    }
+
+    /// Rebuild the header meters from the config, keeping their sampled state
+    /// where possible.
+    ///
+    /// Called on the first sample (the core count is only known then) and after
+    /// the setup screen edits the meter list.
+    pub fn rebuild_header(&mut self, cpu_count: usize) {
+        let mut header = meters_impl::header_from_config(&self.config, cpu_count);
+
+        // Carry a live mode over when the same meter is still present: editing
+        // the header should not silently reset the mode the user chose with `I`.
+        for (i, meter) in header.meters.iter().enumerate() {
+            if let Some(pos) = self
+                .meters
+                .iter()
+                .position(|m| m.name() == meter.name())
+            {
+                if let Some(mode) = self.meter_modes.get(pos) {
+                    header.modes[i] = *mode;
+                }
+            }
+        }
+
+        self.meters = header.meters;
+        self.meter_modes = header.modes;
+        self.meter_sources = header.sources;
+    }
+
+    /// The display mode for meter `i`.
+    pub fn meter_mode_at(&self, i: usize) -> MeterMode {
+        self.meter_modes.get(i).copied().unwrap_or(self.meter_mode)
+    }
+
+    /// Cycle meter `i`'s display mode and remember the choice.
+    pub fn cycle_meter_mode(&mut self, i: usize) {
+        if i >= self.meters.len() {
+            return;
+        }
+        if self.meter_modes.len() < self.meters.len() {
+            self.meter_modes.resize(self.meters.len(), self.meter_mode);
+        }
+        let next = match self.meter_modes[i] {
+            MeterMode::Text => MeterMode::Bar,
+            MeterMode::Bar => MeterMode::Graph,
+            MeterMode::Graph => MeterMode::Text,
+        };
+        self.meter_modes[i] = next;
+        self.meter_mode = next;
+        self.sync_meter_modes_to_config();
+    }
+
+    /// Write the live modes back into the config, so they survive a save.
+    ///
+    /// Each meter remembers the config entry it came from (`meter_sources`) —
+    /// a flat index would be wrong as soon as a collapsed CPU pair shifts
+    /// everything along.
+    fn sync_meter_modes_to_config(&mut self) {
+        for (i, source) in self.meter_sources.iter().enumerate() {
+            let Some(mode) = self.meter_modes.get(i).copied() else {
+                continue;
+            };
+            let list = match source.column {
+                crate::meters::HeaderColumn::Left => &mut self.config.meters_left,
+                crate::meters::HeaderColumn::Right => &mut self.config.meters_right,
+            };
+            if let Some(entry) = list.get_mut(source.index) {
+                entry.mode = meters_impl::mode_name(mode).to_string();
+            }
+        }
+    }
+
+    /// Persist the live sort order into the active tab's config.
+    ///
+    /// Each tab keeps its own sort, so this has to run whenever the sort or the
+    /// active tab changes.
+    fn sync_sort_to_tab(&mut self) {
+        let field = self.table.sort.field.name().to_string();
+        let desc = self.table.sort.dir == Dir::Desc;
+        let idx = self
+            .config
+            .active_tab
+            .min(self.config.tabs.len().saturating_sub(1));
+        if let Some(tab) = self.config.tabs.get_mut(idx) {
+            tab.sort = gander_config::SortConfig { field, desc };
+        }
+    }
+
+    /// Load the active tab's sort into the live table.
+    fn load_sort_from_tab(&mut self) {
+        self.table.sort = self.config.active_tab().sort();
+    }
+
+    /// Switch to the next/previous screen tab.
+    pub fn cycle_tab(&mut self, forward: bool) {
+        let n = self.config.tabs.len();
+        if n <= 1 {
+            self.status = Some("only one screen tab configured (F2 > Tabs)".into());
+            return;
+        }
+        // Save the old tab's sort before leaving it.
+        self.sync_sort_to_tab();
+
+        self.config.active_tab = if forward {
+            (self.config.active_tab + 1) % n
+        } else {
+            (self.config.active_tab + n - 1) % n
+        };
+
+        self.load_sort_from_tab();
+        self.selected = 0;
+        self.offset = 0;
+        let name = self.config.active_tab().name.clone();
+        self.status = Some(format!("tab: {name}"));
     }
 
     fn clamp_selection(&mut self) {
@@ -201,6 +330,8 @@ impl App {
             Screen::Info { .. } => self.handle_info_key(key),
             Screen::SignalPicker { .. } => self.handle_signal_key(key),
             Screen::Setup => self.handle_setup_key(key),
+            Screen::Affinity(_) => self.handle_affinity_key(key),
+            Screen::IoPriority(_) => self.handle_ioprio_key(key),
             Screen::ProcessList => self.handle_list_key(key),
         }
     }
@@ -229,6 +360,14 @@ impl App {
             Key::F(4) | Key::Char('\\') => {
                 self.start_input(InputKind::Filter);
                 Reaction::Continue
+            }
+            Key::Tab => {
+                self.cycle_tab(true);
+                Reaction::Reorder
+            }
+            Key::BackTab => {
+                self.cycle_tab(false);
+                Reaction::Reorder
             }
             Key::F(5) | Key::Char('t') => {
                 self.toggle_tree();
@@ -323,6 +462,8 @@ impl App {
                 self.config.delay_ms = (self.config.delay_ms + 100).min(10_000);
                 Reaction::Recalc
             }
+            Key::Char('a') => self.open_affinity(),
+            Key::Char('i') => self.open_ioprio(),
             Key::Char('Z') => self.show_security_context(),
             Key::Char('b') => self.show_backtrace(),
             Key::Char('e') => self.show_env(),
@@ -330,11 +471,18 @@ impl App {
             Key::Char('l') => self.show_open_files(),
             Key::Char('x') => self.show_locks(),
             Key::Char('I') => {
-                self.meter_mode = match self.meter_mode {
-                    MeterMode::Text => MeterMode::Bar,
-                    MeterMode::Bar => MeterMode::Graph,
-                    MeterMode::Graph => MeterMode::Text,
-                };
+                // htop changes only the meter under the cursor here. With no
+                // header selection yet, the honest behaviour is to cycle every
+                // meter's mode and say so, rather than pretend a cursor exists.
+                for i in 0..self.meters.len() {
+                    self.cycle_meter_mode(i);
+                }
+                let name = self
+                    .meter_modes
+                    .first()
+                    .map(|m| meters_impl::mode_name(*m))
+                    .unwrap_or("bar");
+                self.status = Some(format!("meter mode: {name}"));
                 Reaction::Continue
             }
             Key::Esc => {
@@ -463,11 +611,19 @@ impl App {
                 self.status = Some("setup discarded".into());
                 return Reaction::Continue;
             }
-            Key::F(10) | Key::Char('S') | Key::Enter => {
+            Key::F(10) | Key::Char('S') => {
                 self.screen = Screen::ProcessList;
                 self.apply_draft_config(setup.draft.clone());
                 self.status = Some("setup applied".into());
                 return Reaction::Continue;
+            }
+            Key::Enter => {
+                // `Enter` activates the row under the cursor. Using it to apply
+                // the whole screen made the Tabs page impossible to use: there
+                // was no way to add, select or delete a tab.
+                setup.activate();
+                self.apply_draft_config(setup.draft.clone());
+                reaction = Reaction::Continue;
             }
             Key::Tab => setup.next_page(),
             Key::BackTab => setup.prev_page(),
@@ -478,13 +634,29 @@ impl App {
                 self.apply_draft_config(setup.draft.clone());
                 reaction = Reaction::Continue;
             }
-            Key::Char('[') => {
-                setup.move_column(true);
+            Key::Char('[') | Key::Char(']') => {
+                let up = key == Key::Char('[');
+                match setup.page {
+                    crate::setup::SetupPage::Header => setup.move_meter(up),
+                    crate::setup::SetupPage::Columns => setup.move_column(up),
+                    // Nothing else has an order to change; do not pretend.
+                    _ => self.status = Some("nothing to reorder on this page".into()),
+                }
                 self.apply_draft_config(setup.draft.clone());
             }
-            Key::Char(']') => {
-                setup.move_column(false);
-                self.apply_draft_config(setup.draft.clone());
+            Key::Delete => {
+                let result = match setup.page {
+                    crate::setup::SetupPage::Tabs => setup.remove_tab(),
+                    crate::setup::SetupPage::Header => setup.remove_meter(),
+                    _ => Err("nothing to delete on this page"),
+                };
+                match result {
+                    Ok(name) => {
+                        self.apply_draft_config(setup.draft.clone());
+                        self.status = Some(format!("deleted: {name}"));
+                    }
+                    Err(why) => self.status = Some(why.to_string()),
+                }
             }
             _ => {}
         }
@@ -494,11 +666,19 @@ impl App {
     }
 
     /// Adopt an edited config: theme, toggles and column list.
+    /// Adopt an edited config: theme, toggles, columns and header meters.
     fn apply_draft_config(&mut self, draft: Config) {
         self.theme = Theme::named(&draft.color_scheme).unwrap_or_default();
         self.table.tree_mode = draft.tree_mode;
         self.table.show_kernel_threads = draft.show_kernel_threads;
         self.config = draft;
+        // Switching or adding a tab changes which columns and sort are live.
+        self.load_sort_from_tab();
+        // The header meter list may have changed shape; rebuild it, keeping the
+        // modes the user picked for meters that are still present.
+        self.rebuild_header(self.snapshot.cpu_count());
+        self.selected = 0;
+        self.offset = 0;
     }
 
     /// Keys for the signal picker.
@@ -672,6 +852,7 @@ impl App {
         } else {
             Dir::Asc
         };
+        self.sync_sort_to_tab();
         self.status = Some(format!("sort: {}", self.table.sort.field.title().trim()));
     }
 
@@ -739,6 +920,95 @@ impl App {
                 self.tags.insert(p);
             }
         }
+    }
+
+    /// `a`: open the CPU affinity panel for the selected process.
+    fn open_affinity(&mut self) -> Reaction {
+        let Some(row) = self.selected_row() else {
+            self.status = Some("no process selected".into());
+            return Reaction::Continue;
+        };
+        let pid = row.pid;
+        let cores = self.snapshot.cpu_count().max(1);
+        self.screen = Screen::Affinity(crate::panels::AffinityPanel::new(pid, cores));
+        Reaction::Continue
+    }
+
+    /// `i`: open the I/O priority panel for the selected process.
+    fn open_ioprio(&mut self) -> Reaction {
+        let Some(row) = self.selected_row() else {
+            self.status = Some("no process selected".into());
+            return Reaction::Continue;
+        };
+        let pid = row.pid;
+        self.screen = Screen::IoPriority(crate::panels::IoPriorityPanel::new(pid));
+        Reaction::Continue
+    }
+
+    fn handle_affinity_key(&mut self, key: Key) -> Reaction {
+        let Screen::Affinity(mut panel) = self.screen.clone() else {
+            return Reaction::Continue;
+        };
+        match key {
+            Key::Char('q') | Key::Esc | Key::F(10) => {
+                self.screen = Screen::ProcessList;
+                self.status = None;
+                return Reaction::Continue;
+            }
+            Key::Left => panel.move_cursor(-1),
+            Key::Right => panel.move_cursor(1),
+            Key::Up => panel.move_cursor(-8),
+            Key::Down => panel.move_cursor(8),
+            Key::Home => panel.move_cursor(-(panel.cores as isize)),
+            Key::End => panel.move_cursor(panel.cores as isize),
+            Key::Char(' ') | Key::Enter => panel.toggle(),
+            Key::Char('S') => match panel.apply() {
+                Ok(()) => {
+                    self.status = Some(format!(
+                        "affinity of {} set to {} CPUs",
+                        panel.pid,
+                        panel.mask.count()
+                    ));
+                    self.screen = Screen::ProcessList;
+                    return Reaction::Continue;
+                }
+                Err(e) => self.status = Some(format!("affinity failed: {e}")),
+            },
+            _ => {}
+        }
+        self.screen = Screen::Affinity(panel);
+        Reaction::Continue
+    }
+
+    fn handle_ioprio_key(&mut self, key: Key) -> Reaction {
+        let Screen::IoPriority(mut panel) = self.screen.clone() else {
+            return Reaction::Continue;
+        };
+        match key {
+            Key::Char('q') | Key::Esc | Key::F(10) => {
+                self.screen = Screen::ProcessList;
+                self.status = None;
+                return Reaction::Continue;
+            }
+            Key::Char(' ') | Key::Enter => panel.cycle_class(),
+            Key::Up | Key::Right => panel.change_level(1),
+            Key::Down | Key::Left => panel.change_level(-1),
+            Key::Char('S') => match panel.apply() {
+                Ok(()) => {
+                    self.status = Some(format!(
+                        "I/O priority of {} set to {}",
+                        panel.pid,
+                        panel.priority.label()
+                    ));
+                    self.screen = Screen::ProcessList;
+                    return Reaction::Continue;
+                }
+                Err(e) => self.status = Some(format!("I/O priority failed: {e}")),
+            },
+            _ => {}
+        }
+        self.screen = Screen::IoPriority(panel);
+        Reaction::Continue
     }
 
     fn renice_selected(&mut self, delta: i8) {
@@ -985,6 +1255,8 @@ impl App {
                     setup.draw(chunks[1], frame.buffer_mut(), &self.theme);
                 }
             }
+            Screen::Affinity(panel) => panel.draw(chunks[1], frame.buffer_mut(), &self.theme),
+            Screen::IoPriority(panel) => panel.draw(chunks[1], frame.buffer_mut(), &self.theme),
         }
 
         self.draw_function_bar(chunks[2], frame.buffer_mut());
@@ -998,20 +1270,17 @@ impl App {
         if area.height == 0 || area.width == 0 {
             return;
         }
-        let mode = self.meter_mode;
         let theme = self.theme.clone();
+        let right_column = crate::meters::HeaderColumn::Right;
 
-        let has_right = self
-            .meters
-            .iter()
-            .any(|m| m.column() == crate::meters::HeaderColumn::Right);
+        let has_right = self.meters.iter().any(|m| m.column() == right_column);
 
         // The last row of the header block belongs to the screen-tab strip.
         let meter_h = area.height.saturating_sub(1);
 
         if !has_right {
             let rect = Rect::new(area.x, area.y, area.width, meter_h);
-            Self::draw_column(&mut self.meters, rect, buf, &theme, mode);
+            Self::draw_column(&mut self.meters, 0, &self.meter_modes, rect, buf, &theme, self.meter_mode);
             return;
         }
 
@@ -1020,40 +1289,72 @@ impl App {
         let left = Rect::new(area.x, area.y, left_w.saturating_sub(1), meter_h);
         let right = Rect::new(area.x + left_w, area.y, area.width - left_w, meter_h);
 
-        let mut left_meters = Vec::new();
-        let mut right_meters = Vec::new();
-        for meter in std::mem::take(&mut self.meters) {
-            if meter.column() == crate::meters::HeaderColumn::Right {
-                right_meters.push(meter);
+        // Meters are stored in one vector, but drawn per column, so the column's
+        // first meter is not always index 0 of `meter_modes`.
+        let mut left_index = Vec::new();
+        let mut right_index = Vec::new();
+        for (i, meter) in self.meters.iter().enumerate() {
+            if meter.column() == right_column {
+                right_index.push(i);
             } else {
-                left_meters.push(meter);
+                left_index.push(i);
             }
         }
 
-        Self::draw_column(&mut left_meters, left, buf, &theme, mode);
-        Self::draw_column(&mut right_meters, right, buf, &theme, mode);
-
-        // Put the meters back so sampling continues to work.
-        self.meters = left_meters;
-        self.meters.extend(right_meters);
+        self.draw_column_indices(&left_index, left, buf, &theme);
+        self.draw_column_indices(&right_index, right, buf, &theme);
     }
 
-    fn draw_column(
-        meters: &mut [Box<dyn Meter>],
+    /// Draw the meters named by `indices` into one column, honouring each
+    /// meter's own mode.
+    fn draw_column_indices(
+        &mut self,
+        indices: &[usize],
         area: Rect,
         buf: &mut Buffer,
         theme: &Theme,
-        mode: MeterMode,
     ) {
         if area.width == 0 || area.height == 0 {
             return;
         }
         let mut y = area.y;
-        for meter in meters.iter_mut() {
+        for &i in indices {
+            let mode = self.meter_mode_at(i);
+            let Some(meter) = self.meters.get_mut(i) else {
+                continue;
+            };
             let h = meter.rows().max(1);
             if y + h > area.bottom() {
                 break;
             }
+            let rect = Rect::new(area.x, y, area.width, h);
+            meter.render(rect, buf, theme, mode);
+            y += h;
+        }
+    }
+
+    fn draw_column(
+        meters: &mut [Box<dyn Meter>],
+        first_index: usize,
+        modes: &[MeterMode],
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        fallback: MeterMode,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let mut y = area.y;
+        for (offset, meter) in meters.iter_mut().enumerate() {
+            let h = meter.rows().max(1);
+            if y + h > area.bottom() {
+                break;
+            }
+            let mode = modes
+                .get(first_index + offset)
+                .copied()
+                .unwrap_or(fallback);
             let rect = Rect::new(area.x, y, area.width, h);
             meter.render(rect, buf, theme, mode);
             y += h;
@@ -1264,12 +1565,36 @@ impl App {
                 ("Enter", "Send"),
                 ("F10", "Quit"),
             ],
+            Screen::Affinity(_) => [
+                ("Esc", "Cancel"),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("S", "Apply"),
+                ("F10", "Quit"),
+            ],
+            Screen::IoPriority(_) => [
+                ("Esc", "Cancel"),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("S", "Apply"),
+                ("F10", "Quit"),
+            ],
             Screen::Setup => [
                 ("Esc", "Cancel"),
                 ("Tab", "Page"),
                 ("Space", "Toggle"),
-                ("[ ]", "Move"),
                 ("", ""),
+                ("Del", "Delete tab"),
                 ("", ""),
                 ("", ""),
                 ("", ""),
@@ -1292,14 +1617,21 @@ impl App {
         // Divide the bar evenly, but never narrower than "F1 x", which is the
         // smallest readable slot. On a very narrow terminal the trailing keys are
         // dropped rather than rendered as broken fragments.
-        let used_keys = labels.iter().filter(|(k, _)| !k.is_empty()).count().max(1);
-        let min_slot = 5u16;
-        let per_slot = if area.width / used_keys as u16 >= min_slot {
-            labels.len() as u16
-        } else {
-            (area.width / min_slot).max(1)
-        };
-        let slot = area.width / per_slot.max(1);
+        // Slots are laid out by the widest entry a page needs, capped so the ten
+        // keys still spread across the bar. Using a fixed tenth made `Esc Cancel`
+        // (10 cells) impossible on an 84-column terminal (8 cells per slot).
+        let widest = labels
+            .iter()
+            .filter(|(k, _)| !k.is_empty())
+            .map(|(k, l)| k.chars().count() + 1 + l.chars().count())
+            .max()
+            .unwrap_or(5)
+            .max(5) as u16;
+        let per_slot = labels.len() as u16;
+        let slot = (area.width / per_slot).max(1);
+        // Let each entry use its natural width when it needs more than its slot,
+        // as long as the bar as a whole has room.
+        let _ = widest;
 
         for (i, (key, label)) in labels.iter().enumerate() {
             if i as u16 >= per_slot {
@@ -1309,22 +1641,34 @@ impl App {
                 continue;
             }
             let x = area.x + i as u16 * slot;
-            let room = slot.min(area.right().saturating_sub(x));
+            if x >= area.right() {
+                break;
+            }
+            // Every field is clipped to its own slot, otherwise a long label
+            // bleeds into the next key and the bar reads as garbage.
+            let slot_end = (x + slot).min(area.right());
+            let room = slot_end.saturating_sub(x);
             if room == 0 {
                 break;
             }
 
-            // A single space keeps `F1` and `Help` from running together.
+            // Separate key and label with a space when the slot has room, and
+            // run them together when it does not — the compact form is what htop
+            // itself falls back to on a narrow terminal.
+            let key_len = key.chars().count() as u16;
+            let label_len = label.chars().count() as u16;
+            let spaced = key_len + 1 + label_len <= room;
+
             crate::meters::put_str(buf, x, area.y, key, self.theme.function_bar_key, room);
-            let label_x = x + key.len() as u16 + 1;
-            if label_x < area.right() {
+            let label_x = x + key_len + if spaced { 1 } else { 0 };
+            if label_x < slot_end {
                 crate::meters::put_str(
                     buf,
                     label_x,
                     area.y,
                     label,
                     self.theme.function_bar,
-                    area.right().saturating_sub(label_x),
+                    slot_end.saturating_sub(label_x),
                 );
             }
         }
@@ -1936,6 +2280,89 @@ mod tests {
     }
 
     #[test]
+    fn each_tab_keeps_its_own_sort() {
+        let mut config = Config::default();
+        // Two tabs with different sorts, as a user would set up.
+        config.tabs = vec![
+            config.tabs[0].clone(),
+            gander_config::TabConfig {
+                name: "Memory".into(),
+                columns: vec!["PID".into(), "PERCENT_MEM".into(), "COMM".into()],
+                sort: gander_config::SortConfig {
+                    field: "PERCENT_MEM".into(),
+                    desc: true,
+                },
+            },
+        ];
+        config.active_tab = 0;
+
+        let mut app = App::new(config);
+        app.viewport = 5;
+        app.apply_sample(SystemSnapshot::default(), Vec::new());
+
+        assert_eq!(app.table.sort.field, Field::PercentCpu, "tab 0 starts here");
+        assert_eq!(app.columns().len(), 8, "tab 0 keeps its own columns");
+
+        app.handle_key(Key::Tab);
+        assert_eq!(app.config.active_tab, 1);
+        assert_eq!(
+            app.table.sort.field,
+            Field::PercentMem,
+            "switching tabs must load that tab's sort"
+        );
+        assert_eq!(app.columns().len(), 3, "and its columns");
+
+        // Changing the sort here must not leak into the other tab.
+        app.cycle_sort(false);
+        let tab1_sort = app.table.sort.field;
+        app.handle_key(Key::BackTab);
+        assert_eq!(app.config.active_tab, 0);
+        assert_eq!(
+            app.table.sort.field,
+            Field::PercentCpu,
+            "tab 0's sort survived the round trip"
+        );
+
+        app.handle_key(Key::Tab);
+        assert_eq!(app.table.sort.field, tab1_sort, "tab 1 kept its own change");
+    }
+
+    #[test]
+    fn cycling_tabs_with_only_one_configured_explains_itself() {
+        let mut app = app_with_n_rows(3);
+        app.handle_key(Key::Tab);
+        assert_eq!(app.config.active_tab, 0);
+        assert!(
+            app.status.as_deref().unwrap_or("").contains("one screen tab"),
+            "should say why nothing happened, got {:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn tab_switch_resets_the_selection() {
+        let mut config = Config::default();
+        config.tabs.push(config.tabs[0].clone());
+        let mut app = App::new(config);
+        app.viewport = 5;
+        app.apply_sample(
+            SystemSnapshot::default(),
+            (1..=50)
+                .map(Row::default_for_test)
+                .collect::<Vec<_>>(),
+        );
+
+        for _ in 0..10 {
+            app.handle_key(Key::Down);
+        }
+        assert_eq!(app.selected, 10);
+
+        app.handle_key(Key::Tab);
+        assert_eq!(app.selected, 0, "a different tab starts at the top");
+        assert_eq!(app.offset, 0);
+    }
+
+    #[test]
     fn render_field_formats_without_panicking() {
         let snap = SystemSnapshot::default();
         let r = row(1, "x");
@@ -1994,6 +2421,186 @@ mod tests {
             .join("");
         assert!(rendered.contains("PID"), "header must be drawn");
         assert!(rendered.contains("F10"), "function bar must be drawn");
+    }
+
+    #[test]
+    fn a_opens_the_affinity_panel_for_the_selected_process() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 9],
+            cpu_delta: vec![CpuTimes::default(); 9],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        let mut rows: Vec<Row> = (1..=5).map(Row::default_for_test).collect();
+        rows[0].comm.try_push_str("first").unwrap();
+        app.apply_sample(snapshot, rows);
+        app.selected = 0;
+        let pid = app.selected_row().expect("a selected row").pid;
+
+        app.handle_key(Key::Char('a'));
+        match &app.screen {
+            Screen::Affinity(panel) => {
+                assert_eq!(panel.pid, pid, "the selected row's pid");
+                assert_eq!(panel.cores, 8, "one entry per core");
+            }
+            other => panic!("expected the affinity panel, got {other:?}"),
+        }
+
+        // The panel closes on Esc and leaves the list untouched.
+        app.handle_key(Key::Esc);
+        assert_eq!(app.screen, Screen::ProcessList);
+    }
+
+    #[test]
+    fn a_on_an_empty_table_explains_itself() {
+        let mut app = app_with_n_rows(0);
+        app.handle_key(Key::Char('a'));
+        assert_eq!(app.screen, Screen::ProcessList);
+        assert!(app.status.as_deref().unwrap_or("").contains("no process"));
+    }
+
+    #[test]
+    fn i_opens_the_io_priority_panel() {
+        let mut app = app_with_n_rows(3);
+        app.selected = 1;
+        let pid = app.selected_row().unwrap().pid;
+
+        app.handle_key(Key::Char('i'));
+        match &app.screen {
+            Screen::IoPriority(panel) => assert_eq!(panel.pid, pid),
+            other => panic!("expected the I/O priority panel, got {other:?}"),
+        }
+
+        // Space is safe on every platform: it cycles where supported and is a
+        // no-op where not, but must never panic or close the panel.
+        app.handle_key(Key::Char(' '));
+        assert!(matches!(app.screen, Screen::IoPriority(_)));
+
+        app.handle_key(Key::Esc);
+        assert_eq!(app.screen, Screen::ProcessList);
+    }
+
+    #[test]
+    fn both_panels_draw() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        for key in [Key::Char('a'), Key::Char('i')] {
+            let mut app = app_with_n_rows(3);
+            app.selected = 0;
+            app.handle_key(key);
+            let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| app.draw(f)).unwrap();
+        }
+    }
+
+    #[test]
+    fn each_meter_keeps_its_own_mode() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 5],
+            cpu_delta: vec![CpuTimes::default(); 5],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+        assert!(app.meters.len() > 2);
+
+        // Everything starts as configured (bar / text).
+        let before: Vec<MeterMode> = (0..app.meters.len()).map(|i| app.meter_mode_at(i)).collect();
+
+        app.cycle_meter_mode(1);
+        assert_ne!(app.meter_mode_at(1), before[1], "meter 1 changed");
+        for i in [0usize, 2] {
+            assert_eq!(
+                app.meter_mode_at(i),
+                before[i],
+                "meter {i} must not change with meter 1"
+            );
+        }
+
+        // And the choice is written back to the *right* config entry, so it
+        // survives a save. The flat index is not the config index: a collapsed
+        // CPU pair shifts everything after it.
+        let source = app.meter_sources[1];
+        let persisted = match source.column {
+            crate::meters::HeaderColumn::Left => &app.config.meters_left[source.index],
+            crate::meters::HeaderColumn::Right => &app.config.meters_right[source.index],
+        };
+        assert_eq!(persisted.name, app.meters[1].name());
+        assert_eq!(
+            persisted.mode,
+            meters_impl::mode_name(app.meter_modes[1]),
+            "meter 1's mode must be persisted on its own entry"
+        );
+    }
+
+    #[test]
+    fn rebuilding_the_header_keeps_the_modes_of_surviving_meters() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 5],
+            cpu_delta: vec![CpuTimes::default(); 5],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot.clone(), Vec::new());
+
+        // Put a meter in graph mode, then rebuild (as the setup screen does).
+        let idx = app
+            .meters
+            .iter()
+            .position(|m| m.name() == "Memory")
+            .expect("Memory meter");
+        while app.meter_mode_at(idx) != MeterMode::Graph {
+            app.cycle_meter_mode(idx);
+        }
+
+        app.rebuild_header(snapshot.cpu_count());
+        let idx = app
+            .meters
+            .iter()
+            .position(|m| m.name() == "Memory")
+            .expect("Memory meter after rebuild");
+        assert_eq!(
+            app.meter_mode_at(idx),
+            MeterMode::Graph,
+            "the user's mode must survive a header rebuild"
+        );
+    }
+
+    #[test]
+    fn a_configured_header_is_honoured() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let config = Config {
+            meters_left: vec![gander_config::MeterConfig::new("Memory", "text")],
+            meters_right: vec![gander_config::MeterConfig::new("Clock", "graph")],
+            ..Config::default()
+        };
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 5],
+            cpu_delta: vec![CpuTimes::default(); 5],
+            ..Default::default()
+        };
+        let mut app = App::new(config);
+        app.apply_sample(snapshot, Vec::new());
+
+        let names: Vec<&str> = app.meters.iter().map(|m| m.name()).collect();
+        // A CPU meter is forced in when the config omits one, so the machine's
+        // load is never invisible.
+        assert!(names.contains(&"CPU"), "got {names:?}");
+        assert!(names.contains(&"Memory"), "got {names:?}");
+        assert!(names.contains(&"Clock"), "got {names:?}");
+        assert!(!names.contains(&"Swap"), "unlisted meters must not appear");
+
+        let clock = app.meters.iter().position(|m| m.name() == "Clock").unwrap();
+        assert_eq!(app.meter_mode_at(clock), MeterMode::Graph);
     }
 
     #[test]

@@ -12,3 +12,7 @@ gander-config.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 arc-swap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# `localtime_r` and `gethostname` for the Clock / Date / Hostname meters.
+libc.workspace = true
