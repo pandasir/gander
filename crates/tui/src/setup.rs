@@ -117,7 +117,7 @@ impl Setup {
             // Left column meters, a separator, the right column meters, then
             // the "add" row.
             SetupPage::Header => self.header_rows().len(),
-            SetupPage::Display => 4,
+            SetupPage::Display => 5,
             SetupPage::Colors => Theme::available().len(),
             SetupPage::About => 0,
         }
@@ -186,6 +186,9 @@ impl Setup {
                         self.draft.show_kernel_threads = !self.draft.show_kernel_threads;
                     }
                     2 => {
+                        self.draft.show_userland_threads = !self.draft.show_userland_threads;
+                    }
+                    3 => {
                         self.draft.highlight_base_name = !self.draft.highlight_base_name;
                     }
                     _ => {
@@ -665,6 +668,7 @@ impl Setup {
         let items = [
             ("Tree view", self.draft.tree_mode),
             ("Show kernel threads", self.draft.show_kernel_threads),
+            ("Show userland threads", self.draft.show_userland_threads),
             (
                 "Highlight program base name",
                 self.draft.highlight_base_name,

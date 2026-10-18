@@ -90,6 +90,47 @@ pub fn list_pids(root: &Path) -> io::Result<Vec<Pid>> {
     Ok(out)
 }
 
+/// List the thread ids inside a process (`/proc/<pid>/task`).
+///
+/// A process is its own thread group leader, so the leader's tid equals its pid
+/// and appears in this list too; callers filter or keep it deliberately.
+pub fn list_tids(root: &Path, pid: Pid) -> io::Result<Vec<Pid>> {
+    let mut out = Vec::with_capacity(8);
+    let dir = root.join(pid.to_string()).join("task");
+    for entry in fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let bytes = name.as_bytes();
+        if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        if let Ok(tid) = name.to_string_lossy().parse::<Pid>() {
+            out.push(tid);
+        }
+    }
+    Ok(out)
+}
+
+/// Read `stat` for one thread of `pid`.
+///
+/// `/proc/<pid>/task/<tid>/stat` is the same format as a process's `stat`, with
+/// the thread's own CPU counters. The identity files (`status`, `cmdline`) are
+/// per-process, so a thread row reuses its leader's.
+pub fn read_thread_stat(
+    root: &Path,
+    pid: Pid,
+    tid: Pid,
+) -> Option<(crate::row::CommBuf, super::parse::StatFields)> {
+    let path = root
+        .join(pid.to_string())
+        .join("task")
+        .join(tid.to_string())
+        .join("stat");
+    let bytes = fs::read(path).ok()?;
+    let (_pid, comm, fields) = super::parse::parse_stat(&bytes)?;
+    Some((comm, fields))
+}
+
 /// Read the `stat` file of one process.
 pub fn read_stat(root: &Path, pid: Pid) -> Option<(crate::row::CommBuf, super::parse::StatFields)> {
     let mut slot = None;

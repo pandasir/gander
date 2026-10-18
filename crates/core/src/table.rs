@@ -191,11 +191,16 @@ pub struct Visibility {
     pub uid: Option<u32>,
     /// Whether kernel threads are shown (from `K` / `H`).
     pub show_kernel_threads: bool,
+    /// Whether thread rows are shown (from `H`).
+    pub show_userland_threads: bool,
 }
 
 impl Visibility {
     pub fn allows(&self, row: &Row) -> bool {
         if !self.show_kernel_threads && row.flags.contains(RowFlags::KERNEL_THREAD) {
+            return false;
+        }
+        if !self.show_userland_threads && row.is_thread {
             return false;
         }
         if let Some(uid) = self.uid {
@@ -225,6 +230,7 @@ pub struct ProcTable {
     pub sort: Sort,
     pub tree_mode: bool,
     pub show_kernel_threads: bool,
+    pub show_userland_threads: bool,
 }
 
 impl Default for ProcTable {
@@ -235,6 +241,7 @@ impl Default for ProcTable {
             sort: Sort::default(),
             tree_mode: false,
             show_kernel_threads: true,
+            show_userland_threads: false,
         }
     }
 }

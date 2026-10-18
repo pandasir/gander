@@ -24,6 +24,8 @@ pub struct Config {
     pub meters_right: Vec<MeterConfig>,
     pub tree_mode: bool,
     pub show_kernel_threads: bool,
+    /// Whether to list one row per thread inside each process (`H`).
+    pub show_userland_threads: bool,
     pub highlight_base_name: bool,
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
@@ -103,6 +105,7 @@ impl Default for Config {
             ],
             tree_mode: false,
             show_kernel_threads: true,
+            show_userland_threads: false,
             highlight_base_name: false,
             highlight_deleted_exe: true,
             color_scheme: "default".into(),

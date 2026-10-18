@@ -28,7 +28,7 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 212 tests on macOS, 191 on Linux, zero clippy warnings | done |
+| 212 tests on macOS, 198 on Linux, zero clippy warnings | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
@@ -71,11 +71,14 @@ Done:
       used to write back the config it had *started* with)
 - [x] Linux verified in a Debian container against a real `/proc`, including the
       affinity and ioprio syscalls
+- [x] Thread enumeration as rows on Linux (`H` / the Display page), with threads
+      nested under their process in tree view and their own per-thread CPU%
 
 Remaining:
 
-- [ ] Thread enumeration as rows (macOS has no cheap per-thread enumeration; the
-      Linux side needs a `Task`-style secondary list)
+- [ ] Thread enumeration on macOS. `proc_pidinfo(PROC_PIDLISTTHREADS)` exists but
+      returns thread *ids* only, so every thread needs a further Mach call for its
+      name and CPU time; that is a genuine cost/benefit call, not an oversight.
 
 
 ## Then: M1 / M2 / M3
@@ -97,8 +100,6 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 
 ## Known limitations
 
-- Threads are not enumerated yet on either platform; `NLWP` is displayed but the
-  thread list is not.
 - On macOS the per-process state is only trustworthy for `stopped` and `zombie`.
   Current Darwin reports `SRUN` for a process blocked in `read(2)`, so runnability
   comes from `proc_taskinfo.pti_numrunning` instead. Processes owned by another
@@ -110,6 +111,8 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not
   on bare metal with thousands of processes.
 - The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
+- Thread rows need `/proc/<pid>/task`, so they are Linux-only; macOS shows the
+  `NLWP` count but cannot expand it.
 - The function bar truncates its labels on terminals narrower than ~50 columns,
   though the key names stay intact.
 - Scrolling uses minimal movement rather than centring the selection, so the

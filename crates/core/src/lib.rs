@@ -49,6 +49,18 @@ pub trait PlatformSampler: Default {
 
     /// A user-facing name for the backend.
     fn backend_name() -> &'static str;
+
+    /// Whether the next sample should include one row per thread.
+    ///
+    /// Part of the trait, not an inherent field, so a front end can set it on
+    /// whichever backend it was compiled against. Backends that cannot enumerate
+    /// threads accept the setting and ignore it.
+    fn set_show_threads(&mut self, _on: bool) {}
+
+    /// Whether this backend can actually enumerate threads.
+    fn supports_threads() -> bool {
+        false
+    }
 }
 
 /// Whether a live backend exists for this build.

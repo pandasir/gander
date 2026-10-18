@@ -386,6 +386,18 @@ pub struct Row {
     pub tty_nr: i64,
     /// Field 22 of `/proc/<pid>/stat`: cache key and PID-reuse detector.
     pub starttime: u64,
+    /// Thread group id: the pid of the process this row belongs to.
+    ///
+    /// For a process this equals `pid`. For a thread it is the leader's pid,
+    /// which is what lets the table nest threads under their process and keep
+    /// the selection stable while thread enumeration is toggled.
+    pub tgid: Pid,
+    /// True when this row is a thread rather than a process.
+    ///
+    /// Kept separate from `RowFlags::USERLAND_THREAD` because that flag answers
+    /// "is this a userland thread" for display purposes, while this answers a
+    /// structural question the table has to get right.
+    pub is_thread: bool,
 
     /// `ArrayString<64>`: no heap allocation per scanned process.
     pub comm: CommBuf,
@@ -442,6 +454,8 @@ impl Row {
             session: 0,
             tty_nr: 0,
             starttime: 0,
+            tgid: pid,
+            is_thread: false,
             comm: CommBuf::new(),
             state: b'R',
             uid: 0,

@@ -34,6 +34,12 @@ pub struct Sampler {
     /// Minimum per-process state needed for the next tick's delta.
     prev_rows: HashMap<Pid, PrevRow>,
     pub use_rayon: bool,
+    /// Whether to emit one row per thread in addition to one per process.
+    ///
+    /// Off by default: `/proc/<pid>/task` costs an extra `stat` read per thread,
+    /// which on a busy desktop is roughly 1700 extra file reads per tick. htop
+    /// makes the same trade (`hide_userland_threads`).
+    show_threads: bool,
 }
 
 impl Default for Sampler {
@@ -52,6 +58,7 @@ impl Sampler {
             prev_cpu: Vec::new(),
             prev_rows: HashMap::new(),
             use_rayon: true,
+            show_threads: false,
         }
     }
 
@@ -82,7 +89,11 @@ impl Sampler {
         let uptime = scan::read_uptime(&self.root).unwrap_or(0);
 
         let pids = scan::list_pids(&self.root).unwrap_or_default();
-        let rows = self.read_rows(&pids, &cpu_delta, uptime, mem.total);
+        let mut rows = self.read_rows(&pids, &cpu_delta, uptime, mem.total);
+        if self.show_threads {
+            let threads = self.read_threads(&pids, &cpu_delta);
+            rows.extend(threads);
+        }
 
         self.prev_cpu = cpu.clone();
         self.cache.retain_live(
@@ -108,6 +119,90 @@ impl Sampler {
             tasks: task_stats(&rows),
         };
         (snapshot, rows)
+    }
+
+    /// One extra row per thread, with `tgid` pointing at its process.
+    ///
+    /// The thread-group leader is skipped: it is already present as the process
+    /// row, and duplicating it would make the tree show every process twice.
+    /// Threads inherit the process's uid, command line and cgroup, so only the
+    /// thread's own `stat` (and therefore its CPU%) is read here.
+    fn read_threads(&mut self, pids: &[Pid], cpu_delta: &[CpuTimes]) -> Vec<Row> {
+        let root = self.root.clone();
+        let page_size = self.page_size;
+        let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0) as f32;
+
+        // Collect (pid, tid) pairs first so the parallel part only reads files.
+        let mut pairs: Vec<(Pid, Pid)> = Vec::new();
+        for &pid in pids {
+            let Ok(tids) = scan::list_tids(&root, pid) else {
+                continue;
+            };
+            for tid in tids {
+                if tid != pid {
+                    pairs.push((pid, tid));
+                }
+            }
+        }
+        if pairs.is_empty() {
+            return Vec::new();
+        }
+
+        let read_one = |&(pid, tid): &(Pid, Pid)| {
+            scan::read_thread_stat(&root, pid, tid).map(|(comm, fields)| (pid, tid, comm, fields))
+        };
+
+        let stats: Vec<(Pid, Pid, crate::row::CommBuf, super::parse::StatFields)> =
+            if self.use_rayon && pairs.len() >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                pairs.par_iter().filter_map(read_one).collect()
+            } else {
+                pairs.iter().filter_map(read_one).collect()
+            };
+
+        let mut out = Vec::with_capacity(stats.len());
+        for (pid, tid, comm, fields) in stats {
+            let starttime = fields.starttime;
+            let mut row = Row::default_for_test(tid);
+            row.pid = tid;
+            row.tgid = pid;
+            row.is_thread = true;
+            row.ppid = pid;
+            row.comm = comm;
+
+            let prev_thread_ticks = match self.prev_rows.get(&tid) {
+                Some(p) if p.starttime == starttime => p.proc_ticks,
+                _ => 0,
+            };
+            self.prev_rows.insert(
+                tid,
+                PrevRow {
+                    starttime,
+                    proc_ticks: fields.cpu_ticks(),
+                },
+            );
+
+            scan::apply_stat(&mut row, &fields, page_size);
+
+            let delta = fields.cpu_ticks().saturating_sub(prev_thread_ticks) as f32;
+            row.percent_cpu = if total_delta > 0.0 {
+                delta * 100.0 / total_delta
+            } else {
+                0.0
+            };
+
+            // Identity is the process's, and already cached under the leader's pid.
+            let stable = scan::read_identity(&self.root, pid, starttime, &mut self.cache);
+            row.uid = stable.uid;
+            row.cmdline = stable.cmdline.clone();
+            row.exe = stable.exe.clone();
+            row.cgroup = stable.cgroup.clone();
+            row.flags = row.flags.insert(RowFlags::USERLAND_THREAD);
+            row.nlwp = 1;
+
+            out.push(row);
+        }
+        out
     }
 
     /// Read `stat` for every pid, in parallel when the set is large enough.
@@ -234,6 +329,14 @@ impl crate::PlatformSampler for Sampler {
 
     fn backend_name() -> &'static str {
         "linux (/proc)"
+    }
+
+    fn set_show_threads(&mut self, on: bool) {
+        self.show_threads = on;
+    }
+
+    fn supports_threads() -> bool {
+        true
     }
 }
 

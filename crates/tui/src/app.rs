@@ -121,6 +121,7 @@ impl App {
             sort: config.active_tab().sort(),
             tree_mode: config.tree_mode,
             show_kernel_threads: config.show_kernel_threads,
+            show_userland_threads: config.show_userland_threads,
             ..Default::default()
         };
         table.sort = Sort {
@@ -480,7 +481,18 @@ impl App {
                 Reaction::Reorder
             }
             Key::Char('H') => {
-                self.table.show_kernel_threads = false;
+                // htop: `H` toggles userland threads, `K` toggles kernel threads.
+                // These were both wired to kernel threads, so `H` did nothing
+                // distinguishable from `K` and neither could show a thread list.
+                self.table.show_userland_threads = !self.table.show_userland_threads;
+                self.config.show_userland_threads = self.table.show_userland_threads;
+                self.status = Some(if self.table.show_userland_threads {
+                    "showing threads".into()
+                } else {
+                    "hiding threads".into()
+                });
+                // Threads have to be sampled before they can be filtered in, so
+                // turning them on needs a fresh sample, not just a reorder.
                 Reaction::Reorder
             }
             Key::Char('+') | Key::Char('=') => {
@@ -706,6 +718,7 @@ impl App {
         self.theme = Theme::named(&draft.color_scheme).unwrap_or_default();
         self.table.tree_mode = draft.tree_mode;
         self.table.show_kernel_threads = draft.show_kernel_threads;
+        self.table.show_userland_threads = draft.show_userland_threads;
         self.config = draft;
         // Switching or adding a tab changes which columns and sort are live.
         self.load_sort_from_tab();
@@ -908,6 +921,7 @@ impl App {
             text: self.filter.clone(),
             uid: self.user_filter,
             show_kernel_threads: self.table.show_kernel_threads,
+            show_userland_threads: self.table.show_userland_threads,
         };
         self.table.reorder(&self.visibility);
         self.clamp_selection();
@@ -2599,6 +2613,87 @@ mod tests {
             meters_impl::mode_name(app.meter_modes[1]),
             "meter 1's mode must be persisted on its own entry"
         );
+    }
+
+    fn thread_row(pid: u32, tgid: u32) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.tgid = tgid;
+        r.ppid = tgid;
+        r.is_thread = true;
+        r.flags = r.flags.insert(gander_core::row::RowFlags::USERLAND_THREAD);
+        r
+    }
+
+    #[test]
+    fn h_toggles_thread_rows_and_the_default_hides_them() {
+        let mut app = app_with_n_rows(2);
+        // Add a thread under pid 1.
+        app.table.rows.push(thread_row(9001, 1));
+        app.table.show_userland_threads = false;
+        app.reorder();
+        let without = app.table.visible();
+        assert!(
+            !app.table.view.order.iter().any(|&i| app.table.rows[i].is_thread),
+            "threads are hidden by default"
+        );
+
+        app.handle_key(Key::Char('H'));
+        assert!(app.table.show_userland_threads);
+        assert_eq!(
+            app.table.visible(),
+            without + 1,
+            "enabling H must reveal exactly the thread row"
+        );
+        assert!(app.status.as_deref().unwrap_or("").contains("threads"));
+
+        app.handle_key(Key::Char('H'));
+        assert!(!app.table.show_userland_threads);
+        assert_eq!(app.table.visible(), without);
+    }
+
+    #[test]
+    fn threads_appear_nested_under_their_process_in_tree_view() {
+        let mut app = app_with_n_rows(1); // pid 1
+        app.table.rows.push(thread_row(9001, 1));
+        app.table.rows.push(thread_row(9002, 1));
+        app.table.show_userland_threads = true;
+        app.table.tree_mode = true;
+        app.reorder();
+
+        // The leader is first, then its threads indented beneath it.
+        let order = app.table.view.order.clone();
+        let leader_pos = order
+            .iter()
+            .position(|&i| app.table.rows[i].pid == 1)
+            .expect("leader");
+        let thread_positions: Vec<usize> = order
+            .iter()
+            .enumerate()
+            .filter(|(_, &i)| app.table.rows[i].is_thread)
+            .map(|(pos, _)| pos)
+            .collect();
+        assert_eq!(thread_positions.len(), 2);
+        for pos in thread_positions {
+            assert!(pos > leader_pos, "threads must follow their leader");
+            assert_eq!(app.table.rows[order[pos]].depth, 1, "one level in");
+        }
+    }
+
+    #[test]
+    fn the_thread_setting_round_trips_through_the_config() {
+        let mut app = app_with_n_rows(1);
+        app.handle_key(Key::Char('H'));
+        assert!(app.config.show_userland_threads);
+        app.handle_key(Key::Char('H'));
+        assert!(!app.config.show_userland_threads);
+
+        // And it is honoured when a config arrives.
+        let config = Config {
+            show_userland_threads: true,
+            ..Config::default()
+        };
+        let app = App::new(config);
+        assert!(app.table.show_userland_threads);
     }
 
     #[test]

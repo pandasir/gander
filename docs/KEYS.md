@@ -48,8 +48,10 @@ matching is enough. Separate terms with `|`.
 
 | Key | Action |
 |---|---|
-| `I` | Cycle every meter's mode: text → bar → graph (per meter, persisted) |
+| `Shift+Left` / `Shift+Right` | Move the header meter cursor |
+| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter) |
 | `K` | Toggle kernel threads |
+| `H` | Toggle one row per thread (Linux) |
 | `H` | Hide kernel threads |
 | `+` / `-` | Faster / slower sampling (100 ms … 10 s) |
 | `F2` | Setup screen: Header, Columns, Tabs, Display, Colors |

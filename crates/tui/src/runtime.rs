@@ -44,6 +44,13 @@ mod platform {
     /// cost of a `/proc` scan.
     const TICK: Duration = Duration::from_millis(33);
 
+    /// Shared "list threads too" flag.
+    ///
+    /// The sampler thread runs the scan, but `H` is handled on the UI thread, so
+    /// the setting has to be visible to both. It is read once per sample, which
+    /// is the coarsest cadence that still feels immediate.
+    type ThreadsFlag = Arc<AtomicBool>;
+
     /// Run the application until the user quits.
     ///
     /// Returns the app's final configuration so the caller can persist it.
@@ -59,10 +66,11 @@ mod platform {
         let (snapshot, rows) = sampler.sample();
         app.apply_sample(snapshot, rows);
 
-        let (handle, stop) = spawn_sampler(slot.clone(), app.config.delay());
+        let threads = Arc::new(AtomicBool::new(app.table.show_userland_threads));
+        let (handle, stop) = spawn_sampler(slot.clone(), app.config.delay(), threads.clone());
 
         let mut terminal = init_terminal()?;
-        let result = event_loop(&mut terminal, &mut app, &slot);
+        let result = event_loop(&mut terminal, &mut app, &slot, &threads);
 
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
@@ -78,6 +86,7 @@ mod platform {
     fn spawn_sampler(
         slot: Slot,
         delay: Duration,
+        threads: ThreadsFlag,
     ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
@@ -88,6 +97,10 @@ mod platform {
                 let mut sampler = gander_core::Sampler::default();
                 while !stop_flag.load(Ordering::Relaxed) {
                     let started = Instant::now();
+                    gander_core::PlatformSampler::set_show_threads(
+                        &mut sampler,
+                        threads.load(Ordering::Relaxed),
+                    );
                     let (snapshot, rows) = sampler.sample();
                     slot.store(Arc::new(Some(Sample { snapshot, rows })));
 
@@ -108,6 +121,7 @@ mod platform {
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         app: &mut App,
         slot: &Slot,
+        threads: &ThreadsFlag,
     ) -> std::io::Result<()> {
         let mut last_draw = Instant::now() - TICK;
 
@@ -134,6 +148,9 @@ mod platform {
                             if app.handle_key(k) == Reaction::Quit || app.quit {
                                 return Ok(());
                             }
+                            // `H` may have flipped it; the sampler reads this
+                            // before its next scan.
+                            threads.store(app.table.show_userland_threads, Ordering::Relaxed);
                         }
                     }
                     Event::Resize(_, _) => {
