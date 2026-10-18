@@ -75,7 +75,7 @@ Details and the budget breakdown: [docs/DESIGN.md § 9 Performance](docs/DESIGN.
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 157 tests
+cargo test                 # 157 on macOS, 135 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```

@@ -23,11 +23,11 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | Config: TOML load/save, `htoprc` importer with the `id - 1` offset handled | done |
 | Batch mode: `-n`, `--json`, `--filter`, `--sort`, `--limit` | done |
 | Kill / renice | done |
-| Identical keybindings to htop | done |
+| htop keybindings for implemented features (`a`, `i`, `Delete` still unbound) | partial |
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 157 tests on macOS, 174 on Linux, zero clippy warnings | done |
+| 157 tests on macOS, 135 on Linux, zero clippy warnings on both | done |
 | Live Linux verification in a container | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
@@ -50,21 +50,25 @@ Remaining:
 
 - [ ] Screen tabs (`Tab` / `Shift+Tab`) with per-tab columns and sort
 - [ ] Header editing in the setup screen
-- [ ] Affinity panel (`a`) and I/O priority (`i`)
+- [ ] Affinity panel (`a`) and I/O priority (`i`) — the keys do nothing today
 - [ ] Thread enumeration as rows
+- [ ] Per-meter display mode: `I` currently cycles every meter at once, but htop
+      changes only the meter under the cursor
+- [ ] `runtime.rs` clones the whole row vector on every sample; `Row` holds three
+      `Box<str>`, so this allocates thousands of strings per second and violates
+      DESIGN.md § 9.4
 
 
 ## Then: M1 / M2 / M3
 
 See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 
-1. Meter display-mode cycling per meter (currently global).
-2. cgroup / container columns — the parsers already exist in `linux/fsops.rs`.
-3. PSS / EPSS columns, loaded lazily and only when visible.
-4. PSI pressure meters.
-5. Zram / Zswap / HugePages meters.
-6. GPU columns via `drm-usage-stats` (no vendor SDK).
-7. Delay accounting via `TASKSTATS` netlink — lowest priority.
+1. cgroup / container columns — the parsers already exist in `linux/fsops.rs`.
+2. PSS / EPSS columns, loaded lazily and only when visible.
+3. PSI pressure meters.
+4. Zram / Zswap / HugePages meters.
+5. GPU columns via `drm-usage-stats` (no vendor SDK).
+6. Delay accounting via `TASKSTATS` netlink — lowest priority.
 
 ## Deliberately not planned
 
