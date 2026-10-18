@@ -1,5 +1,7 @@
 # gander
 
+**English** | [简体中文](README.zh-CN.md)
+
 > A cross-platform interactive process viewer in Rust — `take a gander` at your system.
 
 `gander` is a functional reimplementation of [htop](https://github.com/htop-dev/htop)'s
@@ -43,11 +45,11 @@ code structure.** Keep its *keybindings* though — zero-cost migration for user
 
 | Milestone | Contents |
 |---|---|
-| **M0** | Linux only. Process table, sort, filter, tree view, kill / renice |
+| **M0** | Process table, sort, filter, tree view, kill / renice, on Linux and macOS |
 | **M1** | Meter system (CPU / memory / swap / load / net / disk IO), configurable columns, config persistence |
 | **M2** | Screen tabs, incremental search, multi-select bulk actions, affinity / ioprio, cgroup columns |
 | **M3** | High-value Linux depth: PSS/EPSS via `smaps_rollup`, PSI, Zram/Zswap, GPU, container detection |
-| **M4** | macOS / BSD behind a `Platform` trait |
+| **M4** | BSD behind the same `Platform` trait (macOS shipped in M0) |
 
 Explicitly out of scope for v1: a `pcp-htop`-style dynamic metric engine
 (runtime-defined columns/meters/screens driven by a metrics API). That is a
