@@ -101,6 +101,11 @@ pub struct App {
     /// htop's setup screen changes only the meter under the cursor, so the mode
     /// cannot be a single app-wide value.
     pub meter_modes: Vec<MeterMode>,
+    /// Index of the header meter that `I` and the arrow keys act on.
+    ///
+    /// htop changes the mode of the meter *under the cursor*; a global mode made
+    /// `I` flip the whole header at once, which is not the same feature.
+    pub meter_cursor: usize,
     /// Which config entry each meter was built from, parallel to `meters`.
     pub meter_sources: Vec<meters_impl::MeterSource>,
     /// The mode applied to meters added later, and the fallback for `I` when no
@@ -149,6 +154,7 @@ impl App {
             quit: false,
             status: None,
             meter_modes: Vec::new(),
+            meter_cursor: 0,
             meter_sources: Vec::new(),
             meter_mode: MeterMode::Bar,
             pending_g: false,
@@ -200,6 +206,11 @@ impl App {
         self.meters = header.meters;
         self.meter_modes = header.modes;
         self.meter_sources = header.sources;
+
+        // The header can shrink (a meter was deleted, or a split CPU pair
+        // collapsed into one row). Leaving the cursor past the end would make
+        // `I` a no-op whose status line names a meter that is not there.
+        self.meter_cursor = self.meter_cursor.min(self.meters.len().saturating_sub(1));
     }
 
     /// The display mode for meter `i`.
@@ -223,6 +234,24 @@ impl App {
         self.meter_modes[i] = next;
         self.meter_mode = next;
         self.sync_meter_modes_to_config();
+    }
+
+    /// Move the header cursor by `delta`, wrapping at both ends.
+    ///
+    /// Wrapping rather than clamping means one key press always does something,
+    /// which matters because the header has no visible scrollbar to say "you are
+    /// at the end".
+    pub fn move_meter_cursor(&mut self, delta: isize) {
+        if self.meters.is_empty() {
+            self.meter_cursor = 0;
+            return;
+        }
+        let n = self.meters.len() as isize;
+        let next = (self.meter_cursor as isize + delta).rem_euclid(n);
+        self.meter_cursor = next as usize;
+        let name = self.meters[self.meter_cursor].name();
+        let mode = meters_impl::mode_name(self.meter_mode_at(self.meter_cursor));
+        self.status = Some(format!("meter {name}: {mode}"));
     }
 
     /// Write the live modes back into the config, so they survive a save.
@@ -471,18 +500,24 @@ impl App {
             Key::Char('l') => self.show_open_files(),
             Key::Char('x') => self.show_locks(),
             Key::Char('I') => {
-                // htop changes only the meter under the cursor here. With no
-                // header selection yet, the honest behaviour is to cycle every
-                // meter's mode and say so, rather than pretend a cursor exists.
-                for i in 0..self.meters.len() {
-                    self.cycle_meter_mode(i);
+                // Cycle only the meter under the header cursor, which is what
+                // htop does. `HeaderNext`/`HeaderPrev` move that cursor.
+                let i = self.meter_cursor.min(self.meters.len().saturating_sub(1));
+                if self.meters.is_empty() {
+                    return Reaction::Continue;
                 }
-                let name = self
-                    .meter_modes
-                    .first()
-                    .map(|m| meters_impl::mode_name(*m))
-                    .unwrap_or("bar");
-                self.status = Some(format!("meter mode: {name}"));
+                self.cycle_meter_mode(i);
+                let mode = meters_impl::mode_name(self.meter_mode_at(i));
+                let name = self.meters[i].name();
+                self.status = Some(format!("meter {name}: {mode}"));
+                Reaction::Continue
+            }
+            Key::HeaderNext => {
+                self.move_meter_cursor(1);
+                Reaction::Continue
+            }
+            Key::HeaderPrev => {
+                self.move_meter_cursor(-1);
                 Reaction::Continue
             }
             Key::Esc => {
@@ -1320,6 +1355,7 @@ impl App {
         let mut y = area.y;
         for &i in indices {
             let mode = self.meter_mode_at(i);
+            let selected = i == self.meter_cursor;
             let Some(meter) = self.meters.get_mut(i) else {
                 continue;
             };
@@ -1329,7 +1365,31 @@ impl App {
             }
             let rect = Rect::new(area.x, y, area.width, h);
             meter.render(rect, buf, theme, mode);
+            // Mark the meter `I` will act on. Without this the cursor is
+            // invisible state: `Shift+Right` would change a mode the user cannot
+            // see being targeted.
+            if selected {
+                Self::mark_header_selection(rect, buf, theme);
+            }
             y += h;
+        }
+    }
+
+    /// Underline the selected meter with a row of `~` in the header row below it.
+    ///
+    /// Deliberately not a background colour: the meters already use background
+    /// colours for their bars, and painting over them would erase the data.
+    fn mark_header_selection(rect: Rect, buf: &mut Buffer, theme: &Theme) {
+        let y = rect.bottom();
+        if rect.height == 0 || y >= buf.area.bottom() {
+            return;
+        }
+        let width = (rect.width as usize).min(8) as u16;
+        for x in rect.x..rect.x.saturating_add(width) {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char('~');
+                cell.set_style(theme.meter_label);
+            }
         }
     }
 
@@ -1693,6 +1753,9 @@ pub enum Key {
     Esc,
     Backspace,
     Delete,
+    /// `Shift+Left` / `Shift+Right`: move the header meter cursor.
+    HeaderPrev,
+    HeaderNext,
     F(u8),
 }
 
@@ -2536,6 +2599,99 @@ mod tests {
             meters_impl::mode_name(app.meter_modes[1]),
             "meter 1's mode must be persisted on its own entry"
         );
+    }
+
+    #[test]
+    fn the_header_cursor_wraps_and_i_acts_only_on_it() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 9],
+            cpu_delta: vec![CpuTimes::default(); 9],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+        let n = app.meters.len();
+        assert!(n > 2);
+
+        // Starts at the first meter and wraps in both directions.
+        assert_eq!(app.meter_cursor, 0);
+        app.handle_key(Key::HeaderPrev);
+        assert_eq!(app.meter_cursor, n - 1, "wraps backwards");
+        app.handle_key(Key::HeaderNext);
+        assert_eq!(app.meter_cursor, 0, "wraps forwards");
+
+        // Move to a middle meter and flip only that one.
+        app.handle_key(Key::HeaderNext);
+        app.handle_key(Key::HeaderNext);
+        let target = app.meter_cursor;
+        let before: Vec<MeterMode> = (0..n).map(|i| app.meter_mode_at(i)).collect();
+
+        app.handle_key(Key::Char('I'));
+        assert_ne!(app.meter_mode_at(target), before[target], "meter {target}");
+        for (i, was) in before.iter().enumerate() {
+            if i != target {
+                assert_eq!(app.meter_mode_at(i), *was, "meter {i} must not change");
+            }
+        }
+
+        // The status line names the meter and its new mode.
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains(app.meters[target].name()), "got {status:?}");
+    }
+
+    #[test]
+    fn the_header_cursor_survives_a_shrinking_header() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 9],
+            cpu_delta: vec![CpuTimes::default(); 9],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+        for _ in 0..10 {
+            app.handle_key(Key::HeaderNext);
+        }
+        assert!(app.meter_cursor < app.meters.len());
+
+        // Rebuilding with fewer meters must not leave the cursor out of range.
+        app.config.meters_left = vec![gander_config::MeterConfig::new("Memory", "bar")];
+        app.config.meters_right = vec![gander_config::MeterConfig::new("Tasks", "text")];
+        app.rebuild_header(8);
+        // `I` must not panic even if the cursor is stale.
+        app.handle_key(Key::Char('I'));
+        assert!(app.meter_cursor < app.meters.len() || app.meters.is_empty());
+    }
+
+    #[test]
+    fn the_selected_meter_is_visibly_marked() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 9],
+            cpu_delta: vec![CpuTimes::default(); 9],
+            ..Default::default()
+        };
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+
+        let render = |app: &mut App| -> String {
+            let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| app.draw(f)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect()
+        };
+
+        assert!(render(&mut app).contains('~'), "the cursor must be drawn");
     }
 
     #[test]

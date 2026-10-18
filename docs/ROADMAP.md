@@ -28,8 +28,8 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 207 tests on macOS, zero clippy warnings | done |
-| Live Linux verification in a container | done, see [PORTABILITY.md](PORTABILITY.md) |
+| 212 tests on macOS, 191 on Linux, zero clippy warnings | done |
+| Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
 
@@ -63,13 +63,19 @@ Done:
 - [x] `Hostname` uses `gethostname(2)` on macOS, where `/proc` does not exist
 - [x] htoprc import handles `column_meters_N`, `column_meter_modes_N` and
       `screen:NAME=` tab sections
+- [x] Per-meter cursor in the header (`Shift+Left`/`Shift+Right`), so `I` changes
+      only the selected meter, and the selection is underlined
+- [x] `PlatformSampler` is implemented by both backends; `sample`/`cache_len` live
+      only on the trait, so neither platform can grow a method the other lacks
+- [x] Settings changed inside the TUI are actually saved on exit (the exit path
+      used to write back the config it had *started* with)
+- [x] Linux verified in a Debian container against a real `/proc`, including the
+      affinity and ioprio syscalls
 
 Remaining:
 
 - [ ] Thread enumeration as rows (macOS has no cheap per-thread enumeration; the
       Linux side needs a `Task`-style secondary list)
-- [ ] Per-meter cursor in the header, so `Left`/`Right` can select the meter that
-      `I` operates on without cycling all of them
 
 
 ## Then: M1 / M2 / M3

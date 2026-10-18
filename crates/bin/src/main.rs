@@ -67,9 +67,12 @@ fn main() -> std::process::ExitCode {
     let result = gander_tui::runtime::run(app);
 
     match result {
-        Ok(()) => {
-            // Save on clean exit only; a signal must lose changes.
-            if let Err(e) = config_crate::save(&config, &config_crate::config_path()) {
+        Ok(final_config) => {
+            // Save on clean exit only; a signal must lose changes. What gets
+            // saved is the config the app *ended* with, not the one it started
+            // with: in-app edits (columns, tabs, meter modes, theme, delay)
+            // all live only in `App` until now.
+            if let Err(e) = config_crate::save(&final_config, &config_crate::config_path()) {
                 eprintln!("gander: cannot save config: {e}");
                 return std::process::ExitCode::from(1);
             }

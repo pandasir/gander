@@ -45,7 +45,13 @@ mod platform {
     const TICK: Duration = Duration::from_millis(33);
 
     /// Run the application until the user quits.
-    pub fn run(mut app: App) -> std::io::Result<()> {
+    ///
+    /// Returns the app's final configuration so the caller can persist it.
+    /// It used to return `()`, and `main` then saved the *config it started
+    /// with* — so every in-app change (meter modes, columns, tabs, theme,
+    /// delay) was silently thrown away on exit. That is also why the config
+    /// appeared to "not remember" settings between runs.
+    pub fn run(mut app: App) -> std::io::Result<gander_config::Config> {
         let mut sampler = gander_core::Sampler::default();
         let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
 
@@ -60,9 +66,13 @@ mod platform {
 
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
+        // Restore the terminal before returning: a lost config is annoying, a
+        // terminal left in raw mode is unusable.
         restore_terminal(&mut terminal)?;
 
-        result
+        // A failed event loop still hands back the config: the user got as far as
+        // editing it, and throwing that away on an unrelated error is hostile.
+        result.map(|()| app.config)
     }
 
     fn spawn_sampler(
@@ -158,7 +168,7 @@ pub use platform::run;
 
 /// Non-Linux stub: there is no backend yet, so the TUI cannot start.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn run(_app: App) -> std::io::Result<()> {
+pub fn run(_app: App) -> std::io::Result<gander_config::Config> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "gander has no backend for this platform yet; see docs/PORTABILITY.md",
@@ -174,6 +184,17 @@ pub fn translate(key: KeyEvent) -> Option<Key> {
     // Ctrl-C always quits, even inside a text input.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Key::F(10));
+    }
+
+    // Shifted arrows move the header meter cursor, mirroring htop's
+    // Shift-Left/Right. They are checked before the plain arrows so a modified
+    // arrow never falls through to "scroll the process list".
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        match key.code {
+            KeyCode::Left => return Some(Key::HeaderPrev),
+            KeyCode::Right => return Some(Key::HeaderNext),
+            _ => {}
+        }
     }
 
     Some(match key.code {
@@ -218,6 +239,33 @@ mod tests {
         let mut ev = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         ev.kind = event::KeyEventKind::Release;
         assert_eq!(translate(ev), None);
+    }
+
+    #[test]
+    fn shifted_arrows_move_the_header_cursor() {
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
+        assert_eq!(translate(left), Some(Key::HeaderPrev));
+        let right = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
+        assert_eq!(translate(right), Some(Key::HeaderNext));
+
+        // Without the modifier they must stay as table scrolling.
+        let plain = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(translate(plain), Some(Key::Right));
+    }
+
+    /// The TUI's exit path has to hand back the config it ended with.
+    ///
+    /// `run` used to return `()` and `main` saved the config it had *started*
+    /// with, so every in-app change was discarded on exit. This pins the
+    /// signature: the return type is the mechanism.
+    #[test]
+    fn run_returns_the_final_config() {
+        fn assert_signature<F>(_f: F)
+        where
+            F: Fn(App) -> std::io::Result<gander_config::Config>,
+        {
+        }
+        assert_signature(platform::run);
     }
 
     #[test]
