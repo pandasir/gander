@@ -39,7 +39,11 @@ pub const SIGNALS: &[(i32, &str)] = &[
 ];
 
 /// Executes actions against the real system.
-#[cfg(target_os = "linux")]
+///
+/// `kill(2)`, `getpriority(2)` and `setpriority(2)` are POSIX, so this works on
+/// every unix. Gating it on Linux meant `F9` silently failed on macOS with
+/// "process actions are only implemented for Linux".
+#[cfg(unix)]
 pub fn execute(action: &Action) -> Result<(), std::io::Error> {
     use std::io;
     match *action {
@@ -54,16 +58,74 @@ pub fn execute(action: &Action) -> Result<(), std::io::Error> {
         }
         Action::Renice { pid, nice } => set_nice(pid, nice as i32),
         Action::Priority { pid, delta } => {
-            // PRIO_PROCESS with a zero argument means "read the current value".
-            // SAFETY: as above.
+            // Read the current nice value. `-1` is both a valid priority and the
+            // documented error return, so errno is cleared first to tell them
+            // apart (the classic getpriority trap).
+            // SAFETY: both calls take only integers.
+            unsafe { set_errno(0) };
+            // SAFETY: `getpriority` has no preconditions.
             let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, pid as libc::id_t) };
+            // SAFETY: reading errno has no preconditions.
+            if cur == -1 && unsafe { errno() } != 0 {
+                return Err(io::Error::last_os_error());
+            }
             let target = (cur + delta as i32).clamp(-20, 19);
             set_nice(pid, target)
         }
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Read the C `errno`. `libc` exposes it differently per platform.
+///
+/// SAFETY: no preconditions; the pointer is thread-local and always valid.
+#[cfg(unix)]
+unsafe fn errno() -> i32 {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        *libc::__errno_location()
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    {
+        *libc::__error()
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd"
+    )))]
+    {
+        0
+    }
+}
+
+/// Set the C `errno`.
+///
+/// SAFETY: as above.
+#[cfg(unix)]
+unsafe fn set_errno(value: i32) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        *libc::__errno_location() = value;
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    {
+        *libc::__error() = value;
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd"
+    )))]
+    {
+        let _ = value;
+    }
+}
+
+#[cfg(unix)]
 fn set_nice(pid: Pid, nice: i32) -> Result<(), std::io::Error> {
     use std::io;
     // SAFETY: integer arguments only.
@@ -75,11 +137,13 @@ fn set_nice(pid: Pid, nice: i32) -> Result<(), std::io::Error> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Non-unix fallback. There is no portable `kill(2)` here, and no supported
+/// target needs one yet.
+#[cfg(not(unix))]
 pub fn execute(_action: &Action) -> Result<(), std::io::Error> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "process actions are only implemented for Linux",
+        "process actions require a unix target",
     ))
 }
 

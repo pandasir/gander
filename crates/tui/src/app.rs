@@ -30,7 +30,9 @@ pub enum Screen {
         lines: Vec<String>,
         scroll: usize,
     },
-    SignalPicker,
+    SignalPicker {
+        cursor: usize,
+    },
     Setup,
 }
 
@@ -69,8 +71,12 @@ pub struct App {
     pub config: Config,
     pub meters: Vec<Box<dyn Meter>>,
     pub selected: usize,
+    /// First visible row (index into `table.view.order`).
     pub offset: usize,
     pub h_offset: u16,
+    /// Body height of the last rendered frame, so paging and scroll-following
+    /// know how much room they have. Zero until the first draw.
+    pub viewport: usize,
     pub tags: std::collections::HashSet<gander_core::Pid>,
     pub filter: Option<Filter>,
     pub input: Input,
@@ -106,6 +112,7 @@ impl App {
             selected: 0,
             offset: 0,
             h_offset: 0,
+            viewport: 0,
             tags: Default::default(),
             filter: None,
             input: Input::default(),
@@ -141,9 +148,11 @@ impl App {
         let n = self.table.visible();
         if n == 0 {
             self.selected = 0;
+            self.offset = 0;
             return;
         }
         self.selected = self.selected.min(n - 1);
+        self.scroll_to_selection();
     }
 
     fn selected_row(&self) -> Option<&Row> {
@@ -174,7 +183,7 @@ impl App {
                 Reaction::Continue
             }
             Screen::Info { .. } => self.handle_info_key(key),
-            Screen::SignalPicker => self.handle_signal_key(key),
+            Screen::SignalPicker { .. } => self.handle_signal_key(key),
             Screen::Setup => {
                 if key == Key::Char('q') || key == Key::Esc || key == Key::F(10) {
                     self.screen = Screen::ProcessList;
@@ -227,7 +236,12 @@ impl App {
             }
             Key::F(9) | Key::Char('k') => {
                 if self.selected_row().is_some() {
-                    self.screen = Screen::SignalPicker;
+                    // SIGTERM is htop's default selection; it is the polite one.
+                    let default = gander_core::action::SIGNALS
+                        .iter()
+                        .position(|(num, _)| *num == 15)
+                        .unwrap_or(0);
+                    self.screen = Screen::SignalPicker { cursor: default };
                 }
                 Reaction::Continue
             }
@@ -239,12 +253,22 @@ impl App {
                 self.move_selection(1);
                 Reaction::Continue
             }
+            Key::PgUp => {
+                self.move_page(-1);
+                Reaction::Continue
+            }
+            Key::PgDn => {
+                self.move_page(1);
+                Reaction::Continue
+            }
             Key::Home | Key::Char('g') => {
                 self.selected = 0;
+                self.scroll_to_selection();
                 Reaction::Continue
             }
             Key::End | Key::Char('G') => {
                 self.selected = self.table.visible().saturating_sub(1);
+                self.scroll_to_selection();
                 Reaction::Continue
             }
             Key::Left => {
@@ -409,24 +433,116 @@ impl App {
         Reaction::Continue
     }
 
+    /// Keys for the signal picker.
+    ///
+    /// This is the one place that actually kills processes, so it resolves the
+    /// target *now* rather than trusting the row the picker was opened on: the
+    /// selection may have changed, and the process may have exited.
     fn handle_signal_key(&mut self, key: Key) -> Reaction {
+        let Screen::SignalPicker { cursor } = self.screen else {
+            return Reaction::Continue;
+        };
+        let count = gander_core::action::SIGNALS.len();
+
         match key {
             Key::Esc | Key::Char('q') => {
                 self.screen = Screen::ProcessList;
+                self.status = Some("cancelled".into());
                 Reaction::Continue
             }
-            Key::Char(c) if c.is_ascii_digit() => {
-                let mut digits = String::new();
-                digits.push(c);
-                self.status = Some(format!("signal {digits} not confirmed"));
+            Key::Up => {
+                self.screen = Screen::SignalPicker {
+                    cursor: cursor.saturating_sub(1),
+                };
+                Reaction::Continue
+            }
+            Key::Down => {
+                self.screen = Screen::SignalPicker {
+                    cursor: (cursor + 1).min(count.saturating_sub(1)),
+                };
+                Reaction::Continue
+            }
+            Key::Home => {
+                self.screen = Screen::SignalPicker { cursor: 0 };
+                Reaction::Continue
+            }
+            Key::End => {
+                self.screen = Screen::SignalPicker {
+                    cursor: count.saturating_sub(1),
+                };
                 Reaction::Continue
             }
             Key::Enter => {
+                self.send_signal(cursor);
                 self.screen = Screen::ProcessList;
+                Reaction::Recalc
+            }
+            // Digits pick a signal by number, as htop allows.
+            Key::Char(c) if c.is_ascii_digit() => {
+                if let Some((idx, _)) = gander_core::action::SIGNALS
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (num, _))| *num == i32::from(c as u8 - b'0'))
+                {
+                    self.send_signal(idx);
+                    self.screen = Screen::ProcessList;
+                    return Reaction::Recalc;
+                }
+                self.status = Some(format!("no signal numbered {c}"));
                 Reaction::Continue
             }
             _ => Reaction::Continue,
         }
+    }
+
+    /// Deliver `SIGNALS[cursor]` to the selected PID (or every tagged PID).
+    fn send_signal(&mut self, cursor: usize) {
+        let Some((signal, name)) = gander_core::action::SIGNALS.get(cursor).copied() else {
+            self.status = Some("unknown signal".into());
+            return;
+        };
+
+        // Tagged processes take precedence, matching htop: if anything is
+        // tagged, the action applies to the tagged set.
+        let targets: Vec<gander_core::Pid> = if self.tags.is_empty() {
+            match self.selected_row() {
+                Some(row) => vec![row.pid],
+                None => {
+                    self.status = Some("no process selected".into());
+                    return;
+                }
+            }
+        } else {
+            let mut tagged: Vec<gander_core::Pid> = self.tags.iter().copied().collect();
+            tagged.sort_unstable();
+            tagged
+        };
+
+        let mut sent = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for pid in &targets {
+            let action = gander_core::action::Action::Kill { pid: *pid, signal };
+            match gander_core::action::execute(&action) {
+                Ok(()) => sent += 1,
+                Err(e) => failures.push(format!("{pid}: {e}")),
+            }
+        }
+
+        self.status = Some(if failures.is_empty() {
+            if targets.len() == 1 {
+                format!("sent {name} to {}", targets[0])
+            } else {
+                format!("sent {name} to {sent} processes")
+            }
+        } else if sent == 0 {
+            format!("{name} failed: {}", failures.join("; "))
+        } else {
+            format!(
+                "sent {name} to {sent}, {} failed: {}",
+                failures.len(),
+                failures.join("; ")
+            )
+        });
     }
 
     pub fn toggle_tree(&mut self) {
@@ -465,6 +581,33 @@ impl App {
         }
         let next = self.selected as isize + delta;
         self.selected = next.clamp(0, n as isize - 1) as usize;
+        self.scroll_to_selection();
+    }
+
+    /// Keep the selected row inside the viewport.
+    ///
+    /// Without this the cursor walks off the bottom of the screen: `offset` was
+    /// written once and never updated.
+    pub fn scroll_to_selection(&mut self) {
+        let height = self.viewport.max(1);
+        if self.selected < self.offset {
+            self.offset = self.selected;
+        } else if self.selected >= self.offset + height {
+            self.offset = self.selected + 1 - height;
+        }
+        // Never leave empty space at the bottom when there are enough rows.
+        let visible = self.table.visible();
+        if visible >= height {
+            self.offset = self.offset.min(visible - height);
+        } else {
+            self.offset = 0;
+        }
+    }
+
+    /// Move by one screenful, keeping the cursor on the same line where possible.
+    fn move_page(&mut self, pages: isize) {
+        let step = self.viewport.max(1) as isize;
+        self.move_selection(pages * step);
     }
 
     fn toggle_tag(&mut self) {
@@ -630,7 +773,10 @@ impl App {
         self.draw_header(chunks[0], frame.buffer_mut());
         self.draw_tabs(chunks[0], frame.buffer_mut());
 
-        match &self.screen {
+        // `draw_table` needs `&mut self` (it records the viewport height), so the
+        // screen is copied out instead of borrowed from `self`.
+        let screen = self.screen.clone();
+        match &screen {
             Screen::ProcessList => self.draw_table(chunks[1], frame.buffer_mut()),
             Screen::Help => draw_help(chunks[1], frame.buffer_mut(), &self.theme),
             Screen::Info {
@@ -645,13 +791,14 @@ impl App {
                 lines,
                 *scroll,
             ),
-            Screen::SignalPicker => {
+            Screen::SignalPicker { cursor } => {
                 self.draw_table(chunks[1], frame.buffer_mut());
                 draw_signal_picker(
                     chunks[1],
                     frame.buffer_mut(),
                     &self.theme,
                     self.selected_row(),
+                    *cursor,
                 );
             }
             Screen::Setup => draw_setup(chunks[1], frame.buffer_mut(), &self.theme),
@@ -756,7 +903,7 @@ impl App {
         }
     }
 
-    fn draw_table(&self, area: Rect, buf: &mut Buffer) {
+    fn draw_table(&mut self, area: Rect, buf: &mut Buffer) {
         let fields = self.columns();
         let theme = &self.theme;
 
@@ -768,12 +915,17 @@ impl App {
         // the remainder (htop makes Command the expanding column).
         let widths = column_widths(&fields, area.width);
         let total_width: u16 = widths.iter().sum();
-        let _h_offset = self.h_offset.min(total_width.saturating_sub(area.width));
+        // Horizontal scroll, clamped so the last column stays flush with the
+        // right edge instead of scrolling into empty space.
+        let h_offset = self.h_offset.min(total_width.saturating_sub(area.width));
+        let view_left = area.x as i32 - h_offset as i32;
+        let clip_left = area.x as i32;
+        let clip_right = area.right() as i32;
 
-        // Header row.
-        let mut x = area.x;
+        // Header row, clipped to the visible horizontal window.
+        let mut x = view_left;
         for (i, field) in fields.iter().enumerate() {
-            let w = widths[i];
+            let w = widths[i] as i32;
             if w == 0 {
                 continue;
             }
@@ -782,16 +934,27 @@ impl App {
             } else {
                 theme.column_header
             };
-            let title = fit(field.title(), w as usize);
-            crate::meters::put_str(buf, x, area.y, &title, style, w);
+            let title = fit(field.title(), widths[i] as usize);
+            let draw_x = x.max(clip_left);
+            let draw_end = (x + w).min(clip_right);
+            if draw_end > draw_x {
+                let skip = (draw_x - x) as usize;
+                let head: String = title.chars().skip(skip).collect();
+                crate::meters::put_str(
+                    buf,
+                    draw_x as u16,
+                    area.y,
+                    &head,
+                    style,
+                    (draw_end - draw_x) as u16,
+                );
+            }
             x += w;
         }
 
         let body_height = area.height.saturating_sub(1) as usize;
-        let visible = self.table.visible();
-        if self.offset + body_height > visible && visible > body_height {
-            // handled by the runtime's scroll clamp; keep rendering valid
-        }
+        // Remember it so paging and scroll-following know the window size.
+        self.viewport = body_height;
 
         let marks = if self.table.tree_mode {
             compose_tree(&self.table.rows, &self.table.view.order)
@@ -799,8 +962,14 @@ impl App {
             Vec::new()
         };
 
+        // Clamp the first visible row so the bottom of the list stays filled.
+        let visible = self.table.visible();
+        let first = self
+            .offset
+            .min(visible.saturating_sub(body_height.min(visible)));
+
         for row_idx in 0..body_height {
-            let pos = self.offset + row_idx;
+            let pos = first + row_idx;
             let Some(&data_idx) = self.table.view.order.get(pos) else {
                 break;
             };
@@ -824,13 +993,15 @@ impl App {
                 base
             };
 
-            let mut cx = area.x;
+            let mut cx = view_left;
             for (i, field) in fields.iter().enumerate() {
-                let w = widths[i];
+                let w = widths[i] as i32;
                 if w == 0 {
                     continue;
                 }
-                if cx + w > area.x && cx < area.right() {
+                let draw_x = cx.max(clip_left);
+                let draw_end = (cx + w).min(clip_right);
+                if draw_end > draw_x {
                     let mut text = render_field(row, *field, &self.snapshot);
                     // In tree mode the Command column carries the branch prefix.
                     if self.table.tree_mode && *field == Field::Comm {
@@ -838,8 +1009,17 @@ impl App {
                             text.insert_str(0, &mark.prefix);
                         }
                     }
-                    let padded = pad_right(&text, w as usize);
-                    crate::meters::put_str(buf, cx, y, &padded, base, w);
+                    let padded = pad_right(&text, widths[i] as usize);
+                    let skip = (draw_x - cx) as usize;
+                    let head: String = padded.chars().skip(skip).collect();
+                    crate::meters::put_str(
+                        buf,
+                        draw_x as u16,
+                        y,
+                        &head,
+                        base,
+                        (draw_end - draw_x) as u16,
+                    );
                 }
                 cx += w;
             }
@@ -884,7 +1064,7 @@ impl App {
                 ("", ""),
                 ("F10", "Quit"),
             ],
-            Screen::SignalPicker => [
+            Screen::SignalPicker { .. } => [
                 ("Esc", "Cancel"),
                 ("", ""),
                 ("", ""),
@@ -921,21 +1101,44 @@ impl App {
             }
         }
 
-        let slot = area.width / 10;
+        // Divide the bar evenly, but never narrower than "F1 x", which is the
+        // smallest readable slot. On a very narrow terminal the trailing keys are
+        // dropped rather than rendered as broken fragments.
+        let used_keys = labels.iter().filter(|(k, _)| !k.is_empty()).count().max(1);
+        let min_slot = 5u16;
+        let per_slot = if area.width / used_keys as u16 >= min_slot {
+            labels.len() as u16
+        } else {
+            (area.width / min_slot).max(1)
+        };
+        let slot = area.width / per_slot.max(1);
+
         for (i, (key, label)) in labels.iter().enumerate() {
-            let x = area.x + i as u16 * slot;
+            if i as u16 >= per_slot {
+                break;
+            }
             if key.is_empty() && label.is_empty() {
                 continue;
             }
-            crate::meters::put_str(buf, x, area.y, key, self.theme.function_bar_key, slot);
-            crate::meters::put_str(
-                buf,
-                x + key.len() as u16,
-                area.y,
-                label,
-                self.theme.function_bar,
-                slot.saturating_sub(key.len() as u16),
-            );
+            let x = area.x + i as u16 * slot;
+            let room = slot.min(area.right().saturating_sub(x));
+            if room == 0 {
+                break;
+            }
+
+            // A single space keeps `F1` and `Help` from running together.
+            crate::meters::put_str(buf, x, area.y, key, self.theme.function_bar_key, room);
+            let label_x = x + key.len() as u16 + 1;
+            if label_x < area.right() {
+                crate::meters::put_str(
+                    buf,
+                    label_x,
+                    area.y,
+                    label,
+                    self.theme.function_bar,
+                    area.right().saturating_sub(label_x),
+                );
+            }
         }
     }
 }
@@ -966,12 +1169,21 @@ pub enum Key {
 // ---------------------------------------------------------------------------
 
 /// Fixed column widths, with the last field expanding.
+/// Column widths in cells.
+///
+/// Most fields have a fixed width; the last field (normally Command) absorbs the
+/// slack so the table fills the terminal. The absorbed width is capped so the
+/// table can still be wider than the screen — otherwise `total_width` always
+/// equals `area.width` and horizontal scrolling has nothing to scroll to.
 fn column_widths(fields: &[Field], total: u16) -> Vec<u16> {
+    // Longest stretch a single column may claim when the terminal is wide.
+    const MAX_EXPAND: u16 = 120;
+
     let mut widths: Vec<u16> = fields.iter().map(|f| default_width(*f)).collect();
     let fixed: u16 = widths.iter().sum();
     if let Some(last) = widths.last_mut() {
-        let expand = total.saturating_sub(fixed);
-        *last = last.saturating_add(expand).max(6);
+        let slack = total.saturating_sub(fixed).min(MAX_EXPAND);
+        *last = last.saturating_add(slack).max(6);
     }
     widths
 }
@@ -1125,7 +1337,13 @@ fn draw_info(
     ratatui::widgets::Widget::render(para, inner, buf);
 }
 
-fn draw_signal_picker(area: Rect, buf: &mut Buffer, theme: &Theme, row: Option<&Row>) {
+fn draw_signal_picker(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    row: Option<&Row>,
+    cursor: usize,
+) {
     let w = 40.min(area.width);
     let h = (gander_core::action::SIGNALS.len() as u16 + 4).min(area.height);
     let rect = Rect::new(
@@ -1146,10 +1364,24 @@ fn draw_signal_picker(area: Rect, buf: &mut Buffer, theme: &Theme, row: Option<&
     let inner = block.inner(rect);
     ratatui::widgets::Widget::render(block, rect, buf);
 
+    // Scroll so the cursor stays visible in a short terminal.
+    let visible = inner.height as usize;
+    let first = cursor.saturating_sub(visible.saturating_sub(1));
+
     let lines: Vec<Line> = gander_core::action::SIGNALS
         .iter()
         .enumerate()
-        .map(|(i, (num, name))| Line::from(format!("{:>2}  {num:>2}  {name}", i + 1)))
+        .skip(first)
+        .take(visible.max(1))
+        .map(|(i, (num, name))| {
+            let marker = if i == cursor { ">" } else { " " };
+            let text = format!("{marker} {num:>2}  {name}");
+            if i == cursor {
+                Line::styled(text, theme.panel_selected)
+            } else {
+                Line::from(text)
+            }
+        })
         .collect();
     let para = Paragraph::new(lines).style(theme.row_normal);
     ratatui::widgets::Widget::render(para, inner, buf);
@@ -1367,6 +1599,159 @@ mod tests {
         assert_eq!(height_for(8), 9);
         assert!(height_for(8) > height_for(4), "8 cores must not be clipped");
         assert!(height_for(16) > height_for(8));
+    }
+
+    fn app_with_n_rows(n: u32) -> App {
+        let rows: Vec<Row> = (1..=n)
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.comm.try_push_str(&format!("proc{pid}")).unwrap();
+                r.percent_cpu = pid as f32;
+                r
+            })
+            .collect();
+        let mut app = App::new(Config::default());
+        app.apply_sample(SystemSnapshot::default(), rows);
+        app
+    }
+
+    #[test]
+    fn selection_scrolls_into_view() {
+        let mut app = app_with_n_rows(200);
+        app.viewport = 10;
+
+        // Walk down past the first screen; `offset` used to stay 0 forever.
+        for _ in 0..25 {
+            app.handle_key(Key::Down);
+        }
+        assert_eq!(app.selected, 25);
+        assert!(
+            app.selected < app.offset + app.viewport,
+            "selected {} must be inside offset {} + viewport {}",
+            app.selected,
+            app.offset,
+            app.viewport
+        );
+
+        // And back up again.
+        for _ in 0..30 {
+            app.handle_key(Key::Up);
+        }
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.offset, 0);
+    }
+
+    #[test]
+    fn paging_moves_by_one_screen() {
+        let mut app = app_with_n_rows(200);
+        app.viewport = 20;
+
+        app.handle_key(Key::PgDn);
+        assert_eq!(app.selected, 20);
+        app.handle_key(Key::PgDn);
+        assert_eq!(app.selected, 40);
+        app.handle_key(Key::PgUp);
+        assert_eq!(app.selected, 20);
+    }
+
+    #[test]
+    fn end_keeps_the_bottom_of_the_list_filled() {
+        let mut app = app_with_n_rows(200);
+        app.viewport = 10;
+        app.handle_key(Key::End);
+        assert_eq!(app.selected, 199);
+        // offset + viewport must land on the last row, not past it.
+        assert_eq!(app.offset + app.viewport, 200);
+    }
+
+    #[test]
+    fn horizontal_scroll_is_applied() {
+        // The renderer used to compute `h_offset` and then ignore it.
+        let mut app = app_with_n_rows(3);
+        app.viewport = 5;
+        assert_eq!(app.h_offset, 0);
+
+        app.handle_key(Key::Right);
+        assert_eq!(app.h_offset, 4);
+        app.handle_key(Key::Left);
+        assert_eq!(app.h_offset, 0);
+
+        // Must not underflow past the beginning.
+        app.handle_key(Key::Left);
+        assert_eq!(app.h_offset, 0);
+    }
+
+    #[test]
+    fn signal_picker_sends_the_selected_signal() {
+        // Use a disposable child so nothing real is harmed.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let mut app = App::new(Config::default());
+        let mut row = Row::default_for_test(pid);
+        row.comm.try_push_str("sleep").unwrap();
+        app.apply_sample(SystemSnapshot::default(), vec![row]);
+        app.viewport = 5;
+
+        // Open the picker and confirm SIGTERM (the default selection).
+        app.handle_key(Key::F(9));
+        assert!(matches!(app.screen, Screen::SignalPicker { .. }));
+        app.handle_key(Key::Enter);
+
+        // The child must actually die.
+        let status = child.wait().expect("wait");
+        assert!(!status.success(), "sleep should have been terminated");
+    }
+
+    #[test]
+    fn signal_picker_cancel_does_nothing() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let mut app = App::new(Config::default());
+        let mut row = Row::default_for_test(pid);
+        row.comm.try_push_str("sleep").unwrap();
+        app.apply_sample(SystemSnapshot::default(), vec![row]);
+        app.viewport = 5;
+
+        app.handle_key(Key::F(9));
+        app.handle_key(Key::Esc);
+        assert_eq!(app.screen, Screen::ProcessList);
+
+        // Still alive: kill it ourselves so the test does not leak a process.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn signal_picker_cursor_moves() {
+        let mut app = app_with_n_rows(3);
+        app.viewport = 5;
+
+        app.handle_key(Key::F(9));
+        let Screen::SignalPicker { cursor } = app.screen else {
+            panic!("picker should be open");
+        };
+        // htop defaults to SIGTERM.
+        assert_eq!(gander_core::action::SIGNALS[cursor].0, 15);
+
+        app.handle_key(Key::Down);
+        let Screen::SignalPicker { cursor } = app.screen else {
+            panic!("picker should still be open")
+        };
+        assert!(cursor > 0);
+
+        app.handle_key(Key::Home);
+        let Screen::SignalPicker { cursor } = app.screen else {
+            panic!()
+        };
+        assert_eq!(cursor, 0);
     }
 
     #[test]

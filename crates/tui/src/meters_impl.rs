@@ -374,26 +374,104 @@ simple_meter!(
 // Tasks
 // ---------------------------------------------------------------------------
 
-simple_meter!(
-    right:
-    /// Process-count summary, spelled out rather than in htop's terse
-    /// `472, 1664 thr` shorthand.
-    TasksMeter,
-    "Tasks",
-    16,
-    |this: &mut Self, snap: &SystemSnapshot| {
-        this.text = task_summary(&snap.tasks);
-        this.value = if snap.tasks.total > 0 {
-            snap.tasks.running as f32 / snap.tasks.total as f32
+/// Process-count summary with several lengths, so a narrow header does not clip
+/// a word in half.
+pub struct TasksMeter {
+    verbose: String,
+    medium: String,
+    terse: String,
+    value: f32,
+    history: VecDeque<f32>,
+}
+
+impl TasksMeter {
+    pub fn new() -> Self {
+        Self {
+            verbose: String::from("-"),
+            medium: String::from("-"),
+            terse: String::from("-"),
+            value: 0.0,
+            history: VecDeque::with_capacity(crate::meters::GRAPH_HISTORY),
+        }
+    }
+}
+
+impl Default for TasksMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for TasksMeter {
+    fn name(&self) -> &'static str {
+        "Tasks"
+    }
+
+    fn min_width(&self) -> u16 {
+        16
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        let tasks = &snapshot.tasks;
+        self.verbose = task_summary(tasks);
+        self.medium = task_summary_medium(tasks);
+        self.terse = format!("{} procs", tasks.total);
+        self.value = if tasks.total > 0 {
+            tasks.running as f32 / tasks.total as f32
         } else {
             0.0
         };
-    },
-    |this: &Self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode| {
-        put_str(buf, area.x, area.y, "Tasks", theme.meter_label, 6);
-        put_str(buf, area.x + 6, area.y, &this.text, theme.meter_value, area.width.saturating_sub(6));
+        if self.history.len() == crate::meters::GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value);
     }
-);
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode) {
+        put_str(buf, area.x, area.y, "Tasks", theme.meter_label, 6);
+        // Only the rendered width is known here, so pick the longest variant that
+        // fits instead of letting `put_str` cut a word in half.
+        let room = area.width.saturating_sub(6) as usize;
+        let text = self.text_for_width(room);
+        put_str(
+            buf,
+            area.x + 6,
+            area.y,
+            &text,
+            theme.meter_value,
+            room as u16,
+        );
+    }
+}
+
+impl TasksMeter {
+    /// Shorten the summary to fit `width` columns.
+    fn text_for_width(&self, width: usize) -> String {
+        if self.verbose.len() <= width {
+            return self.verbose.clone();
+        }
+        if self.medium.len() <= width {
+            return self.medium.clone();
+        }
+        if self.terse.len() <= width {
+            return self.terse.clone();
+        }
+        // Last resort: just the number.
+        self.terse
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+}
 
 /// `472 procs, 3 running, 1664 threads`
 pub fn task_summary(tasks: &gander_core::system::TaskStats) -> String {
@@ -405,6 +483,15 @@ pub fn task_summary(tasks: &gander_core::system::TaskStats) -> String {
     // is noise on single-threaded systems.
     if tasks.threads > tasks.total {
         let _ = write!(text, ", {} threads", tasks.threads);
+    }
+    text
+}
+
+/// `472 procs, 3 running`, `472 procs, 3 run`
+pub fn task_summary_medium(tasks: &gander_core::system::TaskStats) -> String {
+    let mut text = format!("{} procs", tasks.total);
+    if tasks.running > 0 {
+        let _ = write!(text, ", {} run", tasks.running);
     }
     text
 }
@@ -661,7 +748,8 @@ mod tests {
         let mut buf = Buffer::empty(area);
         m.render(area, &mut buf, &Theme::default(), MeterMode::Text);
         let line: String = (0..30).map(|x| buf[(x, 0)].symbol().to_string()).collect();
-        assert!(line.contains("1:02:05"), "got {line:?}");
+        // 3725 s == 1 h 2 m, rendered with units rather than htop's `1:02:05`.
+        assert!(line.contains("1h 2m"), "got {line:?}");
     }
 
     #[test]

@@ -27,14 +27,21 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 136 tests, zero clippy warnings | done |
+| 144 tests, zero clippy warnings | done |
 
 ## Next: finish M0
 
-- [ ] `F9` signal picker actually sends the selected signal (currently UI only)
-- [ ] Viewport-aware paging (`PgUp`/`PgDn` need the visible height)
-- [ ] Horizontal scroll fully wired (`Left`/`Right` move `h_offset`, renderer ignores it)
-- [ ] Follow/scroll clamp so the selection stays on screen when moving
+Done:
+
+- [x] `F9` signal picker actually sends the selected signal
+- [x] Viewport-aware paging (`PgUp`/`PgDn`)
+- [x] Horizontal scroll (`Left`/`Right` clip columns instead of being dropped)
+- [x] Scroll-following so the selection stays on screen
+- [x] `Tasks` meter shortens itself to fit narrow headers
+- [x] Function bar separates key and label, drops keys instead of cutting words
+
+Remaining:
+
 - [ ] `u` user filter, `Z` SELinux context, `b` backtrace stub
 - [ ] Setup screen (F2) with the five pages htop has
 - [ ] Screen tabs (`Tab` / `Shift+Tab`) with per-tab columns and sort
@@ -70,6 +77,10 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
   fixture-tested, but only macOS has been exercised against a live OS. Run
   `cargo test` on Linux before trusting it.
 - The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
+- The function bar truncates its labels on terminals narrower than ~50 columns,
+  though the key names stay intact.
+- Scrolling uses minimal movement rather than centring the selection, so the
+  cursor can sit at the very top or bottom edge of the list.
 - macOS `used` omits a few hundred MiB of pages that no `vm_statistics64`
   counter covers. It reads slightly below `top` by design; the alternative
   (`total - free`) also counts pages the kernel has not classified yet.
