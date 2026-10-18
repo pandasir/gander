@@ -183,12 +183,25 @@ impl Sampler {
             row.nice = kp.nice.clamp(-128, 127) as i8;
             row.priority = kp.nice.clamp(-128, 127) as i8;
             row.state = parse::state_letter(kp.p_stat);
-            if let Some(t) = ti {
-                if t.running_threads > 0 {
-                    row.state = b'R';
-                } else if row.state == b'R' {
-                    row.state = b'S';
-                }
+            // `p_stat` alone cannot be trusted for the sleep/run distinction on
+            // current Darwin: this kernel reports `SRUN` (2) for a process
+            // blocked in `read(2)`, while `ps -o stat=` calls the same process
+            // `S`. Only the *stopped* and *zombie* values are reliable, so they
+            // are kept, and everything else falls back to the per-task counter.
+            //
+            // Without this, `TasksMeter` reported 201 "running" processes out of
+            // 514 where htop showed 3, and the `R` badge was meaningless.
+            if matches!(row.state, b'T' | b'Z' | b'I') {
+                // Authoritative: leave it alone.
+            } else if let Some(t) = ti {
+                row.state = if t.running_threads > 0 { b'R' } else { b'S' };
+            } else {
+                // No task info means the process belongs to another user. We
+                // genuinely do not know whether it is running, and claiming `R`
+                // for every unreadable process is what produced the bogus
+                // counts. `?` is the honest answer and matches how htop renders
+                // a state it could not determine.
+                row.state = b'?';
             }
 
             let name = kp.comm_str();

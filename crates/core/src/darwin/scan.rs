@@ -638,9 +638,15 @@ mod tests {
     #[test]
     fn swap_usage_is_plausible() {
         let swap = swap_usage();
-        assert!(swap.total > 0, "this machine has swap");
-        assert!(swap.used <= swap.total);
-        assert_eq!(swap.total, swap.used + swap.free);
+        // A machine with swap disabled (or one that has never swapped) reports
+        // all zeros, so `total > 0` is not a valid invariant.
+        if swap.total == 0 {
+            assert_eq!(swap.used, 0, "no swap total means nothing can be in use");
+            assert_eq!(swap.free, 0);
+        } else {
+            assert!(swap.used <= swap.total, "used exceeds total");
+            assert_eq!(swap.total, swap.used + swap.free);
+        }
     }
 
     #[test]

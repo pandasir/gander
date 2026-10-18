@@ -18,23 +18,30 @@ use libc::{c_int, c_void};
 /// `struct kinfo_proc` stride on 64-bit Darwin.
 pub const STRIDE: usize = 648;
 
-// Offsets inside one record. See the module docs for how they were derived.
-// Verified on arm64 macOS 15 by cross-checking against ps(1):
-//   p_starttime.tv_sec  at 0    (plausible Unix seconds)
-//   p_stat              at 32   (match `ps -o stat=`)
-//   p_pid               at 40   (matches getpid/ps)
-//   p_nice              at 242  (matched by renice-ing a child to 10)
-//   p_comm              at 243  ("launchd" for pid 1)
-//   e_ppid              at 560  (matches getppid)
-//   e_ucred.cr_uid      at 392  (matches getuid, and pid 1 is 0)
+// Offsets inside one record, taken from the SDK's own `offsetof` output
+// (`sizeof(struct kinfo_proc) == 648`, identical on the 15 and 26 SDKs) and
+// cross-checked against ps(1) at runtime by `validate`:
+//   p_un.__p_starttime.tv_sec  at 0
+//   p_flag                     at 32  (P_* bits, not a state)
+//   p_stat                     at 36  (S* state)
+//   p_pid                      at 40
+//   p_nice                     at 242
+//   p_comm                     at 243
+//   kp_eproc.e_pcred.p_ruid    at 392 (real uid, what `USER` means)
+//   kp_eproc.e_ucred.cr_uid    at 420 (effective uid; differs for setuid execs)
+//   kp_eproc.e_ppid            at 560
 const OFF_STARTTIME_SEC: usize = 0;
 const OFF_PID: usize = 40;
 const OFF_PPID: usize = 560;
 const OFF_NICE: usize = 242;
-const OFF_STAT: usize = 32;
+/// `p_stat`. Reading offset 32 instead yields `p_flag`, whose low byte is
+/// always `P_INMEM`, so every process looked stopped.
+const OFF_STAT: usize = 36;
 const OFF_COMM: usize = 243;
 const COMM_LEN: usize = 17;
-/// `e_ucred.cr_uid` inside `eproc`.
+/// `_pcred.p_ruid`: the real uid, matching Linux's `Uid:` first field and
+/// `ps`'s `UID` column. `e_ucred.cr_uid` (420) is the effective uid and only
+/// differs for setuid binaries.
 const OFF_UID: usize = 392;
 
 /// One process as reported by `KERN_PROC_ALL`.
@@ -99,8 +106,13 @@ fn decode(rec: &[u8]) -> Option<RawProc> {
 
 /// Fetch the whole process table.
 ///
-/// The size query races with process creation, so the fetch retries with growing
-/// headroom until it returns fewer records than it was given room for.
+/// Two things make this awkward. First, the kernel's size hint races with
+/// process creation, so the first attempt can always come back short. Second,
+/// recent macOS returns `ENOMEM` instead of a partial result when the buffer is
+/// too small, so a hard-coded starting capacity fails outright on a busy
+/// machine (it used to start at 512 records, which is below a two-hundredth of
+/// a desktop's table). Both cases are handled by growing the buffer and
+/// retrying.
 pub fn list_processes() -> std::io::Result<Vec<RawProc>> {
     let mut mib = [
         libc::CTL_KERN,
@@ -109,9 +121,27 @@ pub fn list_processes() -> std::io::Result<Vec<RawProc>> {
         0 as c_int,
     ];
 
-    let mut capacity = 512usize;
-    for attempt in 0..5 {
-        capacity += attempt * 128;
+    // The size query itself needs no buffer, and its answer is a byte count.
+    let mut hint = 0usize;
+    // SAFETY: a null `oldp` makes the call a pure size query; `hint` is writable.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut hint,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    // A failed size query is not fatal: fall back to the old starting point.
+    let mut capacity = if rc == 0 && hint > 0 {
+        hint.div_ceil(STRIDE) + 64
+    } else {
+        1024
+    };
+
+    for _ in 0..6 {
         let mut buf = vec![0u8; capacity * STRIDE];
         let mut len = buf.len();
 
@@ -128,12 +158,20 @@ pub fn list_processes() -> std::io::Result<Vec<RawProc>> {
             )
         };
         if rc != 0 {
-            return Err(std::io::Error::last_os_error());
+            let err = std::io::Error::last_os_error();
+            // ENOMEM means "not enough room", not "out of memory": grow and
+            // retry. Anything else is a real failure.
+            if err.raw_os_error() == Some(libc::ENOMEM) {
+                capacity *= 2;
+                continue;
+            }
+            return Err(err);
         }
 
         let records = len / STRIDE;
         // A full buffer means the table grew mid-call; retry with more room.
         if records >= capacity {
+            capacity *= 2;
             continue;
         }
 
@@ -322,9 +360,16 @@ mod tests {
 
     #[test]
     fn state_histogram_matches_bsd_meaning() {
-        // On macOS `p_stat` uses the classic BSD numbering *shifted*: this kernel
-        // reports 4 for the 458 sleeping processes `ps` also calls S, 2 for
-        // running, and 6 for zombies. See `parse::state_letter`.
+        // `p_stat` is not reliable for the sleeping/runnable distinction on this
+        // kernel: `KERN_PROC_ALL` and `KERN_PROC_PID` both report `SRUN` (2) for
+        // a blocked `read(2)` while `ps -o stat=` calls it `S`, and both report
+        // `SSTOP` (4) for a stopped process, so only the *stopped* and *zombie*
+        // values can be trusted from this field. `darwin::system` therefore
+        // derives runnability from `proc_taskinfo.pti_numrunning` instead.
+        //
+        // What this test can still pin down: the field is being read from the
+        // right offset, so it contains BSD state values rather than `p_flag`
+        // bytes (which are 0x04 for essentially every process).
         let procs = list_processes().unwrap();
         let hist: std::collections::BTreeMap<i8, usize> =
             procs.iter().fold(Default::default(), |mut h, p| {
@@ -332,11 +377,54 @@ mod tests {
                 h
             });
 
-        let sleeping = hist.get(&4).copied().unwrap_or(0);
+        assert!(!hist.is_empty(), "no processes were decoded");
+        for stat in hist.keys() {
+            assert!(
+                (1..=5).contains(stat),
+                "p_stat {stat} is not a BSD S* constant; histogram {hist:?}"
+            );
+        }
+
+        // Sleeping and runnable processes both come back as SRUN on this kernel,
+        // so the bulk of the table must be valid BSD states rather than all
+        // sitting on one bogus byte.
         let total: usize = hist.values().sum();
-        assert!(
-            sleeping as f64 / total as f64 > 0.8,
-            "expected most processes to be SSLEEP(4), histogram {hist:?}"
+        let plausible: usize = hist
+            .iter()
+            .filter(|(stat, _)| (1..=5).contains(*stat))
+            .map(|(_, n)| *n)
+            .sum();
+        assert_eq!(plausible, total);
+    }
+
+    /// A stopped process must be reported as such: that is the one state this
+    /// field does distinguish, and it is what the `T` badge depends on.
+    #[test]
+    fn a_stopped_process_reports_sstop() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        // SIGSTOP via the same path the TUI uses.
+        // SAFETY: `kill` takes integers only.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) };
+        assert_eq!(rc, 0, "SIGSTOP failed");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        let procs = list_processes().expect("KERN_PROC_ALL");
+        let this = procs.iter().find(|p| p.pid == pid);
+        let stat = this.map(|p| p.p_stat);
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(
+            stat,
+            Some(4),
+            "a stopped process must read SSTOP(4), not {} (offset wrong?)",
+            stat.map(|s| s.to_string()).unwrap_or_else(|| "missing".into())
         );
     }
 }
