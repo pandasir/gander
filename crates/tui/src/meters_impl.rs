@@ -15,6 +15,21 @@ macro_rules! simple_meter {
         $(#[$meta:meta])*
         $name:ident, $cfg_name:literal, $min_width:literal, $sample_body:expr, $render_body:expr
     ) => {
+        simple_meter!(@impl $(#[$meta])* $name, $cfg_name, $min_width,
+                     crate::meters::HeaderColumn::Left, $sample_body, $render_body);
+    };
+    (
+        right: $(#[$meta:meta])*
+        $name:ident, $cfg_name:literal, $min_width:literal, $sample_body:expr, $render_body:expr
+    ) => {
+        simple_meter!(@impl $(#[$meta])* $name, $cfg_name, $min_width,
+                     crate::meters::HeaderColumn::Right, $sample_body, $render_body);
+    };
+    (
+        @impl $(#[$meta:meta])*
+        $name:ident, $cfg_name:literal, $min_width:literal, $column:expr,
+        $sample_body:expr, $render_body:expr
+    ) => {
         $(#[$meta])*
         pub struct $name {
             text: String,
@@ -41,6 +56,10 @@ macro_rules! simple_meter {
 
             fn min_width(&self) -> u16 {
                 $min_width
+            }
+
+            fn column(&self) -> crate::meters::HeaderColumn {
+                $column
             }
 
             fn history(&self) -> Option<&VecDeque<f32>> {
@@ -276,6 +295,10 @@ impl Meter for LoadMeter {
         18
     }
 
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
     fn history(&self) -> Option<&VecDeque<f32>> {
         Some(&self.history)
     }
@@ -321,6 +344,7 @@ impl Meter for LoadMeter {
 // ---------------------------------------------------------------------------
 
 simple_meter!(
+    right:
     /// Seconds since boot.
     UptimeMeter,
     "Uptime",
@@ -340,6 +364,7 @@ simple_meter!(
 // ---------------------------------------------------------------------------
 
 simple_meter!(
+    right:
     /// Process count summary. The counts themselves are filled in by the app,
     /// which owns the process table.
     TasksMeter,
@@ -498,21 +523,45 @@ fn hostname() -> String {
 }
 
 /// Build the default header: one CPU row, then memory and swap.
-pub fn default_header() -> Vec<Box<dyn Meter>> {
-    vec![
-        Box::new(crate::meters::CpuMeter::aggregate()),
+pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
+    // Mirrors htop's `Settings.c` default header for `initialCpuCount` cores:
+    //   left column  : <CPU left>  Memory  Swap
+    //   right column : <CPU right> Tasks   LoadAverage  Uptime
+    //
+    // More than four cores splits the CPU meters in half so every core gets a
+    // row (`LeftCPUs` / `RightCPUs`); four or fewer use one aggregate row.
+    // Each meter declares its own column, so the order here only matters within
+    // a column.
+    let split = cpu_count > 4;
+    let half = cpu_count / 2;
+
+    let mut meters: Vec<Box<dyn Meter>> = vec![
+        if split {
+            Box::new(crate::meters::CpuMeter::left(0..half))
+        } else {
+            Box::new(crate::meters::CpuMeter::aggregate())
+        },
         Box::new(MemoryMeter::new()),
         Box::new(SwapMeter::new()),
-        Box::new(LoadMeter::new()),
-        Box::new(TasksMeter::new()),
-        Box::new(UptimeMeter::new()),
-    ]
+    ];
+
+    if split {
+        meters.push(Box::new(crate::meters::CpuMeter::right(half..cpu_count)));
+    }
+
+    meters.push(Box::new(TasksMeter::new()));
+    meters.push(Box::new(LoadMeter::new()));
+    meters.push(Box::new(UptimeMeter::new()));
+
+    meters
 }
 
 /// Build a meter by config name.
 pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
     Some(match name {
-        "CPU" => Box::new(crate::meters::CpuMeter::aggregate()),
+        "CPU" | "AllCPUs" | "LeftCPUs" | "RightCPUs" => {
+            Box::new(crate::meters::CpuMeter::aggregate())
+        }
         "Memory" => Box::new(MemoryMeter::new()),
         "Swap" => Box::new(SwapMeter::new()),
         "LoadAverage" | "Load" => Box::new(LoadMeter::new()),

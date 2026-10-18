@@ -101,7 +101,8 @@ impl App {
             snapshot: SystemSnapshot::default(),
             theme,
             config,
-            meters: meters_impl::default_header(),
+            // Rebuilt on the first sample, once the core count is known.
+            meters: Vec::new(),
             selected: 0,
             offset: 0,
             h_offset: 0,
@@ -118,6 +119,11 @@ impl App {
 
     /// Adopt a fresh sample: update rows, meters, and reorder.
     pub fn apply_sample(&mut self, snapshot: SystemSnapshot, rows: Vec<Row>) {
+        // The header depends on the core count, which is only known once the
+        // first snapshot arrives.
+        if self.meters.is_empty() {
+            self.meters = meters_impl::default_header(snapshot.cpu_count());
+        }
         for meter in &mut self.meters {
             meter.sample(&snapshot);
         }
@@ -584,10 +590,38 @@ impl App {
     // Rendering
     // -----------------------------------------------------------------------
 
+    /// Exposed for tests and the render harness.
+    pub fn header_height_debug(&self) -> u16 {
+        self.header_height()
+    }
+
+    /// Height the header needs: the taller column, plus the screen-tab row.
+    ///
+    /// A fixed height clipped the per-core CPU meters as soon as the machine had
+    /// more than four cores.
+    fn header_height(&self) -> u16 {
+        let height_of = |column: crate::meters::HeaderColumn| -> u16 {
+            self.meters
+                .iter()
+                .filter(|m| m.column() == column)
+                .map(|m| m.rows().max(1))
+                .sum()
+        };
+        height_of(crate::meters::HeaderColumn::Left)
+            .max(height_of(crate::meters::HeaderColumn::Right))
+            .max(1)
+            + 1
+    }
+
     pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        // The header grows with the core count: 8 cores means two five-row CPU
+        // meters, so a fixed four-row header would clip them.
+        let header_h = self
+            .header_height()
+            .min(area.height.saturating_sub(2).max(1));
         let chunks = Layout::vertical([
-            Constraint::Length(4),
+            Constraint::Length(header_h),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -626,31 +660,73 @@ impl App {
         self.draw_function_bar(chunks[2], frame.buffer_mut());
     }
 
+    /// Draw the header meters in htop's two-column layout.
+    ///
+    /// Meters declare their column; within a column they are stacked in vector
+    /// order. `LeftCPUs`/`RightCPUs` occupy one row per core.
     fn draw_header(&mut self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 {
+        if area.height == 0 || area.width == 0 {
             return;
         }
         let mode = self.meter_mode;
         let theme = self.theme.clone();
-        // Meters are laid out left to right on the first row and wrap after.
-        let rows = area.height as usize;
-        let per_row = self.meters.len().div_ceil(rows.max(1));
-        let width = area.width / per_row.max(1) as u16;
 
-        for (i, meter) in self.meters.iter_mut().enumerate() {
-            let row = (i / per_row.max(1)) as u16;
-            let col = (i % per_row.max(1)) as u16;
-            if row >= area.height {
+        let has_right = self
+            .meters
+            .iter()
+            .any(|m| m.column() == crate::meters::HeaderColumn::Right);
+
+        // The last row of the header block belongs to the screen-tab strip.
+        let meter_h = area.height.saturating_sub(1);
+
+        if !has_right {
+            let rect = Rect::new(area.x, area.y, area.width, meter_h);
+            Self::draw_column(&mut self.meters, rect, buf, &theme, mode);
+            return;
+        }
+
+        // Leave a one-cell gutter so the two columns do not run together.
+        let left_w = area.width / 2;
+        let left = Rect::new(area.x, area.y, left_w.saturating_sub(1), meter_h);
+        let right = Rect::new(area.x + left_w, area.y, area.width - left_w, meter_h);
+
+        let mut left_meters = Vec::new();
+        let mut right_meters = Vec::new();
+        for meter in std::mem::take(&mut self.meters) {
+            if meter.column() == crate::meters::HeaderColumn::Right {
+                right_meters.push(meter);
+            } else {
+                left_meters.push(meter);
+            }
+        }
+
+        Self::draw_column(&mut left_meters, left, buf, &theme, mode);
+        Self::draw_column(&mut right_meters, right, buf, &theme, mode);
+
+        // Put the meters back so sampling continues to work.
+        self.meters = left_meters;
+        self.meters.extend(right_meters);
+    }
+
+    fn draw_column(
+        meters: &mut [Box<dyn Meter>],
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        mode: MeterMode,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let mut y = area.y;
+        for meter in meters.iter_mut() {
+            let h = meter.rows().max(1);
+            if y + h > area.bottom() {
                 break;
             }
-            let x = area.x + col * width;
-            let w = if col + 1 == per_row as u16 {
-                area.width.saturating_sub(col * width)
-            } else {
-                width.saturating_sub(1)
-            };
-            let rect = Rect::new(x, area.y + row, w, 1);
-            meter.render(rect, buf, &theme, mode);
+            let rect = Rect::new(area.x, y, area.width, h);
+            meter.render(rect, buf, theme, mode);
+            y += h;
         }
     }
 
@@ -1177,6 +1253,120 @@ mod tests {
         app.config.delay_ms = 10_000;
         app.handle_key(Key::Char('-'));
         assert_eq!(app.config.delay_ms, 10_000);
+    }
+
+    #[test]
+    fn header_shows_one_row_per_core() {
+        // Regression guard: the header was a fixed four rows, so an 8-core
+        // machine only ever showed the aggregate and the rest were clipped.
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        for cores in [2usize, 4, 8, 16] {
+            let snapshot = SystemSnapshot {
+                cpu: vec![CpuTimes::default(); cores + 1],
+                cpu_delta: vec![CpuTimes::default(); cores + 1],
+                ..Default::default()
+            };
+
+            let mut app = App::new(Config::default());
+            app.apply_sample(snapshot, Vec::new());
+
+            let cpu_rows: u16 = app
+                .meters
+                .iter()
+                .filter(|m| m.name().starts_with("CPU"))
+                .map(|m| m.rows())
+                .sum();
+
+            // More than four cores: two meters, each one average row plus half
+            // the cores, so every core appears exactly once.
+            // Four or fewer: a single aggregate row.
+            let expected = if cores > 4 {
+                let half = cores / 2;
+                (half + 1) + (cores - half + 1)
+            } else {
+                1
+            };
+            assert_eq!(
+                cpu_rows as usize, expected,
+                "cores={cores} should render {expected} CPU rows"
+            );
+        }
+    }
+
+    #[test]
+    fn header_splits_into_two_columns_above_four_cores() {
+        use crate::meters::HeaderColumn;
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 9],
+            cpu_delta: vec![CpuTimes::default(); 9],
+            ..Default::default()
+        };
+
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+
+        let left = app
+            .meters
+            .iter()
+            .filter(|m| m.column() == HeaderColumn::Left)
+            .count();
+        let right = app
+            .meters
+            .iter()
+            .filter(|m| m.column() == HeaderColumn::Right)
+            .count();
+        assert!(left > 0 && right > 0, "expected two non-empty columns");
+    }
+
+    #[test]
+    fn small_machines_use_a_single_cpu_meter() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            // 4 cores plus the aggregate entry.
+            cpu: vec![CpuTimes::default(); 5],
+            cpu_delta: vec![CpuTimes::default(); 5],
+            ..Default::default()
+        };
+
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, Vec::new());
+
+        let cpu_meters: Vec<_> = app
+            .meters
+            .iter()
+            .filter(|m| m.name().starts_with("CPU"))
+            .collect();
+        assert_eq!(cpu_meters.len(), 1);
+        assert_eq!(cpu_meters[0].rows(), 1, "4 cores or fewer show one row");
+    }
+
+    #[test]
+    fn header_height_grows_with_cores() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let height_for = |cores: usize| {
+            let snapshot = SystemSnapshot {
+                cpu: vec![CpuTimes::default(); cores + 1],
+                cpu_delta: vec![CpuTimes::default(); cores + 1],
+                ..Default::default()
+            };
+            let mut app = App::new(Config::default());
+            app.apply_sample(snapshot, Vec::new());
+            app.header_height()
+        };
+
+        // Four or fewer cores: one CPU row on the left, three text meters on the
+        // right, plus the tab row => 4.
+        assert_eq!(height_for(2), 4);
+        assert_eq!(height_for(4), 4);
+        // 8 cores: five CPU rows per column, plus the tab row.
+        assert_eq!(height_for(8), 9);
+        assert!(height_for(8) > height_for(4), "8 cores must not be clipped");
+        assert!(height_for(16) > height_for(8));
     }
 
     #[test]

@@ -87,6 +87,27 @@ counters (CPU time, memory, threads) are added only where `proc_pidinfo` permits
 Processes owned by other users therefore show `-` for CPU/memory, exactly as htop
 does — but they are listed.
 
+## CPU core display
+
+htop's default header splits the CPU meters in half above four cores
+(`Settings.c`: `LeftCPUs` / `RightCPUs`), one row per core, so an 8-core machine
+shows rows `0..3` in the left column and `4..7` in the right. gander now does the
+same: `CpuMeter::left(0..half)` and `CpuMeter::right(half..n)`.
+
+Two implementation notes that were bugs first:
+
+1. **The header height was hard-coded to four rows**, so every core past the third
+   was clipped. `App::header_height()` now sums `Meter::rows()` per column and
+   takes the taller one.
+2. **The column split was inferred from a meter's name.** With the CPU meters
+   ordered `[left, mem, swap, right, tasks, ...]`, splitting at `Tasks` put the
+   right-hand CPU block in the *left* column and duplicated it. Meters now declare
+   `Meter::column()` explicitly, mirroring htop's `hColumns[0]` / `hColumns[1]`.
+
+Known difference from htop: htop interleaves cores across the two halves
+(`0,4,1,5,2,6,3,7`); gander splits them contiguously (`0,1,2,3` / `4,5,6,7`).
+Cosmetic, not a data error.
+
 ## Memory accounting (this was wrong once)
 
 The macOS memory figure is the single easiest thing to get wrong, because

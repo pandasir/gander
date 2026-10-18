@@ -188,27 +188,93 @@ impl MemInfo {
         ];
     }
 
-    /// macOS accounting, following htop's `darwin/Platform.c`.
+    /// macOS accounting, matching **htop 3.3.0** exactly.
     ///
-    /// `used = wired + active + compressed`
+    /// `used = active + wired`
     ///
-    /// * `wired` and `compressed` are disjoint from `active`, so all three add.
-    ///   htop 3.3.0 omitted `compressed`; on a machine with 2 GB in the
-    ///   compressor that understates usage by 2 GB, and upstream fixed it.
-    /// * `inactive` is **cache**, not used: the page counters partition physical
-    ///   memory, so counting `inactive` as used both overshoots the total and
-    ///   contradicts its own role as reclaimable.
-    /// * `available = total - used`, so the two figures partition memory
-    ///   exactly, which is a useful invariant to test.
+    /// This is deliberately the same formula as `darwin/Platform.c` in htop
+    /// 3.3.0:
+    ///
+    /// ```c
+    /// mtr->values[MEMORY_METER_USED] = (vm->active_count + vm->wire_count) * page_K;
+    /// mtr->values[MEMORY_METER_CACHE] = vm->inactive_count * page_K;
+    /// ```
+    ///
+    /// The point is that `gander` and the `htop` next to it must agree; a
+    /// different (even "better") formula makes the two impossible to compare.
+    ///
+    /// Consequences, all intentional:
+    /// * `compressed` is **not** counted as used. htop 3.3.0 shows it as a
+    ///   separate segment, so it appears in the bar but not in the number. On a
+    ///   machine with 2 GB in the compressor this is the bulk of the gap to
+    ///   `top`.
+    /// * `inactive` is cache, not used.
+    /// * `available = total - used`, so the two figures partition memory exactly.
+    ///
+    /// Newer htop (3.4+) changed the formula. When matching a different version
+    /// is wanted, see [`MemInfo::finish_darwin_36`].
     pub fn finish_darwin(&mut self) {
+        self.used = self.active.saturating_add(self.wired).min(self.total);
+        self.available = self.total.saturating_sub(self.used);
+
+        // htop 3.3.0 on macOS sets only four values in
+        // `Platform_setMemoryValues` (darwin/Platform.c:293): USED, BUFFERS
+        // (purgeable), CACHE (inactive). COMPRESSED and AVAILABLE are explicitly
+        // left commented out, so the bar has four segments and nothing more.
+        // Reproducing that exactly is the point; see `finish_darwin_36` for the
+        // newer formula.
+        self.classes = vec![
+            MemoryClass {
+                label: "used",
+                bytes: self.used,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 0,
+            },
+            MemoryClass {
+                label: "buffers",
+                bytes: self.purgeable,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 1,
+            },
+            MemoryClass {
+                label: "cache",
+                bytes: self.inactive,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 2,
+            },
+            MemoryClass {
+                label: "free",
+                bytes: self
+                    .total
+                    .saturating_sub(self.used)
+                    .saturating_sub(self.purgeable)
+                    .saturating_sub(self.inactive),
+                counts_as_used: false,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 5,
+            },
+        ];
+    }
+
+    /// macOS accounting matching htop 3.6-dev: count the compressor as used.
+    ///
+    /// Kept as a named alternative rather than a config knob, because the default
+    /// must match the htop a user is most likely to have installed (3.3.x).
+    pub fn finish_darwin_36(&mut self) {
         self.used = self
-            .wired
-            .saturating_add(self.active)
+            .active
+            .saturating_add(self.wired)
             .saturating_add(self.compressed)
             .min(self.total);
         self.available = self.total.saturating_sub(self.used);
 
-        // Order matches htop's bar: used classes first, then cache, then free.
         self.classes = vec![
             MemoryClass {
                 label: "active",
@@ -422,45 +488,57 @@ mod tests {
     }
 
     /// Real `vm_statistics64` numbers from an 8 GB Apple Silicon Mac, taken at
-    /// the same moment htop 3.3.0 displayed 3.45 GB and htop 3.6-dev 5.64 GB.
+    /// the same moment htop 3.3.0 displayed 3.43 GB.
     ///
-    /// We follow 3.6: `wired + active + compressed`. 3.3.0 omitted the
-    /// compressor, which is 2 GB on this machine.
+    /// htop 3.3.0 computes `used = active + wire` on macOS and leaves the
+    /// compressor out entirely (`darwin/Platform.c:299`, with the COMPRESSED
+    /// assignment commented out at :301). gander must produce the same number,
+    /// otherwise the two cannot be compared side by side.
     #[test]
-    fn darwin_used_matches_htop_36() {
+    fn darwin_used_matches_htop_330() {
         let mib = 1024 * 1024;
         let mut mem = MemInfo {
             total: 8 * 1024 * mib,
-            free: 225 * mib,
-            active: 1710 * mib,
-            inactive: 1628 * mib,
-            wired: 1823 * mib,
-            compressed: 2243 * mib,
-            purgeable: 133 * mib,
+            free: 175 * mib,
+            active: 1895 * mib,
+            inactive: 1772 * mib,
+            wired: 1607 * mib,
+            compressed: 2182 * mib,
+            purgeable: 31 * mib,
             speculative: 85 * mib,
             ..Default::default()
         };
         mem.finish_darwin();
 
-        // 1710 + 1823 + 2243 = 5776 MiB, which is what htop 3.6 reports.
-        assert_eq!(mem.used, 5776 * mib);
+        // 1895 + 1607 = 3502 MiB, matching htop 3.3.0.
+        assert_eq!(mem.used, 3502 * mib);
         assert_eq!(mem.used_from_classes(), mem.used);
         assert!(mem.is_exactly_partitioned());
 
-        // htop 3.3.0's formula, for contrast: it drops the 2243 MiB compressor.
-        let htop_330 = (mem.active + mem.wired) / mib;
-        assert_eq!(htop_330, 3533);
-        assert!(
-            htop_330 + 2000 < mem.used / mib,
-            "htop 3.3 understates by the compressor size, which is why we do not copy it"
-        );
-        assert!(
-            mem.is_exactly_partitioned(),
-            "used {} + available {} != total {}",
-            mem.used,
-            mem.available,
-            mem.total
-        );
+        // The compressor is deliberately *not* part of `used` here.
+        assert!(mem.used < mem.active + mem.wired + mem.compressed);
+
+        // htop 3.3.0 on macOS sets only USED / BUFFERS / CACHE, so the bar has
+        // four segments and no compressed segment.
+        let labels: Vec<&str> = mem.classes.iter().map(|c| c.label).collect();
+        assert_eq!(labels, vec!["used", "buffers", "cache", "free"]);
+    }
+
+    #[test]
+    fn htop_36_formula_is_available_separately() {
+        let mib = 1024 * 1024;
+        let mut mem = MemInfo {
+            total: 8 * 1024 * mib,
+            active: 1895 * mib,
+            wired: 1607 * mib,
+            compressed: 2182 * mib,
+            inactive: 1772 * mib,
+            purgeable: 31 * mib,
+            ..Default::default()
+        };
+        mem.finish_darwin_36();
+        assert_eq!(mem.used, (1895 + 1607 + 2182) * mib);
+        assert!(mem.is_exactly_partitioned());
     }
 
     #[test]

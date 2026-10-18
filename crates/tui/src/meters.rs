@@ -12,6 +12,17 @@ use ratatui::style::Style;
 
 use crate::theme::Theme;
 
+/// Which header column a meter is drawn in.
+///
+/// htop keeps an explicit two-column layout (`hColumns[0]` / `hColumns[1]`).
+/// Declaring the column on the meter avoids inferring the split point from a
+/// meter's name.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum HeaderColumn {
+    Left,
+    Right,
+}
+
 /// How a meter presents its value, matching htop's `MeterMode`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MeterMode {
@@ -34,6 +45,23 @@ pub trait Meter {
     /// Minimum width in cells.
     fn min_width(&self) -> u16 {
         8
+    }
+
+    /// How many terminal rows this meter wants.
+    ///
+    /// Most meters are one row. htop's multi-core CPU meters stack one row per
+    /// core, which is why a fixed-height header clips them.
+    fn rows(&self) -> u16 {
+        1
+    }
+
+    /// Which header column this meter belongs to.
+    ///
+    /// htop keeps an explicit two-column layout (`hColumns[0]` / `hColumns[1]`).
+    /// Declaring the column on the meter avoids inferring the split from a
+    /// meter's name, which is what produced a duplicated CPU block earlier.
+    fn column(&self) -> HeaderColumn {
+        HeaderColumn::Left
     }
 
     /// Seconds of history this meter keeps, if it keeps any.
@@ -166,32 +194,88 @@ pub fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_w
 // CPU meter
 // ---------------------------------------------------------------------------
 
-/// Aggregate or per-core CPU usage.
-pub struct CpuMeter {
-    /// `None` means the aggregate across all cores.
-    core: Option<usize>,
+/// Which cores a `CpuMeter` shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CpuSpan {
+    /// One row: the aggregate across every core.
+    Aggregate,
+    /// One row for the average, then one row per core in `range`.
+    Range(std::ops::Range<usize>),
+}
+
+/// One rendered row of a CPU meter.
+struct CpuRow {
     label: String,
-    history: VecDeque<f32>,
     usage: f32,
     delta: gander_core::system::CpuTimes,
+    history: VecDeque<f32>,
+}
+
+impl CpuRow {
+    fn new(label: String) -> Self {
+        Self {
+            label,
+            usage: 0.0,
+            delta: gander_core::system::CpuTimes::default(),
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+}
+
+/// Aggregate or per-core CPU usage.
+///
+/// htop's header puts `LeftCPUs` and `RightCPUs` side by side on machines with
+/// more than four cores, so one meter can occupy several stacked rows.
+pub struct CpuMeter {
+    span: CpuSpan,
+    column: HeaderColumn,
+    rows: Vec<CpuRow>,
+    /// Aggregate mirror, so single-value consumers still work.
+    usage: f32,
+    history: VecDeque<f32>,
 }
 
 impl CpuMeter {
+    /// A single row showing the average across all cores.
     pub fn aggregate() -> Self {
-        Self::new(None, "CPU".to_string())
+        Self::build(CpuSpan::Aggregate, HeaderColumn::Left)
     }
 
-    pub fn core(index: usize) -> Self {
-        Self::new(Some(index), format!("{index}"))
+    /// The left half of a split header: average, then cores in `range`.
+    pub fn left(range: std::ops::Range<usize>) -> Self {
+        Self::build(CpuSpan::Range(range), HeaderColumn::Left)
     }
 
-    fn new(core: Option<usize>, label: String) -> Self {
+    /// The right half of a split header.
+    pub fn right(range: std::ops::Range<usize>) -> Self {
+        Self::build(CpuSpan::Range(range), HeaderColumn::Right)
+    }
+
+    fn build(span: CpuSpan, column: HeaderColumn) -> Self {
+        let mut rows = Vec::new();
+        match &span {
+            CpuSpan::Aggregate => rows.push(CpuRow::new("CPU".to_string())),
+            CpuSpan::Range(range) => {
+                rows.push(CpuRow::new("Avg".to_string()));
+                for core in range.clone() {
+                    rows.push(CpuRow::new(core.to_string()));
+                }
+            }
+        }
         Self {
-            core,
-            label,
-            history: VecDeque::with_capacity(GRAPH_HISTORY),
+            span,
+            column,
+            rows,
             usage: 0.0,
-            delta: gander_core::system::CpuTimes::default(),
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+
+    /// Total rows this meter needs for `cpu_count` cores.
+    fn expected_rows(&self) -> usize {
+        match &self.span {
+            CpuSpan::Aggregate => 1,
+            CpuSpan::Range(r) => r.len() + 1,
         }
     }
 
@@ -240,9 +324,9 @@ impl CpuMeter {
 
 impl Meter for CpuMeter {
     fn name(&self) -> &'static str {
-        match self.core {
-            None => "CPU",
-            Some(_) => "CPU_CORE",
+        match self.span {
+            CpuSpan::Aggregate => "CPU",
+            CpuSpan::Range(_) => "CPU_CORES",
         }
     }
 
@@ -250,87 +334,110 @@ impl Meter for CpuMeter {
         6
     }
 
+    fn rows(&self) -> u16 {
+        self.rows.len() as u16
+    }
+
+    fn column(&self) -> HeaderColumn {
+        self.column
+    }
+
     fn history(&self) -> Option<&VecDeque<f32>> {
         Some(&self.history)
     }
 
     fn sample(&mut self, snapshot: &SystemSnapshot) {
-        let idx = self.core.map_or(0, |c| c + 1);
-        self.delta = match snapshot.cpu_delta.get(idx) {
-            Some(d) => *d,
-            None => {
-                self.usage = 0.0;
-                return;
-            }
-        };
-        let total = self.delta.total();
-        self.usage = if total == 0 {
-            0.0
-        } else {
-            self.delta.busy() as f32 / total as f32
-        };
-        if self.history.len() == GRAPH_HISTORY {
-            self.history.pop_front();
+        // Rebuild only when the core count changed (SMT toggle, VM resize).
+        if self.rows.len() != self.expected_rows() {
+            let span = self.span.clone();
+            let column = self.column;
+            let usage = self.usage;
+            let history = std::mem::take(&mut self.history);
+            *self = Self::build(span, column);
+            self.usage = usage;
+            self.history = history;
         }
-        self.history.push_back(self.usage);
+
+        for (i, row) in self.rows.iter_mut().enumerate() {
+            // Row 0 is the aggregate at delta index 0. With a range, row i>0 is
+            // core `range.start + i - 1`, stored at delta index `core + 1`.
+            let idx = match &self.span {
+                CpuSpan::Aggregate => 0,
+                CpuSpan::Range(_) if i == 0 => 0,
+                CpuSpan::Range(r) => r.start + i,
+            };
+            row.delta = snapshot.cpu_delta.get(idx).copied().unwrap_or_default();
+            let total = row.delta.total();
+            row.usage = if total == 0 {
+                0.0
+            } else {
+                row.delta.busy() as f32 / total as f32
+            };
+            if row.history.len() == GRAPH_HISTORY {
+                row.history.pop_front();
+            }
+            row.history.push_back(row.usage);
+        }
+
+        if let Some(first) = self.rows.first() {
+            self.usage = first.usage;
+            if self.history.len() == GRAPH_HISTORY {
+                self.history.pop_front();
+            }
+            self.history.push_back(self.usage);
+        }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
-        match mode {
-            MeterMode::Text => {
-                let text = gander_core::format::percent_human(self.usage * 100.0);
-                put_str(
-                    buf,
-                    area.x,
-                    area.y,
-                    &self.label,
-                    theme.meter_label,
-                    area.width,
-                );
-                put_str(
-                    buf,
-                    area.x + area.width.saturating_sub(text.len() as u16),
-                    area.y,
-                    &text,
-                    theme.meter_value,
-                    area.width,
-                );
-            }
-            MeterMode::Bar => {
-                let label_width = (self.label.len() as u16 + 1).min(area.width);
-                put_str(
-                    buf,
-                    area.x,
-                    area.y,
-                    &self.label,
-                    theme.meter_label,
-                    label_width,
-                );
-                let bar_x = area.x + label_width;
-                let bar_w = area.width.saturating_sub(label_width + 5);
-                let segments = Self::segments_for(theme, &self.delta);
-                draw_segments(
-                    buf,
-                    bar_x,
-                    area.y,
-                    bar_w,
-                    &segments,
-                    theme.bar_background,
-                    '|',
-                );
+        if area.width == 0 {
+            return;
+        }
 
-                let text = gander_core::format::percent_human(self.usage * 100.0);
-                put_str(
-                    buf,
-                    area.right().saturating_sub(text.len() as u16),
-                    area.y,
-                    &text,
-                    theme.meter_value,
-                    5,
-                );
+        if mode == MeterMode::Graph {
+            // Only one series fits; use the aggregate.
+            let empty = VecDeque::new();
+            let hist = self.rows.first().map(|r| &r.history).unwrap_or(&empty);
+            draw_graph(buf, area, hist, theme, 1.0);
+            return;
+        }
+
+        for (i, row) in self.rows.iter().enumerate() {
+            let y = area.y + i as u16;
+            if y >= area.bottom() {
+                break;
             }
-            MeterMode::Graph => {
-                draw_graph(buf, area, &self.history, theme, 1.0);
+            match mode {
+                MeterMode::Text => {
+                    let text = gander_core::format::percent_human(row.usage * 100.0);
+                    put_str(buf, area.x, y, &row.label, theme.meter_label, area.width);
+                    put_str(
+                        buf,
+                        area.right().saturating_sub(text.len() as u16),
+                        y,
+                        &text,
+                        theme.meter_value,
+                        area.width,
+                    );
+                }
+                MeterMode::Bar => {
+                    let label_width = (row.label.len() as u16 + 1).min(area.width);
+                    put_str(buf, area.x, y, &row.label, theme.meter_label, label_width);
+                    let bar_x = area.x + label_width;
+                    let bar_w = area.width.saturating_sub(label_width + 6);
+                    let segs = Self::segments_for(theme, &row.delta);
+                    draw_segments(buf, bar_x, y, bar_w, &segs, theme.bar_background, '|');
+
+                    let text = gander_core::format::percent_human(row.usage * 100.0);
+                    put_str(
+                        buf,
+                        area.right().saturating_sub(text.len() as u16),
+                        y,
+                        &text,
+                        theme.meter_value,
+                        5,
+                    );
+                }
+                MeterMode::Graph => {}
             }
         }
     }

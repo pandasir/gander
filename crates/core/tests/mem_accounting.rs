@@ -19,18 +19,21 @@ fn used_matches_total_minus_free() {
     assert!(mem.total > 0, "total memory must be known");
     assert!(mem.is_exactly_partitioned(), "{mem:?}");
 
-    // The page counters partition physical memory, so used + cache + free must
-    // account for essentially all of it. This is the property that broke: an
-    // earlier revision put `inactive` in `used`, which made the three overlap.
-    let accounted = mem.used + mem.cache_from_classes() + mem.free;
+    // htop 3.3.0's macOS model deliberately leaves the compressor out of `used`
+    // *and* out of the bar, so adding the bar segments back cannot close the
+    // gap to physical memory unless the compressor is included. Verify that:
+    //   used + cache + free + compressed == total
+    let accounted = mem.used + mem.cache_from_classes() + mem.free + mem.compressed;
     let diff = mem.total.abs_diff(accounted);
     let tolerance = mem.total / 100 * 10;
     assert!(
         diff <= tolerance,
-        "used({}) + cache({}) + free({}) = {} MiB, total is {} MiB (off by {} MiB)\n{mem:?}",
+        "used({}) + cache({}) + free({}) + compressed({}) = {} MiB, total is {} MiB \
+         (off by {} MiB)\n{mem:?}",
         mem.used / mib,
         mem.cache_from_classes() / mib,
         mem.free / mib,
+        mem.compressed / mib,
         accounted / mib,
         mem.total / mib,
         diff / mib
