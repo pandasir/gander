@@ -53,6 +53,40 @@ reintroduced:
    BSD and task structures in one call, which is fewer syscalls than htop's
    `sysctl(KERN_PROC_ALL)` + `proc_pidinfo` pair.
 
+## Seeing the whole process table
+
+`proc_pidinfo` only describes processes owned by the calling user, so
+`PROC_PIDTASKALLINFO` alone sees roughly 60% of the table: 270 of 456 processes on
+a typical desktop. The first version silently dropped the rest, which is why the
+process count read 284 while `htop` showed 472.
+
+`sysctl(KERN_PROC_ALL)` is not restricted the same way, and it is what htop uses
+(`darwin/DarwinProcessTable.c: ProcessTable_getKInfoProcs`). `libc` does not
+expose Darwin's `kinfo_proc`, so `darwin/kinfo.rs` reads the fixed 648-byte
+records and extracts fields by offset rather than redeclaring a large,
+version-sensitive struct.
+
+Those offsets were not guessed. Each was verified against `ps(1)` on arm64:
+
+| field | offset | how it was verified |
+|---|---|---|
+| `p_starttime.tv_sec` | 0 | plausible Unix seconds for every row |
+| `p_stat` | 32 | histogram matches `ps -o stat=` (4 = SSLEEP dominates) |
+| `p_pid` | 40 | matches `getpid()` and `ps -p` |
+| `p_nice` | 242 | `renice -n 10` a child, find the byte that becomes 10 |
+| `p_comm` | 243 | `"launchd"` for pid 1 |
+| `e_ppid` | 560 | matches `getppid()` |
+| `e_ucred.cr_uid` | 392 | matches `getuid()`, 0 for pid 1 |
+
+`kinfo::validate()` re-runs the pid-1 and self checks at startup, and
+`kinfo::tests` asserts them on every test run, so a layout change fails loudly
+instead of producing silent nonsense.
+
+The resulting split: **every** process gets a row from `KERN_PROC_ALL`; the task
+counters (CPU time, memory, threads) are added only where `proc_pidinfo` permits.
+Processes owned by other users therefore show `-` for CPU/memory, exactly as htop
+does — but they are listed.
+
 ## Memory accounting (this was wrong once)
 
 The macOS memory figure is the single easiest thing to get wrong, because

@@ -39,13 +39,13 @@ pub struct Theme {
     pub cpu_iowait: Color,
     pub cpu_idle: Color,
 
+    /// Memory bar palette, indexed by `MemoryClass::color_slot`.
+    ///
+    /// Order matches htop's `MEMORY_1..6`: used classes first, then cache, then
+    /// free, so a bar reads "hot to cold" left to right.
+    pub memory_slots: [Color; 6],
+
     pub mem_used: Color,
-    /// Kernel-wired pages (macOS).
-    pub mem_wired: Color,
-    /// Compressor-held pages (macOS).
-    pub mem_compressed: Color,
-    /// Reclaimable page cache / inactive pages.
-    pub mem_cache: Color,
     pub mem_buffers: Color,
     pub mem_shared: Color,
     pub mem_free: Color,
@@ -75,6 +75,11 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Color for a `MemoryClass::color_slot`, clamped to the palette.
+    pub fn memory_slot(&self, slot: u8) -> Color {
+        self.memory_slots[(slot as usize).min(self.memory_slots.len() - 1)]
+    }
+
     /// Look up a theme by the name stored in the config file.
     pub fn named(name: &str) -> Option<Self> {
         match name {
@@ -127,10 +132,15 @@ impl Theme {
             cpu_iowait: Color::Gray,
             cpu_idle: Color::Black,
 
+            memory_slots: [
+                Color::Red,     // wired / used
+                Color::Green,   // active / buffers
+                Color::Magenta, // compressed / cache
+                Color::Blue,    // other
+                Color::Yellow,  // purgeable
+                Color::Black,   // free
+            ],
             mem_used: Color::Green,
-            mem_wired: Color::Red,
-            mem_compressed: Color::Magenta,
-            mem_cache: Color::Yellow,
             mem_buffers: Color::Blue,
             mem_shared: Color::Magenta,
             mem_free: Color::Black,
@@ -184,10 +194,15 @@ impl Theme {
             cpu_guest: Color::Gray,
             cpu_iowait: Color::Gray,
             cpu_idle: Color::Black,
+            memory_slots: [
+                Color::White,
+                Color::White,
+                Color::Gray,
+                Color::Gray,
+                Color::Gray,
+                Color::Black,
+            ],
             mem_used: Color::White,
-            mem_wired: Color::White,
-            mem_compressed: Color::Gray,
-            mem_cache: Color::Gray,
             mem_buffers: Color::Gray,
             mem_shared: Color::Gray,
             mem_free: Color::Black,

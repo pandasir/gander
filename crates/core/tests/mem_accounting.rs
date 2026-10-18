@@ -19,27 +19,28 @@ fn used_matches_total_minus_free() {
     assert!(mem.total > 0, "total memory must be known");
     assert!(mem.is_exactly_partitioned(), "{mem:?}");
 
-    // The OS figure: everything not free.
-    let system_used = mem.total.saturating_sub(mem.free);
-
-    // Our accounting drops a few hundred MiB of pages that none of the counters
-    // cover, so allow 15% slack, but never the 2 GB gap the old formula had.
-    let diff = system_used.abs_diff(mem.used);
-    let tolerance = mem.total / 100 * 15;
+    // The page counters partition physical memory, so used + cache + free must
+    // account for essentially all of it. This is the property that broke: an
+    // earlier revision put `inactive` in `used`, which made the three overlap.
+    let accounted = mem.used + mem.cache_from_classes() + mem.free;
+    let diff = mem.total.abs_diff(accounted);
+    let tolerance = mem.total / 100 * 10;
     assert!(
         diff <= tolerance,
-        "used {} MiB differs from total-free {} MiB by {} MiB (tolerance {} MiB)\n{mem:?}",
+        "used({}) + cache({}) + free({}) = {} MiB, total is {} MiB (off by {} MiB)\n{mem:?}",
         mem.used / mib,
-        system_used / mib,
-        diff / mib,
-        tolerance / mib
+        mem.cache_from_classes() / mib,
+        mem.free / mib,
+        accounted / mib,
+        mem.total / mib,
+        diff / mib
     );
 }
 
 #[test]
 fn used_is_not_suspiciously_low() {
-    // Regression guard: the shipped bug reported ~40% of real usage because
-    // `inactive` was excluded and `wired` was double-counted the other way.
+    // Regression guard: one shipped bug reported ~40% of real usage because the
+    // compressor was never counted (htop 3.3's formula).
     let mut sampler = gander_core::Sampler::default();
     let (snapshot, _rows) = sampler.sample();
     let mem = &snapshot.mem;
@@ -60,12 +61,14 @@ fn classes_are_not_double_counted() {
     let (snapshot, _rows) = sampler.sample();
     let mem = &snapshot.mem;
 
-    let classes = mem
-        .wired
-        .saturating_add(mem.compressed)
-        .saturating_add(mem.active.saturating_sub(mem.purgeable))
-        .saturating_add(mem.inactive)
-        .saturating_add(mem.free);
+    // Every class flagged `counts_as_total` represents a distinct set of pages,
+    // so their sum must not exceed physical memory.
+    let classes: u64 = mem
+        .classes
+        .iter()
+        .filter(|c| c.counts_as_total)
+        .map(|c| c.bytes)
+        .sum();
     assert!(
         classes <= mem.total,
         "memory classes sum to {} but total is {}: {mem:?}",

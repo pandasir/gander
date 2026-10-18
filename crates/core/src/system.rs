@@ -55,56 +55,78 @@ impl CpuTimes {
     }
 }
 
+/// One named class of memory, as htop models it.
+///
+/// `counts_as_used` adds it to the "used" figure; `counts_as_cache` marks it as
+/// reclaimable. Modeling this as data (which is what htop 3.6 does in
+/// `MemoryClass[]`) keeps the formula reviewable instead of hiding it in
+/// arithmetic.
+#[derive(Copy, Clone, Debug)]
+pub struct MemoryClass {
+    pub label: &'static str,
+    pub bytes: u64,
+    pub counts_as_used: bool,
+    pub counts_as_cache: bool,
+    pub counts_as_total: bool,
+    /// Color slot, 0-5, matching htop's `MEMORY_1..6` palette order.
+    pub color_slot: u8,
+}
+
 /// The memory breakdown a platform reports.
 ///
-/// Every backend fills in `total` and the classes it has, then calls
+/// Every backend fills in `total` and `classes`, then calls
 /// `finish_linux` or `finish_darwin` exactly once to derive `used`/`available`.
 ///
-/// The two platforms genuinely differ, and pretending otherwise produced wrong
-/// numbers in the UI (`docs/PORTABILITY.md`):
-///
-/// * **Linux** — `used` follows GNU `free`, `available` comes from `MemAvailable`.
-///   They are *not* complementary: `MemAvailable` already accounts for
-///   reclaimable cache, so `used + available > total` is normal and correct.
-/// * **macOS** — VM statistics are **two overlapping families** of counters:
-///   `active/inactive/wired/compressed/free/speculative` describe every page,
-///   while `internal/external` classify the same pages by *backing store*
-///   (anonymous vs file-backed). Summing across the families double-counts, so
-///   `used` is built from the first family only.
-#[derive(Copy, Clone, Default, Debug)]
+/// The classes are the *authority* on what counts as used: `finish_*` only sums
+/// the flags. This matters because the platforms genuinely disagree, and every
+/// attempt to hardcode a formula produced a number that contradicted either the
+/// class sum or the operating system (`docs/PORTABILITY.md`).
+#[derive(Clone, Default, Debug)]
 pub struct MemInfo {
     pub total: u64,
-    /// Pages immediately reusable without evicting anything.
-    pub free: u64,
     /// Memory that can be handed to a new allocation, including reclaimable
     /// cache. Derived by the `finish_*` methods.
     pub available: u64,
-    /// Derived: whatever is not available.
+    /// Derived: the sum of every class flagged `counts_as_used`.
     pub used: u64,
+    /// Free pages. Not a class of its own on macOS, where `free` is tiny and the
+    /// page cache holds the slack.
+    pub free: u64,
+    /// The ordered class list. Order is the bar-segment order.
+    pub classes: Vec<MemoryClass>,
 
-    // Linux classes.
+    // Raw fields kept for platform-specific reporting and diagnostics.
     pub buffers: u64,
     pub cached: u64,
     pub sreclaimable: u64,
     pub shmem: u64,
-
-    // macOS classes, in bytes.
-    /// Anonymous pages currently referenced (`active_count`).
-    pub active: u64,
-    /// Anonymous pages not currently referenced but not yet reclaimed
-    /// (`inactive_count`). They are dirty, not free.
-    pub inactive: u64,
-    /// Kernel-wired pages (`wire_count`).
     pub wired: u64,
-    /// Pages held by the compressor (`compressor_page_count`).
     pub compressed: u64,
-    /// Pages an application marked discardable (`purgeable_count`).
+    pub active: u64,
+    pub inactive: u64,
     pub purgeable: u64,
-    /// Readahead pages kept speculatively (`speculative_count`).
     pub speculative: u64,
 }
 
 impl MemInfo {
+    /// Sum the classes tagged `counts_as_used`.
+    pub fn used_from_classes(&self) -> u64 {
+        self.classes
+            .iter()
+            .filter(|c| c.counts_as_used)
+            .map(|c| c.bytes)
+            .sum()
+    }
+
+    /// Sum the classes tagged `counts_as_cache`.
+    pub fn cache_from_classes(&self) -> u64 {
+        self.classes
+            .iter()
+            .filter(|c| c.counts_as_cache)
+            .map(|c| c.bytes)
+            .sum()
+    }
+
     /// Linux/GNU `free` accounting, matching `linux/LinuxMachine.c`.
     ///
     /// `used = total - free - cached - sreclaimable - buffers`, with `shmem`
@@ -129,31 +151,114 @@ impl MemInfo {
         } else {
             self.free
         };
+
+        self.classes = vec![
+            MemoryClass {
+                label: "used",
+                bytes: self.used,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 0,
+            },
+            MemoryClass {
+                label: "buffers",
+                bytes: self.buffers,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 1,
+            },
+            MemoryClass {
+                label: "cache",
+                bytes: self.cached,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 2,
+            },
+            MemoryClass {
+                label: "free",
+                bytes: self.free,
+                counts_as_used: false,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 5,
+            },
+        ];
     }
 
-    /// macOS accounting.
+    /// macOS accounting, following htop's `darwin/Platform.c`.
     ///
-    /// `used = (active - purgeable) + wired + compressed + inactive`
+    /// `used = wired + active + compressed`
     ///
     /// * `wired` and `compressed` are disjoint from `active`, so all three add.
-    /// * `purgeable` pages sit inside `active` and are reclaimable, hence the
-    ///   subtraction.
-    /// * `inactive` counts as used: it holds dirty anonymous pages that the VM
-    ///   has not reclaimed yet. Leaving it out is what made an 8 GB machine
-    ///   report 5.7 GB. Activity Monitor shows the same thing — its "Used
-    ///   Memory" tracks `total - free`.
+    ///   htop 3.3.0 omitted `compressed`; on a machine with 2 GB in the
+    ///   compressor that understates usage by 2 GB, and upstream fixed it.
+    /// * `inactive` is **cache**, not used: the page counters partition physical
+    ///   memory, so counting `inactive` as used both overshoots the total and
+    ///   contradicts its own role as reclaimable.
     /// * `available = total - used`, so the two figures partition memory
     ///   exactly, which is a useful invariant to test.
     pub fn finish_darwin(&mut self) {
-        let app = self.active.saturating_sub(self.purgeable);
-        self.used = app
-            .saturating_add(self.wired)
+        self.used = self
+            .wired
+            .saturating_add(self.active)
             .saturating_add(self.compressed)
-            .saturating_add(self.inactive)
             .min(self.total);
-        // Anything the counters missed (a few hundred MB in practice) is
-        // unaccounted, not available, so it stays on the `used` side.
         self.available = self.total.saturating_sub(self.used);
+
+        // Order matches htop's bar: used classes first, then cache, then free.
+        self.classes = vec![
+            MemoryClass {
+                label: "active",
+                bytes: self.active,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 1,
+            },
+            MemoryClass {
+                label: "wired",
+                bytes: self.wired,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 0,
+            },
+            MemoryClass {
+                label: "compressed",
+                bytes: self.compressed,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 2,
+            },
+            MemoryClass {
+                label: "inactive",
+                bytes: self.inactive,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 5,
+            },
+            MemoryClass {
+                label: "purgeable",
+                bytes: self.purgeable,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 4,
+            },
+            MemoryClass {
+                label: "free",
+                bytes: self.free,
+                counts_as_used: false,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 5,
+            },
+        ];
     }
 
     /// Backwards-compatible alias used by the Linux parser.
@@ -316,32 +421,38 @@ mod tests {
         assert!(mem.available <= mem.total);
     }
 
-    /// Real `vm_statistics64` numbers from an 8 GB Apple Silicon Mac under load.
-    /// A correct implementation must land near `total - free`, because that is
-    /// what Activity Monitor and `top` report.
+    /// Real `vm_statistics64` numbers from an 8 GB Apple Silicon Mac, taken at
+    /// the same moment htop 3.3.0 displayed 3.45 GB and htop 3.6-dev 5.64 GB.
+    ///
+    /// We follow 3.6: `wired + active + compressed`. 3.3.0 omitted the
+    /// compressor, which is 2 GB on this machine.
     #[test]
-    fn darwin_used_tracks_the_system_figure() {
+    fn darwin_used_matches_htop_36() {
         let mib = 1024 * 1024;
         let mut mem = MemInfo {
             total: 8 * 1024 * mib,
-            free: 156 * mib,
-            active: 1878 * mib,
-            inactive: 1778 * mib,
-            wired: 1631 * mib,
-            compressed: 2187 * mib,
-            purgeable: 99 * mib,
-            speculative: 81 * mib,
+            free: 225 * mib,
+            active: 1710 * mib,
+            inactive: 1628 * mib,
+            wired: 1823 * mib,
+            compressed: 2243 * mib,
+            purgeable: 133 * mib,
+            speculative: 85 * mib,
             ..Default::default()
         };
         mem.finish_darwin();
 
-        // (1878 - 99) + 1631 + 2187 + 1778 = 7375 MiB
-        assert_eq!(mem.used, 7375 * mib);
+        // 1710 + 1823 + 2243 = 5776 MiB, which is what htop 3.6 reports.
+        assert_eq!(mem.used, 5776 * mib);
+        assert_eq!(mem.used_from_classes(), mem.used);
+        assert!(mem.is_exactly_partitioned());
 
-        let used_mib = mem.used / mib;
+        // htop 3.3.0's formula, for contrast: it drops the 2243 MiB compressor.
+        let htop_330 = (mem.active + mem.wired) / mib;
+        assert_eq!(htop_330, 3533);
         assert!(
-            (7000..=7900).contains(&used_mib),
-            "used {used_mib} MiB should be close to the ~7400 MiB `top` reports"
+            htop_330 + 2000 < mem.used / mib,
+            "htop 3.3 understates by the compressor size, which is why we do not copy it"
         );
         assert!(
             mem.is_exactly_partitioned(),

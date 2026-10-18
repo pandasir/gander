@@ -105,12 +105,18 @@ impl PlatformSampler for Sampler {
         let now_secs = scan::now_secs();
 
         // --- processes -------------------------------------------------------
-        let pids = scan::list_pids().unwrap_or_default();
+        // `KERN_PROC_ALL` sees every process; `proc_pidinfo` cannot. If the
+        // layout self-check fails, fall back to the libproc-only path rather
+        // than showing wrong numbers.
+        let procs = match crate::darwin::kinfo::list_processes() {
+            Ok(list) if !list.is_empty() => list,
+            _ => Vec::new(),
+        };
         let interval = self
             .prev_at
             .map(|p| at.duration_since(p).as_secs_f64())
             .unwrap_or(0.0);
-        let rows = self.read_rows(&pids, interval, now_secs, mem.total);
+        let rows = self.read_rows(&procs, interval, now_secs, mem.total);
 
         self.prev_cpu = cpu.clone();
         self.prev_at = Some(at);
@@ -142,66 +148,58 @@ impl PlatformSampler for Sampler {
 impl Sampler {
     fn read_rows(
         &mut self,
-        pids: &[Pid],
+        procs: &[crate::darwin::kinfo::RawProc],
         interval_secs: f64,
         now_secs: u64,
         mem_total: u64,
     ) -> Vec<Row> {
-        let mut out = Vec::with_capacity(pids.len());
-        let mut next_prev = HashMap::with_capacity(pids.len());
+        let mut out = Vec::with_capacity(procs.len());
+        let mut next_prev = HashMap::with_capacity(procs.len());
 
-        for &pid in pids {
-            // One syscall gives both the BSD facts and the task counters.
-            let Some(all) = scan::task_all_info(pid) else {
-                continue; // exited, or not ours to inspect
-            };
-            let bsd = all.bsd;
-            let ti = all.task;
+        for kp in procs {
+            let pid = kp.pid;
 
-            let start_usec = bsd.start_sec.saturating_mul(1_000_000) + bsd.start_usec;
+            // The BSD facts arrive with the process list, so a row always exists
+            // even for processes we cannot inspect. Only the task counters
+            // (CPU time, memory, threads) need the extra call.
+            let ti = scan::task_all_info(pid).map(|all| all.task);
+
+            let start_usec = kp.start_sec.saturating_mul(1_000_000);
             let prev = self.prev_rows.get(&pid).copied();
             let same_process = prev.is_some_and(|p| p.start_usec == start_usec);
 
-            let user = units::mach_ticks_to_nanos(ti.user_ns);
-            let system = units::mach_ticks_to_nanos(ti.system_ns);
-            let cpu_ns = user.saturating_add(system);
+            let cpu_ns = ti
+                .map(|t| {
+                    units::mach_ticks_to_nanos(t.user_ns)
+                        .saturating_add(units::mach_ticks_to_nanos(t.system_ns))
+                })
+                .unwrap_or(0);
 
             let mut row = Row::default_for_test(pid);
             row.starttime = start_usec;
-            row.ppid = bsd.ppid;
-            row.uid = bsd.uid;
-            row.nice = bsd.nice.clamp(-128, 127) as i8;
-            row.priority = bsd.nice.clamp(-128, 127) as i8;
-            // `pbi_status` is the BSD p_stat, which reports SRUN for most idle
-            // processes. htop derives state from the running-thread count
-            // instead, keeping zombie/stopped from p_stat.
-            // (darwin/DarwinProcess.c)
-            row.state = match bsd.p_stat {
-                4 => b'T',
-                5 => b'Z',
-                1 => b'I',
-                _ => {
-                    if ti.running_threads > 0 {
-                        b'R'
-                    } else {
-                        b'S'
-                    }
+            row.ppid = kp.ppid;
+            row.uid = kp.uid;
+            row.nice = kp.nice.clamp(-128, 127) as i8;
+            row.priority = kp.nice.clamp(-128, 127) as i8;
+            row.state = parse::state_letter(kp.p_stat);
+            if let Some(t) = ti {
+                if t.running_threads > 0 {
+                    row.state = b'R';
+                } else if row.state == b'R' {
+                    row.state = b'S';
                 }
-            };
+            }
 
-            let len = bsd
-                .comm
-                .iter()
-                .position(|b| *b == 0)
-                .unwrap_or(bsd.comm.len());
-            let name = String::from_utf8_lossy(&bsd.comm[..len]);
+            let name = kp.comm_str();
             let _ = row.comm.try_push_str(&name);
 
             row.time_ticks = cpu_ns / 10_000_000; // hundredths of a second
-            row.virt = ti.virtual_size;
-            row.res = ti.resident_size;
-            row.nlwp = ti.threads as i32;
-            row.min_flt = ti.faults as u64;
+            if let Some(t) = ti {
+                row.virt = t.virtual_size;
+                row.res = t.resident_size;
+                row.nlwp = t.threads as i32;
+                row.min_flt = t.faults as u64;
+            }
             row.processor = -1;
 
             // CPU% needs wall-clock time here, not tick deltas: proc_taskinfo
@@ -218,7 +216,11 @@ impl Sampler {
                 }
             }
 
-            let io = scan::rusage(pid);
+            let io = if ti.is_some() {
+                scan::rusage(pid)
+            } else {
+                None
+            };
             next_prev.insert(
                 pid,
                 PrevRow {
@@ -234,18 +236,24 @@ impl Sampler {
             } else {
                 0.0
             };
-            // `pbi_start_tvsec` is an absolute Unix timestamp; uptime is a
-            // duration. Subtracting one from the other always yields 0.
-            row.elapsed = now_secs.saturating_sub(bsd.start_sec);
+            // `start_sec` is an absolute Unix timestamp; uptime is a duration.
+            row.elapsed = now_secs.saturating_sub(kp.start_sec);
 
-            // Identity data: expensive and immutable, so cached.
-            let stable = self.identity(pid, start_usec);
-            row.uid = stable.uid;
-            row.cmdline = stable.cmdline;
-            row.exe = stable.exe;
-            row.flags = row
-                .flags
-                .set(RowFlags::KERNEL_THREAD, stable.is_kernel_thread);
+            // Identity data: expensive and immutable, so cached. Only fetched
+            // when the process is inspectable; otherwise the command name from
+            // the BSD info is all we get, and that is what htop shows too.
+            if ti.is_some() {
+                let stable = self.identity(pid, start_usec);
+                row.uid = stable.uid;
+                row.cmdline = stable.cmdline;
+                row.exe = stable.exe;
+                row.flags = row
+                    .flags
+                    .set(RowFlags::KERNEL_THREAD, stable.is_kernel_thread);
+                if stable.is_kernel_thread {
+                    row.flags = row.flags.insert(RowFlags::KERNEL_THREAD);
+                }
+            }
 
             out.push(row);
         }

@@ -27,6 +27,7 @@
 //! `darwin/DarwinProcess.c` divides the nanosecond delta by the sampling
 //! interval.
 
+pub mod kinfo;
 pub mod parse;
 pub mod scan;
 pub mod system;

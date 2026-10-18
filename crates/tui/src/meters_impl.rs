@@ -122,8 +122,9 @@ fn labelled_bar(
 
 /// A memory meter that keeps the whole breakdown, not just used/total.
 ///
-/// The bar is drawn as the platform's real classes (wired / active / compressed
-/// / cache / free), so what you see matches what the label claims.
+/// The bar is drawn from the platform's memory-class list, so the bar and the
+/// `used/total` label cannot disagree — the previous hand-rolled formula did
+/// exactly that (`docs/PORTABILITY.md`).
 pub struct MemoryMeter {
     value: f32,
     text: String,
@@ -148,6 +149,18 @@ impl Default for MemoryMeter {
     }
 }
 
+/// Default palette for color slots 0..=5, overridden by the theme at render time.
+fn slot_color(slot: u8) -> ratatui::style::Color {
+    match slot {
+        0 => ratatui::style::Color::Red,
+        1 => ratatui::style::Color::Green,
+        2 => ratatui::style::Color::Magenta,
+        3 => ratatui::style::Color::Blue,
+        4 => ratatui::style::Color::Yellow,
+        _ => ratatui::style::Color::Black,
+    }
+}
+
 impl Meter for MemoryMeter {
     fn name(&self) -> &'static str {
         "Memory"
@@ -166,22 +179,19 @@ impl Meter for MemoryMeter {
         self.value = snapshot.mem_usage();
         self.text = format!("{}/{}", bytes_human(mem.used), bytes_human(mem.total));
 
-        // Fraction of physical memory for each class. Zero-valued classes are
-        // dropped so the bar is only as busy as the platform requires.
-        let mut segs = Vec::with_capacity(6);
-        let mut push = |bytes: u64, color| {
-            if bytes > 0 && mem.total > 0 {
-                segs.push(Segment {
-                    value: bytes as f32 / mem.total as f32,
-                    color,
-                });
+        // Build the bar straight from the platform's class list. Classes flagged
+        // `counts_as_cache` are drawn as well (htop shows cached memory by
+        // default) but they are not part of `used`.
+        let mut segs = Vec::with_capacity(mem.classes.len());
+        for class in &mem.classes {
+            if class.bytes == 0 || mem.total == 0 {
+                continue;
             }
-        };
-        push(mem.wired, self.theme_wired());
-        push(mem.active.saturating_sub(mem.purgeable), self.theme_used());
-        push(mem.compressed, self.theme_compressed());
-        push(mem.inactive, self.theme_cache());
-        push(mem.free, self.theme_free());
+            segs.push(Segment {
+                value: class.bytes as f32 / mem.total as f32,
+                color: slot_color(class.color_slot),
+            });
+        }
         self.segments = segs;
 
         if self.history.len() == crate::meters::GRAPH_HISTORY {
@@ -195,38 +205,18 @@ impl Meter for MemoryMeter {
             crate::meters::draw_graph(buf, area, &self.history, theme, 1.0);
             return;
         }
-        // Recolor on render so a theme change takes effect without a new sample.
+        // Recolor on render so a theme change applies without a new sample.
         let mut segs = self.segments.clone();
         for (i, seg) in segs.iter_mut().enumerate() {
-            seg.color = match i {
-                0 => theme.mem_wired,
-                1 => theme.mem_used,
-                2 => theme.mem_compressed,
-                3 => theme.mem_cache,
-                _ => theme.mem_free,
-            };
+            seg.color = theme.memory_slot(i as u8);
         }
         labelled_bar("Mem", self.value, &self.text, &segs, area, buf, theme, mode);
     }
 }
 
-impl MemoryMeter {
-    fn theme_wired(&self) -> ratatui::style::Color {
-        ratatui::style::Color::Red
-    }
-    fn theme_used(&self) -> ratatui::style::Color {
-        ratatui::style::Color::Green
-    }
-    fn theme_compressed(&self) -> ratatui::style::Color {
-        ratatui::style::Color::Magenta
-    }
-    fn theme_cache(&self) -> ratatui::style::Color {
-        ratatui::style::Color::Yellow
-    }
-    fn theme_free(&self) -> ratatui::style::Color {
-        ratatui::style::Color::Black
-    }
-}
+// ---------------------------------------------------------------------------
+// Swap
+// ---------------------------------------------------------------------------
 
 simple_meter!(
     /// Swap usage.
@@ -235,7 +225,11 @@ simple_meter!(
     10,
     |this: &mut Self, snap: &SystemSnapshot| {
         this.value = snap.swap_usage();
-        this.text = format!("{}/{}", bytes_human(snap.swap.used), bytes_human(snap.swap.total));
+        this.text = format!(
+            "{}/{}",
+            bytes_human(snap.swap.used),
+            bytes_human(snap.swap.total)
+        );
     },
     |this: &Self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode| {
         let segs = [

@@ -26,7 +26,8 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | Identical keybindings to htop | done |
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
-| 122 tests, zero clippy warnings | done |
+| Full process table on macOS via `KERN_PROC_ALL` | done |
+| 128 tests, zero clippy warnings | done |
 
 ## Next: finish M0
 

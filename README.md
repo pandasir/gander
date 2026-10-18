@@ -6,7 +6,7 @@
 *candidate feature set*, built with an immediate-mode TUI (ratatui) and an
 Elm-style state/update/view loop instead of htop's retained-mode Panel stack.
 
-**Status: M0 skeleton.** Compiles, 122 tests pass, runs on **Linux and macOS**.
+**Status: M0 skeleton.** Compiles, 128 tests pass, runs on **Linux and macOS**.
 See [docs/DESIGN.md](docs/DESIGN.md) for the design,
 [docs/ROADMAP.md](docs/ROADMAP.md) for progress, and
 [docs/PORTABILITY.md](docs/PORTABILITY.md) for the per-platform details.
@@ -75,7 +75,7 @@ Details and the budget breakdown: [docs/DESIGN.md § 9 Performance](docs/DESIGN.
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 122 tests
+cargo test                 # 128 tests
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
