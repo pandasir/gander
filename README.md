@@ -6,9 +6,10 @@
 *candidate feature set*, built with an immediate-mode TUI (ratatui) and an
 Elm-style state/update/view loop instead of htop's retained-mode Panel stack.
 
-**Status: M0 skeleton.** Compiles, 93 tests pass, runs on Linux. See
-[docs/DESIGN.md](docs/DESIGN.md) for the design and
-[docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what is next.
+**Status: M0 skeleton.** Compiles, 116 tests pass, runs on **Linux and macOS**.
+See [docs/DESIGN.md](docs/DESIGN.md) for the design,
+[docs/ROADMAP.md](docs/ROADMAP.md) for progress, and
+[docs/PORTABILITY.md](docs/PORTABILITY.md) for the per-platform details.
 
 ## Why not a 1:1 port?
 
@@ -26,6 +27,7 @@ code structure.** Keep its *keybindings* though — zero-cost migration for user
 | Render | ncurses, retained-mode panels | ratatui + crossterm, immediate-mode |
 | Widgets | `Object` vtable, focus stack | `enum Screen` + per-screen `handle_key()` |
 | Data | single-threaded `/proc` scan | parallel scan (rayon) + background sampler |
+| Platforms | Linux, BSD, macOS | Linux + macOS, same `PlatformSampler` trait |
 | Config | `htoprc`, hand-rolled parser | TOML, with `--import-htoprc` |
 | Tests | luajit spec, valgrind scripts | fixtures + proptest + `TestBackend` snapshots |
 
@@ -73,21 +75,22 @@ Details and the budget breakdown: [docs/DESIGN.md § 9 Performance](docs/DESIGN.
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 93 tests
+cargo test                 # 116 tests
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
 
-Requires Linux for the primary backend (macOS and the BSDs compile, but the TUI
-refuses to start without a backend). Test fixtures under
-`crates/core/tests/fixtures/proc/` are real `/proc` snapshots, so the whole read
-path is testable on any unix.
+Works on Linux (`/proc`) and macOS (`libproc` + `sysctl` + Mach). Other unix
+targets compile the `/proc` backend but have no live source; the TUI refuses to
+start there. Test fixtures under `crates/core/tests/fixtures/proc/` are real
+`/proc` snapshots, so the Linux read path is testable on any unix.
 
 ## Try it
 
 ```bash
 cargo run --release                          # the TUI
-cargo run --release -- --json | head         # batch mode (Linux only)
+cargo run --release -- --json --limit 10     # batch mode
+cargo run --release -- -n 5 -d 1000          # five samples, one per second
 cargo run --release -- --import-htoprc ~/.config/htop/htoprc --save
 ```
 

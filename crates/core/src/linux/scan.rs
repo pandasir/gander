@@ -208,6 +208,14 @@ pub fn read_uptime(root: &Path) -> Option<u64> {
     .flatten()
 }
 
+/// Whether `/proc/<pid>` still refers to the same process identified by
+/// `starttime`. Used to detect PID reuse between two samples.
+pub fn is_same_process(root: &Path, pid: Pid, starttime: u64) -> bool {
+    read_stat(root, pid)
+        .map(|(_, fields)| fields.starttime == starttime)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,12 +260,4 @@ mod tests {
         let pids = list_pids(root).expect("readable fixture root");
         assert!(!pids.is_empty());
     }
-}
-
-/// Whether `/proc/<pid>` still refers to the same process identified by
-/// `starttime`. Used to detect PID reuse between two samples.
-pub fn is_same_process(root: &Path, pid: Pid, starttime: u64) -> bool {
-    read_stat(root, pid)
-        .map(|(_, fields)| fields.starttime == starttime)
-        .unwrap_or(false)
 }

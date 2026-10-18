@@ -4,17 +4,15 @@
 //! rendering never blocks on a `/proc` scan. That is the one place gander can be
 //! qualitatively better than htop (`docs/DESIGN.md` §6).
 //!
-//! Everything platform-specific is gated on `target_os = "linux"`; key
+//! The event loop is gated on having a live backend (`PLATFORM_SUPPORTED`); key
 //! translation is not, so its tests run everywhere.
-
-#[cfg(target_os = "linux")]
-use std::time::Duration;
 
 use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers};
 
+#[allow(unused_imports)]
 use crate::app::{App, Key};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -23,6 +21,7 @@ mod platform {
     use arc_swap::ArcSwap;
     use gander_core::row::Row;
     use gander_core::system::SystemSnapshot;
+    use gander_core::PlatformSampler;
     use ratatui::backend::CrosstermBackend;
     use ratatui::crossterm::event::{self, Event};
     use ratatui::crossterm::execute;
@@ -47,7 +46,7 @@ mod platform {
 
     /// Run the application until the user quits.
     pub fn run(mut app: App) -> std::io::Result<()> {
-        let mut sampler = gander_core::linux::system::Sampler::default();
+        let mut sampler = gander_core::Sampler::default();
         let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
 
         // Prime the first sample synchronously so the very first frame has data.
@@ -76,7 +75,7 @@ mod platform {
         let handle = std::thread::Builder::new()
             .name("gander-sampler".into())
             .spawn(move || {
-                let mut sampler = gander_core::linux::system::Sampler::default();
+                let mut sampler = gander_core::Sampler::default();
                 while !stop_flag.load(Ordering::Relaxed) {
                     let started = Instant::now();
                     let (snapshot, rows) = sampler.sample();
@@ -152,15 +151,15 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use platform::run;
 
 /// Non-Linux stub: there is no backend yet, so the TUI cannot start.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn run(_app: App) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "gander has no backend for this platform yet; see docs/DESIGN.md milestone M4",
+        "gander has no backend for this platform yet; see docs/PORTABILITY.md",
     ))
 }
 

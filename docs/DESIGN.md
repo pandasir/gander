@@ -84,8 +84,15 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 
 ### M4 — portability
 
-- `Platform` trait has a second implementation: macOS first, then FreeBSD
-- Not all fields exist everywhere → `Field` is `#[non_exhaustive]` per-target
+Status: **macOS done ahead of schedule** (it is the development machine, and the
+cost of retrofitting the abstraction later would have been higher). FreeBSD and
+the other BSDs remain.
+
+- `PlatformSampler` trait has two implementations: `/proc` and `darwin`
+- Not all fields exist everywhere → `Field` is `#[non_exhaustive]`, and
+  `gander_core::capability::*` consts let the UI hide what cannot work
+- Platform differences and the traps that were hit: see
+  [PORTABILITY.md](PORTABILITY.md)
 
 ### Out of scope
 

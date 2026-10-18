@@ -36,8 +36,12 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
+    // One sampler for the whole run: per-process CPU% needs two consecutive
+    // samples, so a fresh sampler per iteration would always report 0.
+    let mut sampler = gander_core::Sampler::default();
+
     for iteration in 0..iterations {
-        let rows = match sample_once(sort, filter.as_ref()) {
+        let rows = match sample_once(&mut sampler, sort, filter.as_ref()) {
             Ok(rows) => rows,
             Err(e) => {
                 eprintln!("gander: {e}");
@@ -48,7 +52,7 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
         let result = if batch.json {
             write_json(&mut out, &rows, batch.limit, config)
         } else {
-            write_text(&mut out, &rows, batch.limit)
+            write_text(&mut out, &rows, batch.limit, sample_clk_tck())
         };
 
         if let Err(e) = result {
@@ -67,9 +71,19 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-#[cfg(target_os = "linux")]
-fn sample_once(sort: Sort, filter: Option<&Filter>) -> std::io::Result<Vec<Row>> {
-    let mut sampler = gander_core::linux::system::Sampler::default();
+/// Clock ticks per second, for the TIME column.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sample_clk_tck() -> u64 {
+    gander_core::CurrentPlatform::clk_tck()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sample_once(
+    sampler: &mut gander_core::Sampler,
+    sort: Sort,
+    filter: Option<&Filter>,
+) -> std::io::Result<Vec<Row>> {
+    use gander_core::PlatformSampler as _;
     let (_snapshot, rows) = sampler.sample();
     let mut order: Vec<usize> = if let Some(f) = filter {
         (0..rows.len()).filter(|&i| f.matches(&rows[i])).collect()
@@ -83,9 +97,13 @@ fn sample_once(sort: Sort, filter: Option<&Filter>) -> std::io::Result<Vec<Row>>
     Ok(order.into_iter().filter_map(|i| slots[i].take()).collect())
 }
 
-/// Placeholder for non-Linux builds; batch mode is rejected earlier.
-#[cfg(not(target_os = "linux"))]
-fn sample_once(_sort: Sort, _filter: Option<&Filter>) -> std::io::Result<Vec<Row>> {
+/// Placeholder for targets without a backend; batch mode is rejected earlier.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn sample_once(
+    _sampler: &mut gander_core::Sampler,
+    _sort: Sort,
+    _filter: Option<&Filter>,
+) -> std::io::Result<Vec<Row>> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "no backend for this platform",
@@ -96,6 +114,7 @@ fn write_text(
     out: &mut impl std::io::Write,
     rows: &[Row],
     limit: Option<usize>,
+    clk_tck: u64,
 ) -> std::io::Result<()> {
     let take = limit.unwrap_or(rows.len()).min(rows.len());
     writeln!(
@@ -112,7 +131,7 @@ fn write_text(
             format::percent_human(row.percent_mem),
             row.nice,
             format::bytes_human(row.res),
-            format::duration_human(row.elapsed),
+            format::cpu_time_human(row.time_ticks, clk_tck),
             row.display_command()
         )?;
     }
@@ -202,7 +221,7 @@ mod tests {
     fn text_output_respects_limit() {
         let rows = vec![row(1, "a", 1.0), row(2, "b", 2.0), row(3, "c", 3.0)];
         let mut buf = Vec::new();
-        write_text(&mut buf, &rows, Some(2)).unwrap();
+        write_text(&mut buf, &rows, Some(2), 100).unwrap();
         let text = String::from_utf8(buf).unwrap();
         assert_eq!(text.lines().count(), 3, "header plus two rows");
     }

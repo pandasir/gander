@@ -1211,6 +1211,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn draw_with_a_live_sample() {
+        use gander_core::PlatformSampler as _;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut sampler = gander_core::Sampler::default();
+        let (snapshot, rows) = sampler.sample();
+        assert!(!rows.is_empty(), "a live sample must contain processes");
+
+        let mut app = App::new(Config::default());
+        app.apply_sample(snapshot, rows);
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rendered: String = buffer
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(rendered.contains("PID"), "header must be drawn");
+        assert!(rendered.contains("F10"), "function bar must be drawn");
+    }
+
+    #[test]
     fn draw_does_not_panic_with_rows() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
