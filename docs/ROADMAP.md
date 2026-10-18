@@ -28,7 +28,7 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 212 tests on macOS, 198 on Linux, zero clippy warnings | done |
+| 215 tests on macOS, 198 on Linux, zero clippy warnings | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## Next: finish M0
