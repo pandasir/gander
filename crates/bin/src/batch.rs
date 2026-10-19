@@ -18,11 +18,38 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     }
 
     let iterations = batch.iterations.unwrap_or(1).max(1);
-    let sort_field = batch
-        .sort
-        .as_deref()
-        .and_then(Field::from_name)
-        .unwrap_or(Field::PercentCpu);
+
+    // An unknown `--sort` field is an error, not a fallback.
+    //
+    // This used to be `.and_then(Field::from_name).unwrap_or(Field::PercentCpu)`,
+    // and the fallback never actually happened: `Sort`'s field is consumed by
+    // `compare_by`, whose `_` arm compares pids, so a misspelt field produced a
+    // pid-sorted list that looked deliberate. `--sort BOGUS` and `--sort M_PSS` on
+    // macOS gave byte-identical output, which meant a user could not tell a typo
+    // from a column their platform does not have. Saying so is the only useful
+    // answer: the caller asked for an order and did not get it.
+    let sort_field = match batch.sort.as_deref() {
+        None => Field::PercentCpu,
+        Some(name) => match Field::from_name(name) {
+            Some(field) => field,
+            None => {
+                // A Linux-only column named on another platform is worth
+                // distinguishing from a typo: the name is real, the platform is
+                // the problem.
+                let known_elsewhere = is_linux_only_field(name);
+                if known_elsewhere {
+                    eprintln!(
+                        "gander: --sort {name} is a Linux-only column and this build has no \
+                         data source for it"
+                    );
+                } else {
+                    eprintln!("gander: unknown --sort field: {name}");
+                    eprintln!("gander: run `gander --help` for the list");
+                }
+                return std::process::ExitCode::from(2);
+            }
+        },
+    };
     let sort = Sort {
         field: sort_field,
         dir: if sort_field.default_sort_desc() {
@@ -84,6 +111,32 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     }
 
     std::process::ExitCode::SUCCESS
+}
+
+/// Whether `name` is a column that exists on some other platform.
+///
+/// `Field::from_name` only sees this build's `FIELD_META`, so a Linux-only column
+/// asked for on macOS comes back as an unknown name. The two cases deserve
+/// different messages: "you spelt it wrong" and "this build cannot answer that"
+/// are different problems with different fixes.
+///
+/// The list is written out rather than derived because the fields it names do not
+/// exist in this build's `Field` enum — there is nothing to iterate over.
+#[cfg(not(target_os = "linux"))]
+fn is_linux_only_field(name: &str) -> bool {
+    matches!(
+        name,
+        "M_PSS" | "M_EPSS" | "M_PRIVATE" | "M_SWAP" | "GPU%" | "GPU_TIME" | "CGROUP" | "CONTAINER"
+    )
+}
+
+/// On Linux every column in the list exists, so this is always false.
+///
+/// Kept as a function rather than a `cfg` at each call site so the error path
+/// reads the same on both platforms.
+#[cfg(target_os = "linux")]
+fn is_linux_only_field(_name: &str) -> bool {
+    false
 }
 
 /// Clock ticks per second, for the TIME column.
@@ -277,6 +330,38 @@ mod tests {
         r.comm.try_push_str(comm).unwrap();
         r.percent_cpu = cpu;
         r
+    }
+
+    /// A Linux-only column asked for on another platform must be named as such,
+    /// not reported as a typo.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn linux_only_fields_are_recognised_as_such() {
+        for name in ["M_PSS", "M_EPSS", "M_PRIVATE", "M_SWAP", "GPU%", "GPU_TIME"] {
+            assert!(is_linux_only_field(name), "{name} should be Linux-only");
+            assert_eq!(
+                Field::from_name(name),
+                None,
+                "{name} must not resolve on this platform"
+            );
+        }
+        assert!(!is_linux_only_field("BOGUS"));
+        assert!(!is_linux_only_field("PERCENT_MEM"));
+    }
+
+    /// On Linux every name in that list is a real column, so the "Linux-only"
+    /// branch is unreachable there — which is the point: the same error path
+    /// reads the same way on both platforms.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn no_field_is_linux_only_on_linux() {
+        for name in ["M_PSS", "M_EPSS", "M_PRIVATE", "M_SWAP", "GPU%", "GPU_TIME"] {
+            assert!(!is_linux_only_field(name));
+            assert!(
+                Field::from_name(name).is_some(),
+                "{name} must resolve on Linux"
+            );
+        }
     }
 
     #[test]

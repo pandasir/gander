@@ -310,7 +310,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 349 on macOS, 348 on Linux
+cargo test                 # 350 on macOS, 349 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```

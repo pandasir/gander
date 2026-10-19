@@ -280,7 +280,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 349 个，Linux 348 个
+cargo test                 # macOS 350 个，Linux 349 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```
