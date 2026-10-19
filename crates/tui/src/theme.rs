@@ -31,6 +31,14 @@ pub struct Theme {
     pub row_kernel_thread: Style,
     pub row_userland_thread: Style,
     pub row_stale_exe: Style,
+    /// The executable's base name, emphasised inside the command column.
+    ///
+    /// A *foreground* emphasis, painted over the row's own style. htop marks the
+    /// base name so the eye lands on "which program" without reading the whole
+    /// command line. It has to compose with `row_normal` / `row_selected` /
+    /// `row_tagged` rather than replace them, which is why only the foreground and
+    /// a modifier are set.
+    pub row_base_name: Style,
     /// Background style for the in-table CPU/memory bars in the panels layout.
     ///
     /// A background, not a foreground: the bar sits behind the number, and the
@@ -76,6 +84,11 @@ pub struct Theme {
 
     pub function_bar: Style,
     pub function_bar_key: Style,
+    /// A status message drawn at the right end of the function bar.
+    ///
+    /// Distinct from the key labels so a message is not mistaken for the label of
+    /// the last key, and picked to stay legible on the bar's own background.
+    pub function_bar_status: Style,
 
     pub dialog_border: Style,
     pub dialog_title: Style,
@@ -170,6 +183,7 @@ impl Theme {
                 .fg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().fg(Color::Red),
+            row_base_name: Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
 
             cpu_nice: Color::Blue,
             cpu_normal: Color::Green,
@@ -205,6 +219,9 @@ impl Theme {
 
             function_bar: Style::default().fg(Color::Black).bg(Color::Cyan),
             function_bar_key: Style::default().fg(Color::White).bg(Color::Blue),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(Color::Cyan),
             dialog_title: Style::default()
@@ -243,6 +260,7 @@ impl Theme {
             row_kernel_thread: Style::default().add_modifier(Modifier::DIM),
             row_userland_thread: Style::default().add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            row_base_name: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             cpu_nice: Color::Gray,
             cpu_normal: Color::White,
             cpu_kernel: Color::White,
@@ -271,6 +289,9 @@ impl Theme {
             bar_background: Color::Black,
             function_bar: Style::default().add_modifier(Modifier::REVERSED),
             function_bar_key: Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
             dialog_border: Style::default(),
             dialog_title: Style::default().add_modifier(Modifier::BOLD),
             panel_selected: Style::default().add_modifier(Modifier::REVERSED),
@@ -359,6 +380,7 @@ impl Theme {
             row_kernel_thread: Style::default().fg(muted).add_modifier(Modifier::DIM),
             row_userland_thread: Style::default().fg(hex(0x7dd3fc)).add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().fg(red),
+            row_base_name: Style::default().fg(amber).add_modifier(Modifier::BOLD),
 
             // CPU segments: a teal family with distinct hues, not the classic
             // red/green/yellow.
@@ -394,6 +416,9 @@ impl Theme {
 
             function_bar: Style::default().fg(fg).bg(hex(0x0f1b2d)),
             function_bar_key: Style::default().fg(teal).add_modifier(Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(teal),
             dialog_title: Style::default().fg(teal).add_modifier(Modifier::BOLD),
@@ -453,6 +478,7 @@ impl Theme {
                 .fg(blue_bright)
                 .add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().fg(hex(0xf87171)),
+            row_base_name: Style::default().fg(blue_bright).add_modifier(Modifier::BOLD),
 
             cpu_nice: hex(0x2f6f4f),
             cpu_normal: blue,
@@ -489,6 +515,9 @@ impl Theme {
             function_bar: Style::default().fg(fg).bg(panel_bg),
             function_bar_key: Style::default()
                 .fg(blue_bright)
+                .add_modifier(Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(hex(0x3a4a66)),
@@ -550,6 +579,7 @@ impl Theme {
                 .fg(green_bright)
                 .add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().fg(hex(0xf87171)),
+            row_base_name: Style::default().fg(green_bright).add_modifier(Modifier::BOLD),
 
             cpu_nice: hex(0x2f6f4f),
             cpu_normal: green,
@@ -586,6 +616,9 @@ impl Theme {
             function_bar: Style::default().fg(fg).bg(panel_bg),
             function_bar_key: Style::default()
                 .fg(green_bright)
+                .add_modifier(Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(green),
@@ -648,6 +681,7 @@ impl Theme {
                 .fg(blue)
                 .add_modifier(Modifier::BOLD),
             row_stale_exe: Style::default().fg(hex(0xb91c1c)),
+            row_base_name: Style::default().fg(blue).add_modifier(Modifier::BOLD),
 
             cpu_nice: hex(0x10b981),
             cpu_normal: hex(0x3b82f6),
@@ -684,6 +718,9 @@ impl Theme {
             function_bar: Style::default().fg(hex(0x334155)).bg(hex(0xeef2f7)),
             function_bar_key: Style::default()
                 .fg(blue)
+                .add_modifier(Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(hex(0x94a3b8)),
@@ -747,6 +784,9 @@ impl Theme {
             row_stale_exe: Style::default()
                 .fg(bright)
                 .add_modifier(Modifier::UNDERLINED),
+            row_base_name: Style::default()
+                .fg(bright)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
 
             cpu_nice: hex(0x565d66),
             cpu_normal: hex(0x7d8590),
@@ -783,6 +823,9 @@ impl Theme {
             function_bar: Style::default().fg(fg).bg(hex(0x1b1e23)),
             function_bar_key: Style::default()
                 .fg(bright)
+                .add_modifier(Modifier::BOLD),
+            function_bar_status: Style::default()
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
 
             dialog_border: Style::default().fg(hex(0x3d444d)),
