@@ -201,6 +201,19 @@ pub fn read_identity(root: &Path, pid: Pid, starttime: u64, cache: &mut Cache) -
     stable.exe = exe;
     stable.exe_deleted = exe_deleted;
 
+    // The working directory. A `readlink` like `exe`, and readable for the same
+    // processes (the link is only resolvable by the owner or CAP_SYS_PTRACE), so a
+    // failure is another user's process and yields `None`, which renders `-`.
+    proc_path(root, pid, "cwd", |p| {
+        if let Ok(target) = fs::read_link(std::ffi::OsStr::from_bytes(p)) {
+            stable.cwd = Some(target.to_string_lossy().into_owned().into_boxed_str());
+        }
+    });
+
+    // Session id is not part of the identity cache on Linux: it arrives in field 4
+    // of `stat`, which the scan already parses, so `fill_row` sets it. The `stable`
+    // field exists for macOS, where `getsid` is a syscall of its own.
+
     let mut cgroup = None;
     #[cfg(target_os = "linux")]
     let mut container = None;

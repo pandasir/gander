@@ -326,6 +326,9 @@ impl Sampler {
                 row.ppid = pid;
                 row.starttime = start_usec;
                 row.uid = kp.uid;
+                row.pgrp = stable.pgrp;
+                row.tpgid = stable.tpgid;
+                row.tty_nr = stable.tty_dev;
                 row.nice = kp.nice.clamp(-128, 127) as i8;
                 row.priority = row.nice;
                 row.processor = -1;
@@ -333,6 +336,8 @@ impl Sampler {
                 // A thread's identity files belong to its process.
                 row.cmdline = stable.cmdline.clone();
                 row.exe = stable.exe.clone();
+                row.cwd = stable.cwd.clone();
+                row.session = stable.session;
                 row.flags = row
                     .flags
                     .insert(RowFlags::USERLAND_THREAD)
@@ -406,7 +411,9 @@ impl Sampler {
             // The BSD facts arrive with the process list, so a row always exists
             // even for processes we cannot inspect. Only the task counters
             // (CPU time, memory, threads) need the extra call.
-            let ti = scan::task_all_info(pid).map(|all| all.task);
+            let bsd_details = scan::task_all_info(pid);
+            let ti = bsd_details.map(|all| all.task);
+            let details = bsd_details.map(|all| all.bsd).unwrap_or_default();
 
             let start_usec = kp.start_sec.saturating_mul(1_000_000);
             let prev = self.prev_rows.get(&pid).copied();
@@ -422,6 +429,17 @@ impl Sampler {
             let mut row = Row::default_for_test(pid);
             row.starttime = start_usec;
             row.ppid = kp.ppid;
+            // PGRP, TPGID, and the session id all come from the per-process
+            // `proc_bsdinfo` call rather than the `KERN_PROC_ALL` record, which
+            // carries only the fields `kinfo` decodes by offset. Unreadable
+            // processes keep the defaults, and the columns render `-`.
+            row.pgrp = details.pgrp;
+            row.tpgid = details.tpgid;
+            row.tty_nr = details.tty_dev;
+            // SAFETY: `getsid` only reads kernel state for a pid. `-1` (`EPERM`
+            // for another user's process) becomes `0` = unknown.
+            let sid = unsafe { libc::getsid(pid as libc::pid_t) };
+            row.session = if sid > 0 { sid as u32 } else { 0 };
             row.uid = kp.uid;
             row.nice = kp.nice.clamp(-128, 127) as i8;
             row.priority = kp.nice.clamp(-128, 127) as i8;
@@ -503,6 +521,8 @@ impl Sampler {
                 let stable = self.identity(pid, start_usec);
                 row.cmdline = stable.cmdline;
                 row.exe = stable.exe;
+                row.cwd = stable.cwd;
+                row.session = stable.session;
                 row.flags = row
                     .flags
                     .set(RowFlags::KERNEL_THREAD, stable.is_kernel_thread);
@@ -528,9 +548,26 @@ impl Sampler {
             return hit.clone();
         }
 
-        let mut stable = Stable::default();
-
-        stable.exe = scan::exe_path(pid).map(String::into_boxed_str);
+        let mut stable = Stable {
+            exe: scan::exe_path(pid).map(String::into_boxed_str),
+            cwd: scan::cwd_path(pid).map(String::into_boxed_str),
+            ..Stable::default()
+        };
+        // `proc_bsdinfo` has no session id, and the `kinfo_proc` field that does
+        // is not among the offsets this build decodes. `getsid(2)` asks the kernel
+        // directly; it returns `-1`/`EPERM` for another user's process, which is
+        // recorded as `0` = unknown rather than guessed at.
+        // SAFETY: `getsid` only reads kernel state for a pid.
+        let sid = unsafe { libc::getsid(pid as libc::pid_t) };
+        stable.session = if sid > 0 { sid as u32 } else { 0 };
+        // Cached from the same `proc_bsdinfo` call the caller already made; the
+        // thread pass reuses it rather than calling `proc_pidinfo` once per thread
+        // for two integers.
+        if let Some(all) = scan::task_all_info(pid) {
+            stable.pgrp = all.bsd.pgrp;
+            stable.tpgid = all.bsd.tpgid;
+            stable.tty_dev = all.bsd.tty_dev;
+        }
         stable.cmdline = scan::procargs2(pid)
             .and_then(|raw| parse::parse_procargs2(&raw))
             .filter(|s| !s.is_empty())

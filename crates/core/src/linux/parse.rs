@@ -65,6 +65,7 @@ pub fn parse_stat(buf: &[u8]) -> Option<(u32, CommBuf, StatFields)> {
         pgrp: num(f[2])? as u32,
         session: num(f[3])? as u32,
         tty_nr: signed(f[4])?,
+        tpgid: signed(f[5])?,
         min_flt: num(f[7])?,
         maj_flt: num(f[9])?,
         utime: num(f[11])?,
@@ -87,6 +88,11 @@ pub struct StatFields {
     pub pgrp: u32,
     pub session: u32,
     pub tty_nr: i64,
+    /// Field 8 of `stat`: the foreground process group of `tty_nr`.
+    ///
+    /// `-1` when the terminal has no foreground job, which is a value and not an
+    /// absence — the renderer has to show it as a number, not as `-`.
+    pub tpgid: i64,
     pub min_flt: u64,
     pub maj_flt: u64,
     pub utime: u64,
@@ -112,6 +118,7 @@ pub fn fill_row(row: &mut Row, st: &StatFields, page_size: u64) {
     row.pgrp = st.pgrp;
     row.session = st.session;
     row.tty_nr = st.tty_nr;
+    row.tpgid = st.tpgid;
     row.min_flt = st.min_flt;
     row.maj_flt = st.maj_flt;
     row.priority = st.priority;
@@ -921,5 +928,39 @@ mod tests {
         let rate = after.per_sec(&NetCounters::default(), 0.0);
         assert_eq!(rate.total(), 0.0);
         assert!(rate.inbound.is_finite());
+    }
+}
+
+#[cfg(test)]
+mod tty_and_tpgid_tests {
+    use super::*;
+
+    /// Field 5 is `tty_nr` and field 8 is `tpgid`. Both were parsed into
+    /// `StatFields` (or, for `tpgid`, not at all) without ever reaching a column,
+    /// so this pins the offsets: `comm` may contain spaces and parentheses, which
+    /// is why the parser anchors on the last `)`.
+    #[test]
+    fn tty_and_tpgid_come_from_the_right_fields() {
+        // fields after `)`: state ppid pgrp session tty_nr tpgid flags ...
+        //                    0     1    2    3     4      5     6
+        let line = b"42 (my ) we(ird comm) R 1 42 42 34816 4242 4194560 512 7 0 0 120 34 0 0 20 0 1 0 999 1048576 256\n";
+        let (pid, comm, st) = parse_stat(line).expect("parse");
+        assert_eq!(pid, 42);
+        // The parser anchors on the *last* `)`, so the one in the name is kept and
+        // the one that closes the field is consumed as the terminator.
+        assert_eq!(comm.as_str(), "my ) we(ird comm");
+        assert_eq!(st.session, 42);
+        assert_eq!(st.tty_nr, 34816, "136<<8 = pts/0");
+        assert_eq!(st.tpgid, 4242);
+    }
+
+    /// The kernel writes `-1` when the terminal has no foreground job, and that is
+    /// a value, not an absence — it must survive parsing as a negative number.
+    #[test]
+    fn a_negative_tpgid_is_not_silently_wrapped() {
+        let line = b"7 (bash) S 1 7 7 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 1 1 1\n";
+        let (_, _, st) = parse_stat(line).expect("parse");
+        assert_eq!(st.tty_nr, 0);
+        assert_eq!(st.tpgid, -1);
     }
 }

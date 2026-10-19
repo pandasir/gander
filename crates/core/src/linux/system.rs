@@ -316,6 +316,7 @@ impl Sampler {
             row.uid = stable.uid;
             row.cmdline = stable.cmdline.clone();
             row.exe = stable.exe.clone();
+            row.cwd = stable.cwd.clone();
             row.cgroup = stable.cgroup.clone();
             #[cfg(target_os = "linux")]
             {
@@ -433,6 +434,7 @@ impl Sampler {
                 .set(RowFlags::KERNEL_THREAD, stable.is_kernel_thread);
             row.cmdline = stable.cmdline;
             row.exe = stable.exe;
+            row.cwd = stable.cwd;
             row.cgroup = stable.cgroup;
             // A deleted or replaced executable is highlighted, matching htop's EXE
             // column behaviour. Threads inherit the process's exe, so they inherit

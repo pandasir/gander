@@ -25,6 +25,35 @@ pub struct Stable {
     pub uid: u32,
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// The process's working directory.
+    ///
+    /// Cached alongside `exe` rather than read per sample: it costs a `readlink`
+    /// per process, and it is display-only — nothing sorts or filters on it by
+    /// default. The cost is one syscall per process per *lifetime*, not per tick.
+    pub cwd: Option<Box<str>>,
+    /// Login session id.
+    ///
+    /// Cached because it needs a syscall of its own (`getsid`) on macOS, where
+    /// `proc_bsdinfo` does not carry it. Linux reads it from field 4 of
+    /// `/proc/<pid>/stat`, which the scan already has, so its value does not come
+    /// from here — but keeping one field for both platforms means the two backends
+    /// cannot drift in what `SESSION` means.
+    ///
+    /// `0` is "unknown", which is what `getsid` yields for another user's process
+    /// (`EPERM`). It renders `-`.
+    pub session: u32,
+    /// Process group and the terminal's foreground group, so a thread row can
+    /// inherit them instead of re-asking the kernel per thread.
+    ///
+    /// `tpgid` is `-1` when the terminal has no foreground job.
+    pub pgrp: u32,
+    pub tpgid: i64,
+    /// The controlling terminal's device, in the platform's own encoding.
+    ///
+    /// Linux leaves this `0` because `tty_nr` arrives in the `stat` the scan
+    /// already parses; macOS fills it from `e_tdev`, since `proc_bsdinfo` is a
+    /// separate call per process and the thread pass should not repeat it.
+    pub tty_dev: i64,
     /// Whether the executable has been replaced or deleted on disk.
     ///
     /// Linux exposes this in the `/proc/<pid>/exe` symlink target itself: once the
@@ -173,6 +202,29 @@ fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std
         F::Nlwp => rows[a].nlwp.cmp(&rows[b].nlwp),
         F::MinFlt => rows[a].min_flt.cmp(&rows[b].min_flt),
         F::MajFlt => rows[a].maj_flt.cmp(&rows[b].maj_flt),
+        // Identity and session fields. Each needs its own comparator: `_` is the
+        // pid comparator, so a column without one sorts by pid while claiming to
+        // sort by something else.
+        F::Session => rows[a].session.cmp(&rows[b].session),
+        F::Tty => rows[a].tty_nr.cmp(&rows[b].tty_nr),
+        F::Tpgid => rows[a].tpgid.cmp(&rows[b].tpgid),
+        F::StartTime => rows[a].starttime.cmp(&rows[b].starttime),
+        F::Tgid => rows[a].tgid.cmp(&rows[b].tgid),
+        F::SchedPolicy => rows[a].sched_policy.cmp(&rows[b].sched_policy),
+        F::ProcComm => rows[a].comm.cmp(&rows[b].comm),
+        // The path fields are `Option<Box<str>>`: `None` (another user's process)
+        // sorts below any real path, the same rule the PSS family follows for a
+        // figure that was never read.
+        F::ProcExe => rows[a]
+            .exe
+            .as_deref()
+            .unwrap_or("")
+            .cmp(rows[b].exe.as_deref().unwrap_or("")),
+        F::Cwd => rows[a]
+            .cwd
+            .as_deref()
+            .unwrap_or("")
+            .cmp(rows[b].cwd.as_deref().unwrap_or("")),
         F::Processor => rows[a].processor.cmp(&rows[b].processor),
         #[cfg(target_os = "linux")]
         F::Cgroup => rows[a]

@@ -609,3 +609,74 @@ screen:Memory=PID PERCENT_MEM RES Command
         assert_eq!(fields.len(), 3, "PID, USER and the appended COMM");
     }
 }
+
+#[cfg(test)]
+mod no_silent_column_loss_tests {
+    use super::*;
+
+    /// Every field id the importer maps must produce a name that survives
+    /// `TabConfig::fields()`.
+    ///
+    /// This is the user-visible half of the missing-metadata bug: `htop_field_name`
+    /// returned `"UNKNOWN"` for nine fields, `parse` put that string in the column
+    /// list, and `TabConfig::fields()` dropped it via `filter_map`. The import
+    /// "worked" — it just silently produced a different layout than the htoprc
+    /// described, with no error and no way to see that anything was missing.
+    #[test]
+    fn every_mapped_id_resolves_to_a_selectable_column() {
+        for raw in 0..160u32 {
+            let id = raw.to_string();
+            let Some(name) = htop_field_name(&id) else {
+                continue;
+            };
+            assert_ne!(name, "UNKNOWN", "field id {raw} maps to UNKNOWN");
+            let field = Field::from_name(name)
+                .unwrap_or_else(|| panic!("field id {raw} maps to unselectable {name}"));
+            assert_eq!(field.name(), name);
+            assert!(field.meta().is_some(), "{name} has no metadata");
+        }
+    }
+
+    /// The specific ids that used to be lost, checked one by one so a regression
+    /// names the field that broke.
+    #[test]
+    fn session_pgrp_and_proc_columns_import() {
+        // htop ids: SESSION 6, PROC_COMM 124, PROC_EXE 125, CWD 126; the file
+        // stores each minus one.
+        for (stored, want) in [
+            ("5", "SESSION"),
+            ("123", "PROC_COMM"),
+            ("124", "PROC_EXE"),
+            ("125", "CWD"),
+        ] {
+            assert_eq!(htop_field_name(stored), Some(want), "id {stored}");
+        }
+    }
+
+    /// A column list containing them must come through with all of them, in order.
+    #[test]
+    fn a_full_column_list_imports_without_dropping_any() {
+        // PID, SESSION, PROC_COMM, PROC_EXE, CWD, Command
+        let c = parse("fields=0 5 123 124 125 1\n");
+        let names: Vec<String> = c.active_tab().columns.clone();
+        for want in ["PID", "SESSION", "PROC_COMM", "PROC_EXE", "CWD", "COMM"] {
+            assert!(
+                names.iter().any(|n| n == want),
+                "{want} missing from {names:?}"
+            );
+        }
+        assert_eq!(
+            names.iter().filter(|n| *n == "UNKNOWN").count(),
+            0,
+            "no column may import as UNKNOWN: {names:?}"
+        );
+    }
+
+    /// `sort_key` on a previously metadata-less field must sort by it, not fall
+    /// back to PERCENT_CPU.
+    #[test]
+    fn sort_key_on_session_sorts_by_session() {
+        let c = parse("sort_key=5\n");
+        assert_eq!(c.active_tab().sort().field, Field::Session);
+    }
+}

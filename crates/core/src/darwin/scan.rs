@@ -27,6 +27,23 @@ pub struct KInfoProc {
     pub p_stat: i8,
     pub start_sec: u64,
     pub start_usec: u64,
+    /// Process group and foreground process group of the controlling terminal.
+    ///
+    /// Both are in `proc_bsdinfo` (`pbi_pgid`, `e_tpgid`), so they cost nothing
+    /// extra. `session` is *not* there and comes from `getsid(2)`, which is a
+    /// syscall — it is cached with the process identity instead, in
+    /// `darwin::system::Sampler::identity`.
+    ///
+    /// `tpgid` is `-1` when the terminal has no foreground job — the same wire
+    /// value Linux uses in field 8 of `stat`, so the renderer needs no per-platform
+    /// special case.
+    pub pgrp: u32,
+    pub tpgid: i64,
+    /// The controlling terminal's `dev_t`, or `-1` for none.
+    ///
+    /// Darwin spells "no controlling terminal" as `e_tdev == (dev_t)-1`, where Linux
+    /// uses `0`. Both are normalised to `0` here so the renderer has one rule.
+    pub tty_dev: i64,
     pub comm: [u8; 17],
 }
 
@@ -125,6 +142,16 @@ pub fn task_all_info(pid: u32) -> Option<TaskAllInfo> {
             p_stat: b.pbi_status as i8,
             start_sec: b.pbi_start_tvsec,
             start_usec: b.pbi_start_tvusec,
+            pgrp: b.pbi_pgid,
+            // `e_tpgid` is `pid_t`, i.e. signed: `-1` means "no foreground job"
+            // and must not be widened to a huge unsigned value.
+            tpgid: b.e_tpgid as i32 as i64,
+            // `e_tdev` is `dev_t`, unsigned; the "no terminal" value is all ones.
+            tty_dev: if b.e_tdev == u32::MAX {
+                0
+            } else {
+                b.e_tdev as i64
+            },
             comm,
         },
         task: TaskInfo {
@@ -326,6 +353,51 @@ pub fn exe_path(pid: u32) -> Option<String> {
     }
     let cstr = CStr::from_bytes_until_nul(&buf).ok()?;
     Some(cstr.to_string_lossy().into_owned())
+}
+
+/// The working directory of a process, if readable.
+///
+/// `proc_pidinfo(PROC_PIDVNODEPATHINFO)` returns both the current and the root
+/// directory; `pvi_cdir.vip_path` is the one `ps`, `lsof` and htop call cwd.
+/// The buffer needs no length juggling: the kernel fills a fixed-size
+/// `proc_vnodepathinfo`, and since the string lives at a fixed offset this simply
+/// reads it out of the raw struct rather than defining one. `libc` *does* define the
+/// struct, so it is used directly here.
+pub fn cwd_path(pid: u32) -> Option<String> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_vnodepathinfo>::zeroed();
+    let want = std::mem::size_of::<libc::proc_vnodepathinfo>() as c_int;
+    // SAFETY: `info` is `want` bytes, writable, and the kernel writes exactly
+    // `want` bytes or returns a different count.
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            info.as_mut_ptr().cast::<c_void>(),
+            want,
+        )
+    };
+    if got != want {
+        return None;
+    }
+    // SAFETY: `got == want` means every byte was written by the kernel.
+    let info = unsafe { info.assume_init() };
+
+    // `vip_path` is `[c_char; MAXPATHLEN]` split into 32-byte chunks by libc, so
+    // flatten it back before looking for the terminator.
+    let mut path: Vec<u8> = Vec::with_capacity(32 * 32);
+    for chunk in info.pvi_cdir.vip_path.iter() {
+        for byte in chunk.iter() {
+            let b = *byte as u8;
+            if b == 0 {
+                let text = String::from_utf8_lossy(&path).into_owned();
+                return (!text.is_empty()).then_some(text);
+            }
+            path.push(b);
+        }
+    }
+    let text = String::from_utf8_lossy(&path).into_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 /// Disk I/O counters from `proc_pid_rusage`.

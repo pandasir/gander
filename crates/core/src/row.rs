@@ -60,10 +60,6 @@ pub enum Field {
     #[cfg(target_os = "linux")]
     GpuTime,
     #[cfg(target_os = "linux")]
-    IoReadRate,
-    #[cfg(target_os = "linux")]
-    IoWriteRate,
-    #[cfg(target_os = "linux")]
     CpuDelayPercent,
     #[cfg(target_os = "linux")]
     IoDelayPercent,
@@ -347,6 +343,90 @@ const FIELD_META: &[FieldMeta] = &[
         false,
         Align::Right,
     ),
+    // Session and the controlling terminal. Both are in `/proc/<pid>/stat` (fields
+    // 4 and 5) and in Darwin's `kinfo_proc`, so they are real on every platform;
+    // they were declared as `Field` variants with no metadata, which made them
+    // unreachable: no name, no header, no setup entry, and an `htoprc` that named
+    // them imported to the string `"UNKNOWN"` and was silently dropped.
+    m(
+        Field::Session,
+        "SESSION",
+        " SID ",
+        "Session ID: the login session this process belongs to",
+        false,
+        Align::Right,
+    ),
+    m(
+        Field::Tty,
+        "TTY",
+        " TTY      ",
+        "Controlling terminal, or `?` when there is none",
+        false,
+        Align::Left,
+    ),
+    // The process group a *terminal* is currently sending its signals to. Equal to
+    // PGRP unless one of the jobs is in the foreground.
+    m(
+        Field::Tpgid,
+        "TPGID",
+        "  TPGID ",
+        "Process group of the foreground job on this terminal",
+        false,
+        Align::Right,
+    ),
+    // Wall-clock start, not the `starttime` ticks kept for PID-reuse detection:
+    // ticks since boot mean nothing without the boot time next to them.
+    m(
+        Field::StartTime,
+        "STARTTIME",
+        " START     ",
+        "Wall-clock time this process started",
+        false,
+        Align::Left,
+    ),
+    m(
+        Field::Tgid,
+        "TGID",
+        "  TGID ",
+        "Thread group ID: the pid of the process a thread row belongs to",
+        false,
+        Align::Right,
+    ),
+    m(
+        Field::SchedPolicy,
+        "SCHED_POLICY",
+        " POL ",
+        "Scheduling policy: other, fifo, rr, batch, idle, deadline",
+        false,
+        Align::Left,
+    ),
+    // The two PROC_* fields exist because `COMM` is the *command line* here (what
+    // htop's Command column shows), so the kernel's own short name needs its own
+    // column. htop draws the same distinction: `COMM` vs `PROC_COMM`.
+    m(
+        Field::ProcComm,
+        "PROC_COMM",
+        " COMMAND       ",
+        "Kernel's short command name, always the executable's base name",
+        false,
+        Align::Left,
+    ),
+    m(
+        Field::ProcExe,
+        "PROC_EXE",
+        " EXE                ",
+        "Path to the executable, as the kernel resolved it",
+        false,
+        Align::Left,
+    ),
+    m(
+        Field::Cwd,
+        "CWD",
+        " CWD                ",
+        "Working directory of the process",
+        false,
+        Align::Left,
+    ),
     // Linux-only: cgroup membership, and the container derived from it.
     #[cfg(target_os = "linux")]
     m(
@@ -558,6 +638,15 @@ pub struct Row {
     pub pgrp: Pid,
     pub session: Pid,
     pub tty_nr: i64,
+    /// The process group the controlling terminal is currently signalling.
+    ///
+    /// Equal to `pgrp` unless a job has the terminal in the foreground, which is
+    /// the one distinction this column exists to show.
+    ///
+    /// `-1` is what the kernel reports when the terminal has no foreground job,
+    /// and it is also what a thread row carries. The renderer shows `-` for it
+    /// rather than the number: `-1` is a wire value, not a process group.
+    pub tpgid: i64,
     /// Field 22 of `/proc/<pid>/stat`: cache key and PID-reuse detector.
     pub starttime: u64,
     /// Thread group id: the pid of the process this row belongs to.
@@ -617,6 +706,14 @@ pub struct Row {
     /// Lazily loaded, cached until the process exits.
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// The process's working directory, read from `/proc/<pid>/cwd` or, on macOS,
+    /// from `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
+    ///
+    /// Cached with the identity because a `readlink` per row per tick is
+    /// thousands of syscalls for a value that changes rarely — even though, unlike
+    /// `exe`, it *can* change. Accepting a stale value until the process exits is
+    /// the same trade htop makes.
+    pub cwd: Option<Box<str>>,
     /// Proportional set size, from `/proc/<pid>/smaps_rollup`, in bytes.
     ///
     /// `None` means "not read", not "zero": the file is expensive enough that
@@ -699,6 +796,7 @@ impl Row {
             pgrp: 0,
             session: 0,
             tty_nr: 0,
+            tpgid: -1,
             starttime: 0,
             tgid: pid,
             is_thread: false,
@@ -724,6 +822,7 @@ impl Row {
             elapsed: 0,
             cmdline: None,
             exe: None,
+            cwd: None,
             #[cfg(target_os = "linux")]
             pss: None,
             #[cfg(target_os = "linux")]
@@ -941,5 +1040,119 @@ mod base_name_tests {
         let text = r.display_command();
         let (s, e) = r.base_name_span().expect("span");
         assert_eq!(&text[s..e], "My App");
+    }
+}
+
+#[cfg(test)]
+mod field_meta_tests {
+    use super::*;
+
+    /// Every `Field` variant must have a `FieldMeta`.
+    ///
+    /// This is the guard for a real bug: `Session`, `Tty`, `Tpgid`, `StartTime`,
+    /// `Tgid`, `SchedPolicy`, `ProcComm`, `ProcExe` and `Cwd` were declared as
+    /// variants with no metadata, which made them unreachable in three ways at
+    /// once — `name()` returned `"UNKNOWN"`, so an `htoprc` that named them
+    /// imported to a column string that `TabConfig::fields` silently dropped;
+    /// they never appeared in the setup screen, which iterates `Field::all()`; and
+    /// the header title was `" ? "`. Nothing failed loudly, so it went unnoticed.
+    ///
+    /// The list below is written out rather than derived, because `Field` has no
+    /// `strum`-style enumeration and adding a derive for one test is not worth the
+    /// dependency. A new variant therefore requires editing this list too — which
+    /// is the point: the test is a checklist, not an oracle.
+    #[test]
+    fn every_variant_has_metadata() {
+        let all = [
+            Field::Pid,
+            Field::Comm,
+            Field::State,
+            Field::Ppid,
+            Field::Pgrp,
+            Field::Session,
+            Field::Tty,
+            Field::Tpgid,
+            Field::MinFlt,
+            Field::MajFlt,
+            Field::Priority,
+            Field::Nice,
+            Field::StartTime,
+            Field::Processor,
+            Field::VirtMem,
+            Field::ResMem,
+            Field::User,
+            Field::PercentCpu,
+            Field::PercentMem,
+            Field::Time,
+            Field::Nlwp,
+            Field::Tgid,
+            Field::PercentNormCpu,
+            Field::Elapsed,
+            Field::SchedPolicy,
+            Field::ProcComm,
+            Field::ProcExe,
+            Field::Cwd,
+        ];
+        #[allow(unused_mut)]
+        let mut all = all.to_vec();
+        #[cfg(target_os = "linux")]
+        all.extend([
+            Field::Pss,
+            Field::Swap,
+            Field::Private,
+            Field::Epss,
+            Field::Cgroup,
+            Field::Container,
+            Field::GpuPercent,
+            Field::GpuTime,
+            Field::CpuDelayPercent,
+            Field::IoDelayPercent,
+            Field::SwapDelayPercent,
+        ]);
+
+        for field in all {
+            let meta = field
+                .meta()
+                .unwrap_or_else(|| panic!("{field:?} has no FieldMeta"));
+            assert_ne!(meta.name, "UNKNOWN", "{field:?} has no name");
+            assert_ne!(meta.title.trim(), "?", "{field:?} has no header title");
+            assert!(
+                !meta.description.is_empty(),
+                "{field:?} has no description for the setup screen"
+            );
+            // The name is the config key and the `--sort` argument, so it must
+            // resolve back to the same field.
+            assert_eq!(
+                Field::from_name(meta.name),
+                Some(field),
+                "{field:?} does not round-trip through {}",
+                meta.name
+            );
+        }
+    }
+
+    /// The same check for `Field::all()`: a variant with metadata but not in the
+    /// table is equally invisible, because the setup screen iterates the table.
+    #[test]
+    fn every_metadata_entry_is_offered_by_all() {
+        let offered: Vec<Field> = Field::all().collect();
+        for field in &offered {
+            assert!(field.meta().is_some());
+        }
+        for wanted in [Field::Session, Field::Tty, Field::Cwd, Field::ProcComm] {
+            assert!(
+                offered.contains(&wanted),
+                "{wanted:?} must be selectable in the setup screen"
+            );
+        }
+    }
+
+    /// Names must be unique, or `from_name` would resolve to whichever came first.
+    #[test]
+    fn names_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for field in Field::all() {
+            assert!(seen.insert(field.name()), "duplicate name {}", field.name());
+        }
     }
 }
