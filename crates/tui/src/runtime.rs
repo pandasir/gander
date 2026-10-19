@@ -76,6 +76,11 @@ mod platform {
     /// delay) was silently thrown away on exit. That is also why the config
     /// appeared to "not remember" settings between runs.
     pub fn run(mut app: App) -> std::io::Result<gander_config::Config> {
+        // Search/filter history is loaded here rather than in `App::new` so the
+        // tests that build an `App` directly never read the developer's real
+        // `$XDG_STATE_HOME`.
+        app = app.with_history(gander_config::history::dir());
+
         let mut sampler = gander_core::Sampler::default();
         let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
 
@@ -96,6 +101,10 @@ mod platform {
         // Restore the terminal before returning: a lost config is annoying, a
         // terminal left in raw mode is unusable.
         restore_terminal(&mut terminal)?;
+
+        // History is written on every submission, but a final flush covers a
+        // prompt that was still open at exit.
+        app.save_history();
 
         // A failed event loop still hands back the config: the user got as far as
         // editing it, and throwing that away on an unrelated error is hostile.

@@ -91,6 +91,12 @@ pub struct Input {
     pub active: bool,
     pub buffer: String,
     pub kind: InputKind,
+    /// How far back into the history the buffer currently is.
+    ///
+    /// `0` means "the live buffer, not a recalled entry". Up/Down walk it, and
+    /// any character typed resets it to 0 — otherwise editing a recalled entry
+    /// and then pressing Up again would jump from a stale position.
+    pub history_cursor: usize,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -153,6 +159,12 @@ pub struct App {
     /// meter is selected.
     pub meter_mode: MeterMode,
     pub pending_g: bool,
+    /// Recalled search terms (`F3` / `/`), newest last.
+    pub search_history: gander_config::history::History,
+    /// Recalled filter terms (`F4` / `\`), newest last.
+    pub filter_history: gander_config::history::History,
+    /// Where history is read from and written to.
+    pub history_dir: std::path::PathBuf,
 }
 
 impl App {
@@ -203,7 +215,60 @@ impl App {
             meter_sources: Vec::new(),
             meter_mode: MeterMode::Bar,
             pending_g: false,
+            search_history: gander_config::history::History::default(),
+            filter_history: gander_config::history::History::default(),
+            history_dir: gander_config::history::dir(),
         }
+    }
+
+    /// Load search and filter history from `history_dir`.
+    ///
+    /// Separate from `new` so tests never touch the real `$XDG_STATE_HOME`: an
+    /// `App` built in a unit test would otherwise read the developer's own
+    /// history, and the tests would pass or fail depending on what they had
+    /// searched for that morning.
+    pub fn with_history(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.history_dir = dir.into();
+        self.search_history =
+            gander_config::history::History::load(&self.history_dir, gander_config::history::Kind::Search);
+        self.filter_history =
+            gander_config::history::History::load(&self.history_dir, gander_config::history::Kind::Filter);
+        self
+    }
+
+    /// Persist both histories, ignoring failures.
+    ///
+    /// History is an optimisation; a read-only `$XDG_STATE_HOME` must not stop a
+    /// run from exiting cleanly.
+    pub fn save_history(&self) {
+        let _ = self
+            .search_history
+            .save(&self.history_dir, gander_config::history::Kind::Search);
+        let _ = self
+            .filter_history
+            .save(&self.history_dir, gander_config::history::Kind::Filter);
+    }
+
+    /// The history the active prompt draws from.
+    fn history_for(&self, kind: InputKind) -> &gander_config::history::History {
+        match kind {
+            InputKind::Filter => &self.filter_history,
+            _ => &self.search_history,
+        }
+    }
+
+    /// Record the submitted prompt text, and persist.
+    fn remember(&mut self, kind: InputKind, text: &str) {
+        let history = match kind {
+            InputKind::Filter => &mut self.filter_history,
+            InputKind::Search => &mut self.search_history,
+            InputKind::None => return,
+        };
+        history.push(text);
+        // Written immediately rather than only on exit: a crash or a `Ctrl-C`
+        // would otherwise lose the whole session's history, and this file is a
+        // few hundred bytes.
+        self.save_history();
     }
 
     /// Adopt a fresh sample: update rows, meters, and reorder.
@@ -638,8 +703,14 @@ impl App {
     fn handle_input_key(&mut self, key: Key) -> Reaction {
         match key {
             Key::Esc => {
+                // The kind has to be read *before* the input is reset. The
+                // previous version cleared `self.input` first and then checked
+                // `self.input.kind`, which by then was `None` — so `Esc` could
+                // never clear a filter, and the only way out of a filter was to
+                // erase it a character at a time.
+                let kind = self.input.kind;
                 self.input = Input::default();
-                if self.input.kind == InputKind::Filter {
+                if kind == InputKind::Filter {
                     self.filter = None;
                     return Reaction::Reorder;
                 }
@@ -649,6 +720,9 @@ impl App {
                 let kind = self.input.kind;
                 let text = self.input.buffer.clone();
                 self.input = Input::default();
+                // Remember what was actually submitted, not the partially typed
+                // buffer: a cancelled prompt is not history.
+                self.remember(kind, &text);
                 if kind == InputKind::Filter {
                     self.filter = Filter::parse(&text);
                     Reaction::Reorder
@@ -656,8 +730,31 @@ impl App {
                     self.jump_to_match(&text)
                 }
             }
+            Key::Up | Key::Down => {
+                // Walk the history. This is the whole point of persisting it:
+                // re-running yesterday's filter should not mean retyping it.
+                let kind = self.input.kind;
+                let delta = if key == Key::Up { 1 } else { -1 };
+                let history = self.history_for(kind).clone();
+                let (cursor, text) = history.step(self.input.history_cursor, delta);
+                if let Some(text) = text {
+                    self.input.buffer = text;
+                    self.input.history_cursor = cursor;
+                    if kind == InputKind::Filter {
+                        // The filter is live while typing, so a recalled entry has
+                        // to take effect immediately rather than on Enter.
+                        self.filter = Filter::parse(&self.input.buffer);
+                        return Reaction::Reorder;
+                    }
+                }
+                Reaction::Continue
+            }
             Key::Backspace => {
                 self.input.buffer.pop();
+                // Editing takes the buffer out of history-walking mode, so a later
+                // Up starts again from the newest entry instead of resuming from a
+                // position that no longer matches the text.
+                self.input.history_cursor = 0;
                 if self.input.kind == InputKind::Filter {
                     self.filter = Filter::parse(&self.input.buffer);
                     return Reaction::Reorder;
@@ -667,6 +764,7 @@ impl App {
             Key::Char(c) => {
                 if !c.is_ascii_control() {
                     self.input.buffer.push(c);
+                    self.input.history_cursor = 0;
                 }
                 if self.input.kind == InputKind::Filter {
                     self.filter = Filter::parse(&self.input.buffer);
@@ -689,6 +787,7 @@ impl App {
             active: true,
             buffer: initial,
             kind,
+            history_cursor: 0,
         };
     }
 
@@ -1421,6 +1520,13 @@ impl App {
             Screen::IoPriority(panel) => panel.draw(chunks[1], frame.buffer_mut(), &self.theme),
         }
 
+        // The search/filter prompt occupies the table's header row, which is
+        // what htop does and what keeps the list from losing a line to it.
+        if self.input.active && self.screen == Screen::ProcessList {
+            let row = Rect::new(chunks[1].x, chunks[1].y, chunks[1].width, 1);
+            draw_prompt(row, frame.buffer_mut(), &self.theme, &self.input);
+        }
+
         self.draw_function_bar(chunks[2], frame.buffer_mut());
     }
 
@@ -1541,6 +1647,11 @@ impl App {
                 user.as_deref(),
             );
             self.users = users;
+        }
+
+        if self.input.active && self.screen == Screen::ProcessList {
+            let row = Rect::new(columns[1].x, columns[1].y, columns[1].width, 1);
+            draw_prompt(row, frame.buffer_mut(), &self.theme, &self.input);
         }
 
         self.draw_function_bar(chunks[2], frame.buffer_mut());
@@ -2211,6 +2322,52 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 // ---------------------------------------------------------------------------
 // Overlays
 // ---------------------------------------------------------------------------
+
+/// Draw the incremental search/filter prompt.
+///
+/// # Why this exists
+///
+/// The prompt was never drawn. `F3`, `F4` and every character typed went into
+/// `App::input`, the filter was applied live, and the screen showed nothing —
+/// so a filter that hid every row looked like a bug in the sampler, and there
+/// was no way to see what was being typed or that a filter was active at all.
+/// It is drawn on the table's own first row rather than as a separate line,
+/// because the process list has no spare row and htop's prompt occupies the
+/// same space.
+fn draw_prompt(area: Rect, buf: &mut Buffer, theme: &Theme, input: &Input) {
+    if !input.active || area.height == 0 || area.width == 0 {
+        return;
+    }
+    let label = match input.kind {
+        InputKind::Search => "Search: ",
+        InputKind::Filter => "Filter: ",
+        InputKind::None => return,
+    };
+
+    // Clear the row first: the prompt sits on top of the column header, and
+    // leaving the header text visible behind a short query makes the prompt read
+    // as `PID USER Search: ng`.
+    for x in area.x..area.right() {
+        if let Some(cell) = buf.cell_mut((x, area.y)) {
+            cell.set_char(' ');
+            cell.set_style(theme.header);
+        }
+    }
+
+    let mut text = String::from(label);
+    text.push_str(&input.buffer);
+
+    // A cursor block after the last character, so an empty prompt is visibly
+    // waiting for input instead of looking like a static label.
+    let cursor_x = area.x + text.chars().count() as u16;
+    crate::meters::put_str(buf, area.x, area.y, &text, theme.header_value, area.width);
+    if cursor_x < area.right() {
+        if let Some(cell) = buf.cell_mut((cursor_x, area.y)) {
+            cell.set_char(' ');
+            cell.set_style(theme.header_value);
+        }
+    }
+}
 
 fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
     let lines = [
@@ -3414,5 +3571,304 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod m1_tests {
+    //! Tests for the M1 additions: network/disk meters in the header, the
+    //! search/filter prompt actually being drawn, and persisted history.
+
+    use super::*;
+    use gander_config::Config;
+    use gander_core::row::Row;
+
+    fn app_with(rows: Vec<Row>) -> App {
+        let mut app = App::new(Config::default());
+        app.apply_sample(SystemSnapshot::default(), rows);
+        app
+    }
+
+    fn row(pid: u32, comm: &str) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.comm.try_push_str(comm).unwrap();
+        r
+    }
+
+    fn temp_history_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "gander-app-history-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// `Esc` must clear the filter.
+    ///
+    /// It could not: the handler reset `self.input` and then asked
+    /// `self.input.kind`, which was already `None`. The only way out of a filter
+    /// was to erase it one character at a time.
+    #[test]
+    fn esc_clears_an_active_filter() {
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]);
+        app.handle_key(Key::Char('\\'));
+        app.handle_key(Key::Char('b'));
+        assert_eq!(app.table.visible(), 1, "the filter is live while typing");
+
+        app.handle_key(Key::Esc);
+        assert!(!app.input.active, "the prompt closes");
+        assert!(app.filter.is_none(), "the filter is gone");
+        assert_eq!(app.table.visible(), 2, "every row is visible again");
+    }
+
+    /// A submitted search is remembered; a cancelled one is not.
+    #[test]
+    fn only_submitted_prompts_are_remembered() {
+        let dir = temp_history_dir("submit");
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
+            .with_history(dir.clone());
+
+        // Cancelled: never reaches the history.
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Char('c'));
+        app.handle_key(Key::Char('x'));
+        app.handle_key(Key::Esc);
+
+        // Submitted.
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Char('b'));
+        app.handle_key(Key::Enter);
+
+        assert_eq!(app.search_history.len(), 1);
+        assert_eq!(app.search_history.recent(0), Some("b"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_and_filter_history_are_separate() {
+        let dir = temp_history_dir("separate");
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
+            .with_history(dir.clone());
+
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Char('a'));
+        app.handle_key(Key::Enter);
+
+        app.handle_key(Key::Char('\\'));
+        app.handle_key(Key::Char('b'));
+        app.handle_key(Key::Enter);
+
+        assert_eq!(app.search_history.recent(0), Some("a"));
+        assert_eq!(app.filter_history.recent(0), Some("b"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Up recalls the newest entry; Down walks back out to an empty buffer.
+    #[test]
+    fn up_and_down_walk_the_history() {
+        let dir = temp_history_dir("walk");
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta"), row(3, "gamma")])
+            .with_history(dir.clone());
+
+        for term in ["alpha", "beta"] {
+            app.handle_key(Key::Char('/'));
+            for ch in term.chars() {
+                app.handle_key(Key::Char(ch));
+            }
+            app.handle_key(Key::Enter);
+        }
+
+        app.handle_key(Key::Char('/'));
+        assert!(app.input.buffer.is_empty());
+
+        app.handle_key(Key::Up);
+        assert_eq!(app.input.buffer, "beta", "Up starts at the newest entry");
+        app.handle_key(Key::Up);
+        assert_eq!(app.input.buffer, "alpha");
+        // Already at the oldest: it stays rather than wrapping.
+        app.handle_key(Key::Up);
+        assert_eq!(app.input.buffer, "alpha");
+
+        app.handle_key(Key::Down);
+        assert_eq!(app.input.buffer, "beta");
+        app.handle_key(Key::Down);
+        assert_eq!(app.input.buffer, "", "back to a blank prompt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Typing after a recall abandons the history position.
+    #[test]
+    fn editing_a_recalled_entry_resets_the_cursor() {
+        let dir = temp_history_dir("reset");
+        let mut app = app_with(vec![row(1, "alpha")]).with_history(dir.clone());
+
+        app.handle_key(Key::Char('/'));
+        for ch in "alpha".chars() {
+            app.handle_key(Key::Char(ch));
+        }
+        app.handle_key(Key::Enter);
+
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Up);
+        assert_eq!(app.input.buffer, "alpha");
+        assert_eq!(app.input.history_cursor, 1);
+
+        app.handle_key(Key::Char('x'));
+        assert_eq!(app.input.history_cursor, 0, "typing leaves history mode");
+
+        // The next Up starts from the newest entry again.
+        app.handle_key(Key::Up);
+        assert_eq!(app.input.buffer, "alpha");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_recalled_filter_takes_effect_immediately() {
+        let dir = temp_history_dir("recall-filter");
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
+            .with_history(dir.clone());
+
+        app.handle_key(Key::Char('\\'));
+        app.handle_key(Key::Char('b'));
+        app.handle_key(Key::Enter);
+        assert_eq!(app.table.visible(), 1);
+
+        // Clear, then recall.
+        app.handle_key(Key::Esc);
+        assert_eq!(app.table.visible(), 2);
+
+        app.handle_key(Key::Char('\\'));
+        app.handle_key(Key::Up);
+        assert_eq!(app.table.visible(), 1, "the recalled filter applies at once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// History survives a restart: the whole point of persisting it.
+    #[test]
+    fn history_is_reloaded_on_the_next_run() {
+        let dir = temp_history_dir("reload");
+        {
+            let mut app = app_with(vec![row(1, "alpha")]).with_history(dir.clone());
+            app.handle_key(Key::Char('\\'));
+            for ch in "nginx|node".chars() {
+                app.handle_key(Key::Char(ch));
+            }
+            app.handle_key(Key::Enter);
+            app.save_history();
+        }
+
+        let app = app_with(vec![row(1, "alpha")]).with_history(dir.clone());
+        assert_eq!(app.filter_history.recent(0), Some("nginx|node"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An `App` built without `with_history` must not touch the real state dir.
+    #[test]
+    fn a_fresh_app_has_empty_history() {
+        let app = app_with(vec![]);
+        assert!(app.search_history.is_empty());
+        assert!(app.filter_history.is_empty());
+    }
+
+    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// The prompt has to be visible. It was not drawn at all, so a filter that
+    /// hid every row looked like a broken sampler.
+    #[test]
+    fn the_filter_prompt_is_drawn_on_the_table_header() {
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]);
+        app.viewport = 10;
+        app.handle_key(Key::Char('\\'));
+        app.handle_key(Key::Char('b'));
+        app.handle_key(Key::Char('e'));
+
+        let screen = render_to_string(&mut app, 100, 20);
+        assert!(
+            screen.contains("Filter: be"),
+            "the prompt and its text must be on screen:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_search_prompt_is_drawn() {
+        let mut app = app_with(vec![row(1, "alpha")]);
+        app.viewport = 10;
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Char('a'));
+        app.handle_key(Key::Char('l'));
+
+        let screen = render_to_string(&mut app, 100, 20);
+        assert!(screen.contains("Search: al"), "got:\n{screen}");
+    }
+
+    #[test]
+    fn no_prompt_is_drawn_when_the_prompt_is_closed() {
+        let mut app = app_with(vec![row(1, "alpha")]);
+        app.viewport = 10;
+        let screen = render_to_string(&mut app, 100, 20);
+        assert!(!screen.contains("Search:"), "got:\n{screen}");
+        assert!(!screen.contains("Filter:"), "got:\n{screen}");
+    }
+
+    /// The prompt must not leak into the `htop` layout either.
+    #[test]
+    fn the_prompt_is_drawn_in_both_layouts() {
+        for layout in [LayoutKind::Panels, LayoutKind::Htop] {
+            let mut app = app_with(vec![row(1, "alpha")]);
+            app.layout = layout;
+            app.viewport = 10;
+            app.handle_key(Key::Char('\\'));
+            app.handle_key(Key::Char('x'));
+            let screen = render_to_string(&mut app, 120, 24);
+            assert!(
+                screen.contains("Filter: x"),
+                "prompt missing in {layout:?}:\n{screen}"
+            );
+        }
+    }
+
+    /// The new meters must be offerable and must render in a real header.
+    #[test]
+    fn network_and_disk_meters_can_be_added_to_the_header() {
+        let mut config = Config::default();
+        config.meters_right.push(gander_config::MeterConfig::new("NetworkIO", "text"));
+        config.meters_right.push(gander_config::MeterConfig::new("DiskIO", "text"));
+
+        let mut app = App::new(config);
+        let snapshot = SystemSnapshot {
+            cpu: vec![gander_core::system::CpuTimes::default(); 5],
+            cpu_delta: vec![gander_core::system::CpuTimes::default(); 5],
+            net_rate: gander_core::system::Rate {
+                inbound: 1024.0 * 1024.0,
+                outbound: 2048.0,
+            },
+            ..Default::default()
+        };
+        app.apply_sample(snapshot, vec![row(1, "alpha")]);
+
+        let names: Vec<&str> = app.meters.iter().map(|m| m.name()).collect();
+        assert!(names.contains(&"NetworkIO"), "got {names:?}");
+        assert!(names.contains(&"DiskIO"), "got {names:?}");
+
+        // And the whole frame renders without panicking.
+        app.layout = LayoutKind::Htop;
+        let screen = render_to_string(&mut app, 120, 24);
+        assert!(screen.contains("Net"), "got:\n{screen}");
     }
 }
