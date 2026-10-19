@@ -305,15 +305,134 @@ is not a container id, and printing one would look like an answer.
   sort that did nothing on an already pid-sorted list. Both new columns have their
   own comparator, and there is a test for each.
 
-## Then: M3
+## M3 — Linux depth
 
-See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
+In progress. Four of the five items are done; delay accounting is the remainder and
+stays last, because it needs raw `TASKSTATS` netlink and the payoff is small next
+to the four that landed.
 
-1. PSS / EPSS columns, loaded lazily and only when visible.
-2. PSI pressure meters.
-3. Zram / Zswap / HugePages meters.
-4. GPU columns via `drm-usage-stats` (no vendor SDK).
-5. Delay accounting via `TASKSTATS` netlink — lowest priority.
+| Area | State |
+|---|---|
+| `M_PSS` / `M_EPSS` / `M_PRIVATE` / `M_SWAP` columns from `smaps_rollup` | done, read lazily |
+| PSI pressure: `PSI` meter, and a pressure block in the `panels` column | done |
+| `Zram` / `Zswap` / `HugePages` meters | done |
+| GPU columns (`GPU%`, `GPU_TIME`) via `drm-usage-stats` in `fdinfo` | done |
+| Delay accounting (`TASKSTATS` netlink) | not started |
+
+### The cost gate, and why it is one struct
+
+Two of the four new features are expensive per process per tick, in different ways:
+
+| Read | What it costs | Why |
+|---|---|---|
+| `/proc/<pid>/smaps_rollup` | a kernel walk over every VMA | tens of ms across a desktop's table |
+| `/proc/<pid>/fdinfo/*` | one `readdir` plus a read per descriptor | a few thousand small reads |
+
+Both are therefore off unless a column that needs them is on screen. That decision
+used to be a pair of `set_*` methods on the trait, which worked until there were
+three: the front end had to remember to call every setter on every change, and a
+forgotten one produced either a wasted scan or a column of dashes. It is now a
+single `ScanOptions` value (`threads`, `smaps`, `gpu`), passed in one call, packed
+into one `AtomicU64` for the sampler thread so it can never observe a half-updated
+combination, and derived in one place from the active tab's visible columns rather
+than from the config as a whole — a PSS column on a tab nobody is looking at costs
+nothing.
+
+`Field::needs_smaps_rollup()` and `Field::needs_gpu_fdinfo()` live next to the
+`Field` enum, so a future derived column cannot be added without answering the
+question. `gander --sort M_PSS` pays for what it asks for, because batch mode drives
+the same switch from the sort field.
+
+### What PSS is for, and what RSS gets wrong
+
+RSS counts a shared page once per process. Two processes sharing 100 MB of
+libraries both report 100 MB, and summing the `RES` column says the machine uses
+200 MB it does not. PSS divides each shared page by the number of sharers, which is
+the only per-process figure that adds up across the table. `M_PRIVATE`
+(`Private_Clean + Private_Dirty`) is the complement: what would actually be freed
+if the process exited. `M_EPSS` adds the swapped-out equivalent, which is why it
+and `M_PSS` differ on a machine that has been swapping.
+
+`None` means *not read*, and it renders `-`. It never means zero: another user's
+`smaps_rollup` needs `CAP_SYS_PTRACE`, and a column the sampler was not asked to
+fill is equally unknown. `Some(0)` renders `0B`, because that is a measurement.
+
+### PSI: the one figure that says "struggling" rather than "busy"
+
+CPU% and load average both describe how much work there is. Neither says whether
+work is *waiting*. A box at 90 % CPU with an empty run queue is healthy; a box at
+30 % CPU whose `io full` average is 40 % is making every process block on the disk,
+and both of the familiar numbers look unremarkable while it happens.
+
+`/proc/pressure/<resource>` reports two lines:
+
+```text
+some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+```
+
+`some` is the share of wall time at least one task was stalled; `full` is the share
+where *every* runnable task was stalled. The meter shows both — `some` as the bar
+and `full` as a brighter overlay in bar mode, `full` as the number — because high
+`some` with low `full` is contention and high `full` is a real stall.
+
+**Every resource reports both lines, `cpu` included.** An early draft of this
+milestone asserted otherwise, and a live test against a real `/proc/pressure/cpu`
+caught it. The parser reads `has_full` from the file rather than from a table of
+assumptions about which resources have one.
+
+PSI needs Linux 4.20+ and `CONFIG_PSI=y`. When the files are absent the sampler
+reports `psi: None` and the meter says `n/a here` — three empty bars would be
+indistinguishable from a machine under no pressure at all.
+
+### zram, zswap, huge pages
+
+Each answers a question the memory bar cannot.
+
+`Zram` shows `orig → compressed (ratio)`. A 4:1 ratio means 4 GB of swap is
+occupying 1 GB of RAM; printing only the compressed figure understates what is
+stored, printing only the uncompressed one overstates what it costs. The bar is
+drawn against the compressed figure as a share of physical memory, because the
+ratio itself has no natural scale.
+
+`Zswap` shows bytes in the pool against the pool's ceiling, which comes from
+`max_pool_percent` (a percentage of physical memory — resolved after `MemTotal` is
+known). That is the figure that answers "will the next page spill to disk".
+
+`HugePages` shows `used/total` in bytes. The counters in `/proc/meminfo` are in
+*pages*, not kB, so they must not go through the `× 1024` path every other field
+uses; a 512-page reservation would read as 512 kB instead of 1 GiB. `used` is
+`total - free` rather than `total - free - rsvd`, because reserved pages are
+already committed to a process that has not faulted them in yet.
+
+All three report `n/a here` when the subsystem is absent — no zram devices, zswap
+disabled, or no huge pages reserved — rather than drawing a permanent empty bar.
+That is the same rule `DiskIO` follows on macOS.
+
+### GPU without a vendor SDK
+
+The kernel exports `drm-usage-stats` keys in each process's `fdinfo`:
+
+```text
+drm-driver:     amdgpu
+drm-engine-gfx: 5000000000 ns
+drm-engine-compute: 1000000000 ns
+drm-busy:       25000000000 ns
+```
+
+Two details decide whether the reading is right:
+
+- **Engine classes are summed by prefix**, not by name. They vary by driver
+  (`gfx`, `render`, `video`, `compute`, …), and a process that only uses video
+  decode must not read as "no GPU".
+- **The percentage is engine time over `drm-busy`, not over the sample interval.**
+  `drm-busy` is the time the GPU was busy *while this process had work queued*, so
+  it is the only correct denominator. A driver that reports engine time without
+  `drm-busy` yields `None`, not a guess.
+
+A process with no DRM descriptor renders `-`, not `0.0`: it is not using zero
+percent of the GPU, it is not using the GPU at all, and those read differently in a
+sorted list.
 
 ## Deliberately not planned
 
@@ -333,6 +452,22 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
   path is sequential by design.
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not
   on bare metal with thousands of processes.
+- The GPU columns report what the driver exposes. `amdgpu`, `i915`/`xe` and
+  `nouveau` implement `drm-usage-stats`; the proprietary NVIDIA driver does so only
+  partially, and older drivers not at all. A machine where nothing implements it
+  shows a column of dashes rather than an error, which is correct but not helpful —
+  there is no per-driver detection to say *why*.
+- `Zram`, `Zswap` and `HugePages` read `/sys`, so a container with a masked `/sys`
+  sees no devices even when the host has them. The meter says `n/a here`, the same
+  answer it gives on a host that genuinely has none.
+- The zswap pool ceiling is `max_pool_percent × MemTotal`, resolved once per
+  sample. It is the configured ceiling, not what the kernel will actually allow
+  right now: zswap also refuses to grow past
+  `totalram - totalhigh - 1/16 totalram`, so a machine with a high
+  `max_pool_percent` will see the bar stop short of full.
+- `M_PSS` and friends need `CAP_SYS_PTRACE` to read another user's process, which
+  is the normal Linux permission model. Those rows show `-`.
+- Delay accounting (item 5 of M3) is not implemented.
 - macOS has no host-wide disk throughput counter without IOKit, so the `DiskIO`
   meter reports `n/a here` there. The per-process figures are parsed
   (`proc_pid_rusage`) but not displayed yet.

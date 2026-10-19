@@ -37,17 +37,17 @@ Do not start milestone *n+1* until *n* is usable end-to-end.
 The thesis is that the process table + sort + kill is ~80 % of what people
 actually do with htop. Ship that first.
 
-- [ ] Scan `/proc`, build a `Row` per PID
-- [ ] Columns: PID, COMM/Command, STATE, USER, PRIORITY, NICE, CPU%, MEM%, TIME
-- [ ] Sort by any column, asc/desc (`F6`, `<`, `>`)
-- [ ] Header row highlighting the active sort column
-- [ ] Incremental search (`F3`, `/`)
-- [ ] Incremental filter (`F4`, `\`) — fixed strings, `|`-separated, case-insensitive
-- [ ] Tree view (`F5`, `t`) with orphan/cycle handling
-- [ ] Tag multiple processes (`Space`, `c`, `U`)
-- [ ] Kill (`F9`, `k`) with signal picker; nice (`F7`/`F8`)
-- [ ] One CPU bar + one memory bar in the header
-- [ ] `q` / `F10` quit, clean-exit config save
+- [x] Scan `/proc`, build a `Row` per PID
+- [x] Columns: PID, COMM/Command, STATE, USER, PRIORITY, NICE, CPU%, MEM%, TIME
+- [x] Sort by any column, asc/desc (`F6`, `<`, `>`)
+- [x] Header row highlighting the active sort column
+- [x] Incremental search (`F3`, `/`)
+- [x] Incremental filter (`F4`, `\`) — fixed strings, `|`-separated, case-insensitive
+- [x] Tree view (`F5`, `t`) with orphan/cycle handling
+- [x] Tag multiple processes (`Space`, `c`, `U`)
+- [x] Kill (`F9`, `k`) with signal picker; nice (`F7`/`F8`)
+- [x] One CPU bar + one memory bar in the header
+- [x] `q` / `F10` quit, clean-exit config save
 
 Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 
@@ -78,13 +78,23 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 
 ### M3 — Linux depth (the differentiators)
 
-- `smaps_rollup` → PSS, SwapPss, EPSS, private
-- PSI pressure meters (`/proc/pressure/{cpu,io,memory,irq}`)
-- Zram / Zswap / HugePages meters
-- GPU columns via `drm-usage-stats` (no vendor SDK)
-- Container detection via cgroup + mountinfo (not heuristics)
-- Delay accounting (`TASKSTATS` netlink) — **lowest priority**, needs raw netlink
-- Backtrace (libunwind-ptrace) **[later]**, demangling **[later]**
+- [x] `smaps_rollup` → PSS, SwapPss, EPSS, private — the `M_PSS`, `M_SWAP`,
+      `M_EPSS` and `M_PRIVATE` columns, read **only when one of them is visible**
+      (`Field::needs_smaps_rollup` → `ScanOptions::smaps`)
+- [x] PSI pressure meters (`/proc/pressure/{cpu,io,memory,irq}`) — the `PSI` meter
+      and a pressure block in the `panels` system column
+- [x] Zram / Zswap / HugePages meters
+- [x] GPU columns via `drm-usage-stats` (no vendor SDK) — `GPU%` and `GPU_TIME`,
+      gated the same way (`ScanOptions::gpu`)
+- [x] Container detection via cgroup + namespace (not heuristics) — landed in M2
+- [ ] Delay accounting (`TASKSTATS` netlink) — **lowest priority**, needs raw
+      netlink
+- [ ] Backtrace (libunwind-ptrace) **[later]**, demangling **[later]**
+
+The gating decision is one value (`gander_core::ScanOptions`) rather than a setter
+per read, because a forgotten setter is either a wasted scan or a column of dashes
+and neither is visible until someone looks. See
+[ROADMAP.md § M3](ROADMAP.md#m3--linux-depth).
 
 ### M4 — portability
 
@@ -284,12 +294,28 @@ pub enum Field {
     Nlwp, Tgid, PercentNormCpu, Elapsed, SchedPolicy,
     ProcComm, ProcExe, Cwd,
     #[cfg(target_os = "linux")]
-    Pss, Swap, Private, Epss, Cgroup, Container, IsContainer,
+    Pss, Swap, Private, Epss, Cgroup, Container,
     #[cfg(target_os = "linux")]
     GpuPercent, GpuTime, IoReadRate, IoWriteRate,
     // ...
 }
 ```
+
+Two of those groups cost real time per process, so they are declared alongside the
+question the sampler needs answered:
+
+```rust
+impl Field {
+    /// Does filling this column require `/proc/<pid>/smaps_rollup`?
+    pub const fn needs_smaps_rollup(self) -> bool { /* Pss | Epss | Private | Swap */ }
+    /// Does filling this column require `/proc/<pid>/fdinfo`?
+    pub const fn needs_gpu_fdinfo(self) -> bool { /* GpuPercent | GpuTime */ }
+}
+```
+
+Putting them on `Field` rather than in the renderer is what keeps the cost switch
+from drifting: a new derived column cannot be added without deciding whether it
+needs the expensive read.
 
 Rules:
 
@@ -349,16 +375,24 @@ One immutable value per sample, swapped atomically into the UI:
 pub struct SystemSnapshot {
     pub at: Instant,
     pub cpu: Vec<CpuTimes>,       // per-core + aggregate
-    pub mem: MemInfo,
+    pub cpu_delta: Vec<CpuTimes>, // same shape, the delta against the last sample
+    pub mem: MemInfo,             // incl. zswap pool and huge page counters
     pub swap: SwapInfo,
     pub load: [f64; 3],
-    pub uptime: Duration,
-    pub net: Vec<NetIface>,
-    pub disk: Vec<DiskIo>,
-    pub psi: Option<Psi>,
-    pub procs: Arc<[Row]>,        // sorted/filtered view is derived, not stored here
+    pub uptime: u64,
+    pub net: NetCounters,
+    pub net_rate: Rate,
+    pub disk: DiskCounters,
+    pub disk_rate: Rate,
+    pub tasks: TaskStats,
+    pub psi: Option<Psi>,         // None where the kernel has none
+    pub zram: ZramInfo,           // empty when there are no zram devices
 }
 ```
+
+`psi` is `Option` rather than a `Psi` full of zeroes, and `zram` is empty rather
+than a device list with one fake entry: an absent feature and an idle one must not
+render the same, or the meter lies.
 
 ---
 
@@ -591,7 +625,8 @@ language.
 
 | Layer | Approach |
 |---|---|
-| `/proc` parsers | `tests/fixtures/proc/<pid>/{stat,status,smaps_rollup,cgroup,cmdline}` — real snapshots |
+| `/proc` parsers | `tests/fixtures/proc/<pid>/{stat,status,smaps_rollup,cgroup,cmdline,fdinfo}` — real snapshots |
+| `/proc/pressure`, zram | `tests/fixtures/proc/pressure/<resource>`; `mm_stat` as a raw line |
 | Parser edge cases | comm containing spaces and parens; zombie; kernel thread (empty cmdline); ARM field offsets; truncated file; PID reuse |
 | Sort / filter / tree | pure functions; `proptest` invariant: output is a permutation of input with no duplicates |
 | CPU% math | inject timestamps; verify delta formula, zero-delta guard, wraparound |

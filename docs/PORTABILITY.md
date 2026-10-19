@@ -280,13 +280,13 @@ also why `htop` runs `sudo htop` when you want full detail.
 | Feature | Why |
 |---|---|
 | cgroup, container columns | No cgroup concept. Fields are `#[cfg]`-gated out, so `CGROUP` and `CONTAINER` do not appear in the setup screen at all rather than appearing and rendering `-`. |
-| PSI pressure meters | No `/proc/pressure`. |
-| Zram / Zswap | Linux-only subsystems. ZFS ARC could be added later. |
-| PSS / EPSS | No `smaps_rollup`; `ri_phys_footprint` is the closest analogue and is already available via rusage. |
+| PSI pressure meters | No `/proc/pressure`. The `PSI` meter says `n/a here`. |
+| Zram / Zswap / HugePages | Linux-only subsystems. ZFS ARC could be added later. All three meters say `n/a here`. |
+| PSS / EPSS | No `smaps_rollup`; `ri_phys_footprint` is the closest analogue and is already available via rusage. The columns are `#[cfg]`-gated out, so they do not appear in the setup screen rather than appearing and rendering `-`. |
 | Thread rows | Supported. `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` are both `libproc`; the earlier note here claiming this needed the deprecated `task_threads` Mach API was wrong. Threads of processes owned by another user are not listable (`proc_pidinfo` returns 0), so those rows simply have none. |
 | `a` affinity panel | `thread_policy_set` exists but is per-thread, not per-process; deferred. |
 | `i` I/O priority | No `ioprio_set` equivalent. |
-| GPU columns | Needs `IOKit`/`IOAccelerator`; different mechanism from Linux `drm-usage-stats`. |
+| GPU columns | Needs `IOKit`/`IOAccelerator`; a different mechanism from Linux `drm-usage-stats`, and the design forbids a vendor SDK. Gated out of the column list on macOS. |
 | `DiskIO` meter (host-wide) | No host-wide disk byte counter without IOKit. Per-process `rusage` figures exist but summing them double-counts shared I/O. The meter reports `n/a here`. |
 
 ## Network and disk counters
@@ -353,6 +353,50 @@ for one tick is worse than zero, so `delta` saturates. A zero or negative interv
 (first sample, or a clock jump) also yields zero rather than NaN, so no meter has
 to special-case its first frame.
 
+## M3: what Linux has that macOS does not, and how
+
+The M3 features are all reads of kernel files that have no Darwin equivalent, so
+each one is gated in three places rather than one:
+
+1. **The `Field` variant** is `#[cfg(target_os = "linux")]`, so the column does not
+   exist in the setup screen on macOS at all. This is the same treatment `CGROUP`
+   got, and for the same reason: a column that can only render `-` is a setup
+   entry that does nothing.
+2. **The `Row` field** is gated with it, so a macOS build cannot accidentally carry
+   a `pss` that is always `None`.
+3. **`ScanOptions`** carries the flag anyway, and the macOS sampler accepts it and
+   ignores it. That is deliberate: the TUI asks for what it needs in one call
+   without naming a backend, and a backend that has nothing to switch on must not
+   be a special case at the call site.
+
+The meters are different. `PSI`, `Zram`, `Zswap` and `HugePages` exist on both
+platforms and report `n/a here` on macOS, because a *meter name* has to survive a
+config file moving between machines. A header edited on a Linux box and copied to a
+Mac keeps its layout; the meters that cannot work there say so instead of vanishing
+and renumbering everything.
+
+### What the Linux side reads
+
+| Feature | Source | Permission |
+|---|---|---|
+| PSS / EPSS / private / swap | `/proc/<pid>/smaps_rollup` | own processes; others need `CAP_SYS_PTRACE` |
+| PSI | `/proc/pressure/{cpu,memory,io,irq}` | world-readable |
+| zram | `/sys/block/zram*/mm_stat` | world-readable |
+| zswap | `Meminfo: Zswap`, `/sys/module/zswap/parameters/max_pool_percent` | world-readable |
+| huge pages | `Meminfo: HugePages_*`, `Hugepagesize` | world-readable |
+| GPU | `/proc/<pid>/fdinfo/*`, `drm-*` keys | own processes |
+
+The two expensive ones — `smaps_rollup` and `fdinfo` — are only read when a column
+that needs them is on screen. See [ROADMAP.md § The cost gate](ROADMAP.md#the-cost-gate-and-why-it-is-one-struct).
+
+### The trap in `/proc/meminfo`'s huge page counters
+
+Every other field in `meminfo` is in kB, and `parse_meminfo` multiplies by 1024 for
+all of them. `HugePages_Total`, `HugePages_Free`, `HugePages_Rsvd` and
+`HugePages_Surp` are **page counts**, not kB. Sending them through the same
+multiply reports a 512-page reservation as 512 kB instead of 1 GiB — and 1 GiB is
+the number that explains where the memory went. Only `Hugepagesize` is in kB.
+
 ## What is verified, and where
 
 Both backends have now been exercised against a live OS.
@@ -361,9 +405,11 @@ Both backends have now been exercised against a live OS.
 tests that call `proc_pidinfo`, `host_statistics64`, `KERN_PROCARGS2`,
 `host_processor_info` and `KERN_PROC_ALL`.
 
-**Linux (arm64, via `rust:1-slim-bookworm` in Docker)** —
-`crates/core/tests/linux_live.rs`, thirteen tests that read the real `/proc` and
-compare gander's figures against the same files parsed independently:
+**Linux (arm64, via `rust:1.89-slim` in Docker)** —
+`crates/core/tests/linux_live.rs`, twenty-one tests that read the real `/proc` and
+compare gander's figures against the same files parsed independently, plus
+`m3_fixture.rs`, which exercises the M3 read paths against the committed fixture
+tree on any unix:
 
 | check | result |
 |---|---|
@@ -378,8 +424,23 @@ compare gander's figures against the same files parsed independently:
 | network counters vs `/proc/net/dev` | matches a direct sum of non-`lo` interfaces |
 | disk counters vs `/proc/diskstats` | matches a direct sum over `/sys/block` disks |
 | throughput after two samples | finite, non-negative, counters monotonic |
+| PSI vs a direct read of `/proc/pressure/io` | within 25 points (it moves between reads) |
+| huge pages | `used = total - free`, in bytes; page counts not multiplied by 1024 |
+| PSS | bounded by RSS, `private <= pss`, `epss == pss + swap` |
+| `smaps_rollup` unread by default | every row has `pss == None` |
+| GPU percentages | within `0..=100`, and a percentage implies engine time was read |
 
-The Linux run found a bug the macOS run could not: a container process whose
+The M3 run found a bug of a different kind: the *documentation* was wrong. An
+early version of the PSI code asserted that `/proc/pressure/cpu` has no `full`
+line, on the reasoning that a CPU stall is inherently per-task. A live test
+against a real kernel failed immediately — `cpu` reports both lines, and the code
+was already parsing whichever the file contained. The claim is now removed from
+`PsiLine`'s doc comment and from `PsiMeter`'s, and `has_full` is read from the file
+rather than assumed. Nothing about the runtime behaviour changed; the comments had
+simply stated something false, and a test that asserted the false thing would have
+passed on the fixture and failed on any real machine.
+
+The original Linux run found a bug the macOS run could not: a container process whose
 `cmdline` contained newlines made `ratatui` panic with *"control character passed
 to cell_width without filtering"*. Process names and command lines are arbitrary
 bytes, so `meters::put_str` now sanitises every character it writes (tabs become

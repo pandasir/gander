@@ -197,6 +197,47 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 两者都是对累计计数器的*速率*，并以迄今见过的最大速率（而非固定上限）为标尺
 ——固定在 1 Gbit 的进度条在 100 Mbit 链路上会细得看不见。
 
+另有四个 Linux 深度 meter。子系统不存在时它们一律显示 `n/a here`，而不是画一条
+永远空着的进度条：
+
+- **`PSI`** —— 压力失速信息：CPU、内存、IO、IRQ 各自的 `some`（至少有一个任务在
+  等待）与 `full`（没有任何任务能跑）。这是唯一能把"忙"和"卡"区分开的数字：90%
+  CPU 而运行队列为空是健康的，30% CPU 但 `io full` 均值 40% 则不是——后一种情况下
+  CPU% 和负载均值看起来都毫无异常。
+- **`Zram`** —— RAM 中的压缩 swap，显示为 `原始 → 压缩后 (压缩比)`。4:1 意味着
+  4 GB 的 swap 只占用 1 GB 内存。
+- **`Zswap`** —— swap 设备前面的压缩池，按它上限（`max_pool_percent` × 物理内存）
+  的比例显示。这个数字回答的是"下一个换出的页会不会落到磁盘上"。
+- **`HugePages`** —— 预保留的大页，`已用/总量`。保留的页无论有没有进程映射，都
+  不能被其他用途使用。
+
+### Linux 内存与 GPU 列
+
+在 Linux 上，`F2` → Columns 还会提供 PSS 系列与 GPU 列：
+
+| 列 | 含义 |
+|---|---|
+| `M_PSS` | 比例集大小：共享页在共享者之间均摊 |
+| `M_EPSS` | PSS 加上换出部分的等价量（htop 称之为 `M_PSSWP`） |
+| `M_PRIVATE` | `Private_Clean + Private_Dirty`：进程退出时会一并释放的部分 |
+| `M_SWAP` | 该进程换出到 swap 的内存量 |
+| `GPU%` | GPU 时间占比，来自 `drm-usage-stats` |
+| `GPU_TIME` | 累计 GPU 时间，对所有引擎类求和 |
+
+**为什么用 PSS 而不是 RES。** RSS 对每个进程各算一次共享页，所以两个进程共享
+100 MB 库时各自都报 100 MB，`RES` 列加起来就是 200 MB 并不存在的内存。PSS 把每个
+共享页按共享者数量均摊，是唯一在整张表上相加仍然正确的每进程数字。
+
+**两组都是按需读取。** `smaps_rollup` 会让内核遍历进程的每一个 VMA；`fdinfo` 则是
+一次目录遍历加上每个描述符一次读取。任一项在整个桌面的进程表上跑一遍，都比其余
+扫描加起来还贵。所以只有当需要它的列真的在屏幕上时才读——`gander --sort M_PSS`
+也只为它真正需要的东西付费。没读到的行显示 `-` 而绝不是 `0`：别人的
+`smaps_rollup` 需要 `CAP_SYS_PTRACE`，"没测"不等于"零"。
+
+**不依赖任何厂商 SDK。** GPU 数字来自内核自己的 `drm-usage-stats` 键，所以
+`amdgpu`、`i915`/`xe` 和 `nouveau` 无需安装任何东西即可工作。不实现这些键的驱动
+显示短横线。
+
 ### 主题
 
 共八套，在 `F2` → Colors 里选（或配置里的 `color_scheme`）：
@@ -223,6 +264,10 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 | 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` |
 | 容器列 | cgroup + PID namespace | 不可用 |
+| PSS / EPSS / private 列 | `smaps_rollup`，按需读取 | 不可用 |
+| PSI 压力（some/full） | `/proc/pressure` | 不可用 |
+| Zram / Zswap / HugePages meter | `/sys/block/zram*`、`meminfo` | 不可用 |
+| GPU 列（`GPU%`、`GPU_TIME`） | `fdinfo` 里的 `drm-usage-stats` | 不可用 |
 | 线程按行显示 | 支持（`H`） | 支持（`H`） |
 | CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 |
 | I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 |
@@ -235,7 +280,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 300 个，Linux 279 个
+cargo test                 # macOS 349 个，Linux 348 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```

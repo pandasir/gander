@@ -208,7 +208,7 @@ is no container detection, so the key says so instead of toggling nothing.
 `F2` → Header adds and reorders them; `I` cycles the selected meter's mode
 (text, bar, graph) and the choice is saved per meter. Beyond the htop set (CPU,
 memory, swap, load, uptime, tasks, clock, date, hostname, blank) there are two
-throughput meters:
+throughput meters and four Linux-depth meters:
 
 - **`NetworkIO`** — host receive/transmit rate, loopback excluded.
 - **`DiskIO`** — host read/write rate from `/proc/diskstats`, whole disks only
@@ -220,6 +220,52 @@ Both are rates over cumulative counters, scaled against the largest rate seen so
 far rather than a fixed ceiling — a bar pinned to 1 Gbit is an invisible sliver on
 a 100 Mbit link. Unlike the container columns these work on macOS too, where
 `DiskIO` reports itself unavailable rather than showing zero.
+
+The four Linux-depth meters, all of which say `n/a here` where the subsystem is
+absent rather than drawing a permanent empty bar:
+
+- **`PSI`** — pressure stall information: `some` (at least one task waiting) and
+  `full` (nothing could run) for CPU, memory, IO and IRQ. This is the one figure
+  that separates "busy" from "struggling": 90 % CPU with an empty run queue is
+  healthy, 30 % CPU with a 40 % `io full` average is not, and CPU% and load
+  average both look fine in the second case.
+- **`Zram`** — compressed swap in RAM, as `orig → compressed (ratio)`. A 4:1 ratio
+  means 4 GB of swap occupying 1 GB of memory.
+- **`Zswap`** — the compressed pool in front of the swap device, as a share of its
+  ceiling (`max_pool_percent` × physical memory). This is what says whether the
+  next swapped page goes to disk.
+- **`HugePages`** — pre-reserved huge pages, `used/total`. Reserved pages are
+  unavailable to everything else whether or not a process maps them.
+
+### Linux memory and GPU columns
+
+On Linux, `F2` → Columns also offers the PSS family and the GPU pair:
+
+| Column | Meaning |
+|---|---|
+| `M_PSS` | Proportional set size: shared pages divided between their sharers |
+| `M_EPSS` | PSS plus the swapped-out equivalent (htop calls this `M_PSSWP`) |
+| `M_PRIVATE` | `Private_Clean + Private_Dirty`: what exits with the process |
+| `M_SWAP` | Memory this process has pushed to swap |
+| `GPU%` | Share of GPU time, from `drm-usage-stats` |
+| `GPU_TIME` | Cumulative GPU time, summed over every engine class |
+
+**Why PSS rather than RES.** RSS counts a shared page once per process, so two
+processes sharing 100 MB of libraries both report 100 MB and the `RES` column adds
+up to 200 MB that does not exist. PSS divides each shared page by the number of
+sharers, which is the only per-process figure that sums correctly across a table.
+
+**Both families are read on demand.** `smaps_rollup` makes the kernel walk every
+VMA of the process; `fdinfo` costs a directory walk and a read per descriptor.
+Either one, run across a desktop's process table, costs more than the rest of the
+scan together. So neither is read unless a column that needs it is actually on
+screen — and `gander --sort M_PSS` pays for exactly what it asked for. A row whose
+figures were not read shows `-`, never `0`: another user's `smaps_rollup` needs
+`CAP_SYS_PTRACE`, and "not measured" is not "zero".
+
+**No vendor SDK.** The GPU figures come from the kernel's own `drm-usage-stats`
+keys, so `amdgpu`, `i915`/`xe` and `nouveau` work with nothing installed. A driver
+that does not implement them shows dashes.
 
 ### Themes
 
@@ -248,6 +294,10 @@ all four draw paths (htop, panels, setup, dialogs) inherit it.
 | Process list | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | Per-process details | `/proc/<pid>` | Mach + `proc_pidinfo` |
 | Container columns | cgroup + PID namespace | not available |
+| PSS / EPSS / private columns | `smaps_rollup`, read on demand | not available |
+| PSI pressure (some/full) | `/proc/pressure` | not available |
+| Zram / Zswap / HugePages meters | `/sys/block/zram*`, `meminfo` | not available |
+| GPU columns (`GPU%`, `GPU_TIME`) | `drm-usage-stats` in `fdinfo` | not available |
 | Threads as rows | yes (`H`) | yes (`H`) |
 | CPU affinity (`a`) | read/write | scheduler hint only, explains why |
 | I/O priority (`i`) | read/write | not available, explains why |
@@ -260,7 +310,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 300 on macOS, 279 on Linux
+cargo test                 # 349 on macOS, 348 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
