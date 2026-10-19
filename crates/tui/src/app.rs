@@ -733,6 +733,7 @@ impl App {
             Key::Char('i') => self.open_ioprio(),
             Key::Char('Z') => self.show_security_context(),
             Key::Char('b') => self.show_backtrace(),
+            Key::Char('s') => self.show_strace(),
             Key::Char('e') => self.show_env(),
             Key::Char('w') => self.show_command(),
             Key::Char('l') => self.show_open_files(),
@@ -1454,6 +1455,44 @@ impl App {
                 "In the meantime, attach a debugger directly:".to_string(),
                 format!("  lldb -p {pid}"),
                 format!("  gdb -p {pid}"),
+            ],
+            scroll: 0,
+        };
+        Reaction::Continue
+    }
+
+    /// `s`: attach `strace` to the selected process.
+    ///
+    /// Not implemented, and the key now says so. It used to be documented in
+    /// `docs/KEYS.md` and `docs/DESIGN.md` with no handler behind it, so pressing
+    /// it did nothing at all — the exact silent-key failure that `Z` and `b` were
+    /// given explanation screens to avoid.
+    ///
+    /// A real implementation is a terminal handover rather than a panel: `strace`
+    /// writes a live stream that the alternate screen would swallow, so the TUI
+    /// has to leave the alternate screen, hand the terminal to the tracer, and
+    /// restore on exit. That is a runtime concern, not a `Screen::Info` one.
+    fn show_strace(&mut self) -> Reaction {
+        let Some(row) = self.selected_row() else {
+            return Reaction::Continue;
+        };
+        let pid = row.pid;
+
+        self.screen = Screen::Info {
+            title: format!("Trace of {pid}"),
+            lines: vec![
+                "Attaching a tracer from inside the UI is not implemented yet.".to_string(),
+                String::new(),
+                "It is a terminal handover, not a panel: strace writes a live stream".to_string(),
+                "that would be swallowed by the alternate screen, so the TUI has to".to_string(),
+                "release the terminal, run the tracer, and take it back on exit.".to_string(),
+                String::new(),
+                "Run it alongside gander instead:".to_string(),
+                format!("  strace -p {pid}"),
+                format!("  sudo strace -f -p {pid}"),
+                String::new(),
+                "Tracing needs ptrace permission: the same owner or CAP_SYS_PTRACE,".to_string(),
+                "and yama's ptrace_scope may forbid attaching to a non-child.".to_string(),
             ],
             scroll: 0,
         };
@@ -2519,6 +2558,23 @@ pub fn render_field(
         Field::Processor => row.processor.to_string(),
         Field::MinFlt => row.min_flt.to_string(),
         Field::MajFlt => row.maj_flt.to_string(),
+        Field::Session => dash_if_zero_u32(row.session),
+        Field::Tty => tty_name(row.tty_nr),
+        Field::Tpgid => {
+            // `-1` is the kernel's "no foreground job", not a process group, so
+            // it must not be printed as a number.
+            if row.tpgid < 0 {
+                "-".to_string()
+            } else {
+                row.tpgid.to_string()
+            }
+        }
+        Field::StartTime => started_at(row, snapshot),
+        Field::Tgid => row.tgid.to_string(),
+        Field::SchedPolicy => sched_policy_name(row.sched_policy).to_string(),
+        Field::ProcComm => row.comm.as_str().to_string(),
+        Field::ProcExe => row.exe.as_deref().unwrap_or("-").to_string(),
+        Field::Cwd => row.cwd.as_deref().unwrap_or("-").to_string(),
         // Linux-only fields. The `_` arm is still needed because `Field` is
         // `#[non_exhaustive]`, but every variant that can be *selected* on this
         // platform has an arm: a column that renders "-" for every row is a
@@ -2602,6 +2658,206 @@ fn bytes_or_dash(value: Option<u64>) -> String {
     value
         .map(|v| format::bytes_human(v).to_string())
         .unwrap_or_else(|| "-".into())
+}
+
+/// `0` is the "unknown" sentinel for the session-id fields, not a session id.
+fn dash_if_zero_u32(value: u32) -> String {
+    if value == 0 {
+        "-".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Render the controlling terminal from `/proc/<pid>/stat`'s `tty_nr`.
+///
+/// The kernel encodes the device in a `dev_t`-shaped integer, and the "encoded"
+/// form libc and htop use is `major = (tty >> 8) & 0xfff`, `minor = (tty & 0xff) |
+/// ((tty >> 12) & 0xfff00)`. `0` means no controlling terminal, which renders `?`
+/// — the convention `ps` uses, and the one that distinguishes "a tty with minor 0"
+/// from "no tty at all".
+///
+/// Only the common pseudo-terminal range is decoded: `tty*(4)` is major 136, where
+/// minor `N` is `/dev/pts/N`; anything else shows the raw `major:minor` pair rather
+/// than a name this code invented.
+fn tty_name(tty_nr: i64) -> String {
+    if tty_nr == 0 {
+        return "?".to_string();
+    }
+    tty_name_platform(tty_nr)
+}
+
+/// Linux: decode the encoded `dev_t` that `/proc/<pid>/stat` field 7 carries.
+///
+/// The kernel's "new" encoding is `major = (dev >> 8) & 0xfff`, `minor = (dev &
+/// 0xff) | ((dev >> 12) & 0xfff00)`. Only the two common ranges get a name;
+/// anything else shows `major:minor` rather than a path this code invented.
+#[cfg(target_os = "linux")]
+fn tty_name_platform(tty_nr: i64) -> String {
+    let tty = tty_nr as u64;
+    let major = (tty >> 8) & 0xfff;
+    let minor = (tty & 0xff) | ((tty >> 12) & 0xfff00);
+    match major {
+        136 => format!("pts/{minor}"),
+        4 => format!("tty{minor}"),
+        _ => format!("{major}:{minor}"),
+    }
+}
+
+/// macOS: `e_tdev` is already a `dev_t`, and the OS ships the name table.
+///
+/// `devname(3)` is the authority here — it knows `ttys000`, `console` and the
+/// rest, which no bit-fiddling in this file would get right. It returns NULL for
+/// a device it has no name for, and the raw number is shown instead.
+#[cfg(target_os = "macos")]
+fn tty_name_platform(tty_nr: i64) -> String {
+    // SAFETY: `devname` reads a static name table; the returned pointer is either
+    // NULL or a NUL-terminated string owned by libc.
+    let ptr = unsafe { libc::devname(tty_nr as libc::dev_t, libc::S_IFCHR) };
+    if ptr.is_null() {
+        return format!("{tty_nr:#x}");
+    }
+    // SAFETY: non-null means a NUL-terminated string.
+    let name = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
+    if name.is_empty() {
+        format!("{tty_nr:#x}")
+    } else {
+        name.into_owned()
+    }
+}
+
+/// Platforms with neither a `dev_t` in `stat` nor `devname(3)`: show the value.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn tty_name_platform(tty_nr: i64) -> String {
+    tty_nr.to_string()
+}
+
+/// Wall-clock start time.
+///
+/// `starttime` means two different things per platform, and both are handled here
+/// rather than by making one backend lie:
+///
+/// * Linux stores field 22 of `/proc/<pid>/stat` — **ticks since boot**. It is the
+///   PID-reuse key, so it stays in ticks, and the wall clock is `boot + ticks/HZ`.
+/// * macOS stores `pbi_start_tvsec * 1e6` — **microseconds since the epoch**. That
+///   is already an absolute time, and adding the derived boot time again would put
+///   every process a machine-uptime in the future.
+///
+/// The platform switch is a compile-time `cfg` rather than a runtime flag because
+/// `starttime`'s units are fixed by the backend that fills it.
+fn started_at(_row: &Row, _snapshot: &SystemSnapshot) -> String {
+    let at = started_at_unix(_row, _snapshot);
+    match at {
+        Some(secs) => local_datetime(secs),
+        None => "-".to_string(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn started_at_unix(row: &Row, snapshot: &SystemSnapshot) -> Option<i64> {
+    if snapshot.clk_tck == 0 {
+        return None;
+    }
+    let start_secs = row.starttime / snapshot.clk_tck;
+    let boot = now_unix_secs().saturating_sub(snapshot.uptime);
+    Some(boot.saturating_add(start_secs) as i64)
+}
+
+/// macOS: `starttime` is already epoch microseconds, not ticks since boot.
+#[cfg(target_os = "macos")]
+fn started_at_unix(row: &Row, _snapshot: &SystemSnapshot) -> Option<i64> {
+    if row.starttime == 0 {
+        return None;
+    }
+    Some((row.starttime / 1_000_000) as i64)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn started_at_unix(_row: &Row, _snapshot: &SystemSnapshot) -> Option<i64> {
+    None
+}
+
+/// `YYYY-MM-DD HH:MM:SS` in the local time zone.
+///
+/// Reuses the civil-date arithmetic the `Date` and `Clock` meters already carry,
+/// including the DST-aware offset, so a `STARTTIME` column agrees with the clock in
+/// the header instead of silently being UTC.
+fn local_datetime(unix_secs: i64) -> String {
+    let local = unix_secs.saturating_add(local_offset_secs());
+    let days = local.div_euclid(86_400);
+    let day = local.rem_euclid(86_400);
+    let (y, mo, d) = civil_from_days(days);
+    // A sanity bound, so a bogus boot time cannot print year 16810.
+    if !(1970..=9999).contains(&y) {
+        return "-".to_string();
+    }
+    format!(
+        "{y:04}-{mo:02}-{d:02} {:02}:{:02}:{:02}",
+        day / 3600,
+        (day % 3600) / 60,
+        day % 60
+    )
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Seconds east of UTC for the local time zone, right now.
+///
+/// The same `localtime_r` round trip `meters_impl` uses, re-read on every call so
+/// a long-running gander crosses a DST boundary correctly.
+#[cfg(unix)]
+fn local_offset_secs() -> i64 {
+    let t = now_unix_secs() as libc::time_t;
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::zeroed();
+    // SAFETY: `localtime_r` writes one `struct tm` through the pointer and reads
+    // the scalar time; both are valid for the call.
+    let filled = unsafe { libc::localtime_r(&t, tm.as_mut_ptr()) };
+    if filled.is_null() {
+        return 0;
+    }
+    // SAFETY: a non-null return means the struct was filled.
+    unsafe { tm.assume_init() }.tm_gmtoff
+}
+
+#[cfg(not(unix))]
+fn local_offset_secs() -> i64 {
+    0
+}
+
+/// Howard Hinnant's `civil_from_days`: days since 1970-01-01 to Y/M/D.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (y + i64::from(m <= 2), m, d)
+}
+
+/// `sched_policy` decoded to the name `ps -o policy` prints.
+///
+/// The numbers are the kernel's `SCHED_*` constants and are the same on both
+/// platforms in the range that matters; the fallback prints the raw value rather
+/// than hiding a policy this build does not know.
+fn sched_policy_name(policy: u8) -> &'static str {
+    match policy {
+        0 => "other",
+        1 => "fifo",
+        2 => "rr",
+        3 => "batch",
+        5 => "idle",
+        6 => "deadline",
+        _ => "?",
+    }
 }
 
 fn fit(text: &str, width: usize) -> String {
@@ -2695,6 +2951,9 @@ fn draw_prompt(area: Rect, buf: &mut Buffer, theme: &Theme, input: &Input) {
 }
 
 fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
+    // Every binding that has a handler belongs here. `L`, `H`, `O`, `Z`, `b`, `s`
+    // and the navigation keys were missing, so the only way to find them was
+    // `docs/KEYS.md` — which is not on the machine the user is looking at.
     let lines = [
         "gander — keys",
         "",
@@ -2703,11 +2962,19 @@ fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  F5 t     tree view       F6 < >   sort column",
         "  F7 F8    nice -/+        F9 k     kill",
         "  Space    tag process     c        tag children",
-        "  U        untag all       I        meter mode",
-        "  K        toggle kernel threads",
+        "  U        untag all       u        user filter",
+        "  Up Down  move            PgUp PgDn  page",
+        "  Home End g G  first/last row      Left Right  scroll columns",
+        "  Tab      next tab        Shift-Tab  previous tab",
+        "  L        layout          I        meter mode",
+        "  K        toggle kernel threads   H   toggle thread rows",
+        "  O        hide containers   Shift-Left/Right  move meter cursor",
+        "  a        affinity        i        I/O priority",
         "  e        environment     w        command line",
         "  l        open files      x        file locks",
-        "  + -      faster/slower   F10 q    quit",
+        "  Z        security ctx    s        trace (explains itself)",
+        "  b        backtrace       + -      faster/slower",
+        "  F10 q    quit",
         "",
         "Filter terms are fixed strings, case-insensitive, separated by |.",
     ];
@@ -4221,9 +4488,12 @@ mod container_column_tests {
     }
 
     fn render(r: &Row, field: Field) -> String {
-        let snap = SystemSnapshot::default();
+        render_with(r, field, &SystemSnapshot::default())
+    }
+
+    fn render_with(r: &Row, field: Field, snap: &SystemSnapshot) -> String {
         let mut users = gander_core::users::Users::new();
-        render_field(r, field, &snap, &mut users)
+        render_field(r, field, snap, &mut users)
     }
 
     #[test]
@@ -4651,9 +4921,12 @@ mod m3_column_tests {
     use gander_core::system::SystemSnapshot;
 
     fn render(r: &Row, field: Field) -> String {
-        let snap = SystemSnapshot::default();
+        render_with(r, field, &SystemSnapshot::default())
+    }
+
+    fn render_with(r: &Row, field: Field, snap: &SystemSnapshot) -> String {
         let mut users = gander_core::users::Users::new();
-        render_field(r, field, &snap, &mut users)
+        render_field(r, field, snap, &mut users)
     }
 
     fn row_with_memory(pss: u64, epss: u64, private: u64, swap: u64) -> Row {
@@ -4834,4 +5107,271 @@ mod m3_column_tests {
         assert!(text.contains("2.0M"), "pss value missing:\n{text}");
         assert!(text.contains("12.5"), "gpu value missing:\n{text}");
     }
+}
+
+#[cfg(test)]
+mod no_silent_key_tests {
+    use super::*;
+    use gander_config::Config;
+    use gander_core::row::Row;
+
+    /// One app holding `n` rows, sampled once so `selected_row` resolves.
+    fn app_with_n_rows(n: u32) -> App {
+        let rows: Vec<Row> = (1..=n)
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.comm.try_push_str("proc").unwrap();
+                r.cmdline = Some(format!("proc {pid}").into());
+                r.exe = Some("/bin/proc".into());
+                r
+            })
+            .collect();
+        let mut app = App::new(Config::default());
+        app.apply_sample(gander_core::system::SystemSnapshot::default(), rows);
+        app
+    }
+
+    /// `s` used to have no handler at all.
+    ///
+    /// Both `docs/KEYS.md` and `docs/DESIGN.md` advertised it, and `handle_list_key`
+    /// did not match it, so pressing it did nothing — no screen, no status line, no
+    /// error. `Z` and `b` had explanation screens precisely to avoid that, which is
+    /// what made the omission easy to miss.
+    #[test]
+    fn s_opens_an_explanation_instead_of_nothing() {
+        let mut app = app_with_n_rows(1);
+        app.handle_key(Key::Char('s'));
+        match &app.screen {
+            Screen::Info { title, lines, .. } => {
+                assert!(title.to_lowercase().contains("trace"), "got {title}");
+                let text = lines.join("\n");
+                assert!(
+                    text.contains("strace"),
+                    "the screen must name the tool it is about:\n{text}"
+                );
+                // A bare "not implemented" is the message that teaches nothing;
+                // the screen has to say what the work is and what to do instead.
+                assert!(
+                    text.contains("terminal") && text.contains("-p "),
+                    "the screen must explain the obstacle and the workaround:\n{text}"
+                );
+            }
+            other => panic!("expected an info screen, got {other:?}"),
+        }
+    }
+
+    /// A key with no handler is invisible; this asserts the ones the help screen
+    /// advertises actually do something.
+    #[test]
+    fn every_advertised_info_key_opens_a_screen() {
+        for (key, want) in [
+            (Key::Char('e'), "environment"),
+            (Key::Char('w'), "command"),
+            (Key::Char('l'), "file"),
+            (Key::Char('x'), "lock"),
+            (Key::Char('Z'), "security"),
+            (Key::Char('b'), "backtrace"),
+            (Key::Char('s'), "trace"),
+        ] {
+            let mut app = app_with_n_rows(1);
+            app.handle_key(key);
+            match &app.screen {
+                Screen::Info { title, .. } => assert!(
+                    title.to_lowercase().contains(want),
+                    "{key:?} opened {title:?}, expected something about {want}"
+                ),
+                other => panic!("{key:?} opened {other:?}, expected an info screen"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod newly_reachable_column_tests {
+    use super::*;
+    use gander_core::row::Row;
+    use gander_core::system::SystemSnapshot;
+
+    fn render(r: &Row, field: Field) -> String {
+        render_with(r, field, &SystemSnapshot::default())
+    }
+
+    fn render_with(r: &Row, field: Field, snap: &SystemSnapshot) -> String {
+        let mut users = gander_core::users::Users::new();
+        render_field(r, field, snap, &mut users)
+    }
+
+    fn row(pid: u32) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.comm.try_push_str("nginx").unwrap();
+        r.cmdline = Some("nginx -g daemon off;".into());
+        r.exe = Some("/usr/sbin/nginx".into());
+        r
+    }
+
+    /// Rendering the raw integer would print `34816` for `/dev/pts/0`, which is not
+    /// a terminal name anyone recognises. What the integer *means* differs per
+    /// platform — Linux encodes a `dev_t`, macOS already has one — so the names
+    /// differ too, but no platform may print a bare number for a real terminal.
+    #[test]
+    fn tty_renders_a_name_not_a_raw_number() {
+        // No controlling terminal on either platform: `ps` prints `?`.
+        let mut r = row(1);
+        r.tty_nr = 0;
+        assert_eq!(render(&r, Field::Tty), "?");
+
+        #[cfg(target_os = "linux")]
+        {
+            // `pts/0` is major 136, minor 0 → (136 << 8) | 0 = 34816.
+            r.tty_nr = 136 << 8;
+            assert_eq!(render(&r, Field::Tty), "pts/0");
+
+            // `pts/12`: minor 12.
+            r.tty_nr = (136 << 8) | 12;
+            assert_eq!(render(&r, Field::Tty), "pts/12");
+
+            // `tty1` on the console: major 4, minor 1.
+            r.tty_nr = (4 << 8) | 1;
+            assert_eq!(render(&r, Field::Tty), "tty1");
+
+            // An unknown major renders `major:minor` rather than a made-up path.
+            r.tty_nr = (200 << 8) | 3;
+            assert_eq!(render(&r, Field::Tty), "200:3");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // `ttys000` is dev_t 0x1000_0000 on Darwin, and `devname(3)` is the
+            // authority on the spelling.
+            r.tty_nr = 0x1000_0000;
+            assert_eq!(render(&r, Field::Tty), "ttys000");
+            r.tty_nr = 0x1000_0002;
+            assert_eq!(render(&r, Field::Tty), "ttys002");
+        }
+    }
+
+    /// `-1` is the kernel's "no foreground job", not a process group. Printing it
+    /// as a number would look like a real group id.
+    #[test]
+    fn tpgid_renders_a_dash_for_no_foreground_job() {
+        let mut r = row(1);
+        r.tpgid = -1;
+        assert_eq!(render(&r, Field::Tpgid), "-");
+
+        r.tpgid = 4242;
+        assert_eq!(render(&r, Field::Tpgid), "4242");
+    }
+
+    /// `0` is the "unknown session" sentinel, which `getsid` returns for another
+    /// user's process. A session id of zero does not exist.
+    #[test]
+    fn session_renders_a_dash_when_unknown() {
+        let mut r = row(1);
+        r.session = 0;
+        assert_eq!(render(&r, Field::Session), "-");
+
+        r.session = 1234;
+        assert_eq!(render(&r, Field::Session), "1234");
+    }
+
+    /// The three path/name columns have to distinguish "path known" from "not
+    /// read", the same rule the PSS family follows.
+    #[test]
+    fn identity_columns_show_a_dash_when_unreadable() {
+        let mut r = row(1);
+        r.exe = None;
+        r.cwd = None;
+        assert_eq!(render(&r, Field::ProcExe), "-");
+        assert_eq!(render(&r, Field::Cwd), "-");
+
+        r.exe = Some("/usr/sbin/nginx".into());
+        r.cwd = Some("/etc/nginx".into());
+        assert_eq!(render(&r, Field::ProcExe), "/usr/sbin/nginx");
+        assert_eq!(render(&r, Field::Cwd), "/etc/nginx");
+
+        // PROC_COMM is the kernel's short name, which is always present.
+        assert_eq!(render(&r, Field::ProcComm), "nginx");
+    }
+
+    /// The rendered form is `YYYY-MM-DD HH:MM:SS` in **local** time, so it agrees
+    /// with the `Clock` in the header rather than silently being UTC.
+    ///
+    /// `starttime` means different things per platform, which is why the expected
+    /// value is derived per platform rather than shared.
+    #[test]
+    fn starttime_renders_a_local_timestamp() {
+        let mut r = row(1);
+
+        #[cfg(target_os = "linux")]
+        {
+            // Ticks since boot: 600 s at 100 Hz, on a machine up 3600 s.
+            let snap = SystemSnapshot {
+                clk_tck: 100,
+                uptime: 3600,
+                ..Default::default()
+            };
+            r.starttime = 60_000;
+            let text = super::started_at(&r, &snap);
+            assert_eq!(text.len(), 19, "YYYY-MM-DD HH:MM:SS, got {text:?}");
+            let expected = super::local_datetime(super::now_unix_secs() as i64 - 3000);
+            assert_eq!(text, expected);
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // Epoch microseconds — already absolute, no boot-time shift applies.
+            let at = 1_700_000_000i64;
+            r.starttime = (at as u64) * 1_000_000;
+            let text = super::started_at(&r, &SystemSnapshot::default());
+            assert_eq!(text, super::local_datetime(at));
+            assert_ne!(
+                text,
+                super::local_datetime(at + 3600),
+                "the boot time must not be added a second time"
+            );
+        }
+    }
+
+    /// A start time that cannot be resolved must not print a date before the epoch.
+    #[test]
+    fn starttime_does_not_invent_a_date() {
+        let mut r = row(1);
+
+        #[cfg(target_os = "linux")]
+        {
+            let snap = SystemSnapshot {
+                clk_tck: 0,
+                ..Default::default()
+            };
+            r.starttime = 12_345;
+            assert_eq!(render_with(&r, Field::StartTime, &snap), "-");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // A process row whose `starttime` was never filled in.
+            r.starttime = 0;
+            assert_eq!(render_with(&r, Field::StartTime, &SystemSnapshot::default()), "-");
+        }
+    }
+
+    #[test]
+    fn sched_policy_is_named_not_numeric() {
+        let mut r = row(1);
+        r.sched_policy = 0;
+        assert_eq!(render(&r, Field::SchedPolicy), "other");
+        r.sched_policy = 1;
+        assert_eq!(render(&r, Field::SchedPolicy), "fifo");
+        r.sched_policy = 2;
+        assert_eq!(render(&r, Field::SchedPolicy), "rr");
+        r.sched_policy = 3;
+        assert_eq!(render(&r, Field::SchedPolicy), "batch");
+        r.sched_policy = 5;
+        assert_eq!(render(&r, Field::SchedPolicy), "idle");
+        r.sched_policy = 6;
+        assert_eq!(render(&r, Field::SchedPolicy), "deadline");
+        r.sched_policy = 200;
+        assert_eq!(render(&r, Field::SchedPolicy), "?");
+    }
+
 }

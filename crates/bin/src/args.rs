@@ -138,9 +138,13 @@ KEYS (in the TUI):
     L        layout      H      threads      K      kernel threads
     O        containers  I      meter mode   + -    speed
     Space    tag         c      tag children U      untag all
+    Tab      next tab    Shift-Tab  prev tab  u      user filter
+    Up Down  move        PgUp PgDn  page
+    Home End g G  first / last row     Left Right  scroll columns
     a        affinity    i      I/O priority
     e        env         w      command line l      open files
-    x        locks
+    x        locks       Z      security ctx s      trace (explains itself)
+                                               b      backtrace (ditto)
 
     Note: htop's I inverts the sort order; here it cycles the meter mode.
     Use F6 / < > / . to change the sort. See docs/KEYS.md.
