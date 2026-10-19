@@ -452,8 +452,10 @@ impl Msg {
         self.buf.extend_from_slice(&len.to_ne_bytes());
         self.buf.extend_from_slice(&kind.to_ne_bytes());
         self.buf.extend_from_slice(value);
-        // Netlink attributes are 4-byte aligned.
-        while self.buf.len() % 4 != 0 {
+        // Netlink attributes are 4-byte aligned. `is_multiple_of` rather than
+        // `% 4 != 0`: clippy's `manual_is_multiple_of` is in the workspace's lint
+        // set, and CI runs a newer toolchain than the MSRV.
+        while !self.buf.len().is_multiple_of(4) {
             self.buf.push(0);
         }
     }
