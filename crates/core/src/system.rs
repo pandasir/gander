@@ -369,6 +369,92 @@ pub struct SwapInfo {
     pub used: u64,
 }
 
+/// Host-wide network byte counters, cumulative since boot.
+///
+/// Loopback is excluded by both backends: `lo` traffic never reaches a wire, and
+/// counting it would both inflate the figure and double every byte (once as
+/// received, once as transmitted). A container or a busy local database would
+/// otherwise report hundreds of MB/s of "network" while the NIC is idle.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct NetCounters {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+impl NetCounters {
+    /// Counter delta against an earlier sample, saturating on reset.
+    ///
+    /// A counter can go *backwards*: an interface is destroyed and recreated, or
+    /// the kernel wraps the counter on 32-bit `if_data`. Reporting a negative
+    /// rate (or a 4 GiB spike) for one tick is worse than reporting zero, so a
+    /// decreasing counter contributes nothing.
+    pub fn delta(&self, prev: &NetCounters) -> NetCounters {
+        NetCounters {
+            rx_bytes: self.rx_bytes.saturating_sub(prev.rx_bytes),
+            tx_bytes: self.tx_bytes.saturating_sub(prev.tx_bytes),
+        }
+    }
+
+    /// Bytes per second between two samples `secs` apart.
+    pub fn per_sec(&self, prev: &NetCounters, secs: f64) -> Rate {
+        let d = self.delta(prev);
+        Rate::from_bytes(d.rx_bytes, d.tx_bytes, secs)
+    }
+}
+
+/// Host-wide disk byte counters, cumulative since boot.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct DiskCounters {
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+}
+
+impl DiskCounters {
+    pub fn delta(&self, prev: &DiskCounters) -> DiskCounters {
+        DiskCounters {
+            read_bytes: self.read_bytes.saturating_sub(prev.read_bytes),
+            write_bytes: self.write_bytes.saturating_sub(prev.write_bytes),
+        }
+    }
+
+    pub fn per_sec(&self, prev: &DiskCounters, secs: f64) -> Rate {
+        let d = self.delta(prev);
+        Rate::from_bytes(d.read_bytes, d.write_bytes, secs)
+    }
+}
+
+/// A throughput in bytes per second, split into its two directions.
+///
+/// Kept as `f64` rather than `u64` because a 1.5 s interval divides a small
+/// delta into a fraction; truncating there made a steady 3 B/s read show as
+/// alternating 0 and 6.
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
+pub struct Rate {
+    /// Received (net) or read (disk).
+    pub inbound: f64,
+    /// Transmitted (net) or written (disk).
+    pub outbound: f64,
+}
+
+impl Rate {
+    fn from_bytes(inbound: u64, outbound: u64, secs: f64) -> Self {
+        if secs <= 0.0 || secs.is_nan() {
+            // First sample: there is no interval to divide by. Zero, not NaN, so
+            // a meter never has to special-case its first frame.
+            return Self::default();
+        }
+        Self {
+            inbound: inbound as f64 / secs,
+            outbound: outbound as f64 / secs,
+        }
+    }
+
+    /// Combined throughput, for scaling a single bar or graph.
+    pub fn total(&self) -> f64 {
+        self.inbound + self.outbound
+    }
+}
+
 /// One immutable sample handed from the sampler thread to the renderer.
 #[derive(Clone, Debug)]
 pub struct SystemSnapshot {
@@ -383,6 +469,14 @@ pub struct SystemSnapshot {
     pub uptime: u64,
     pub clk_tck: u64,
     pub page_size: u64,
+    /// Cumulative host network counters, loopback excluded.
+    pub net: NetCounters,
+    /// Throughput against the previous sample. Zero on the first sample.
+    pub net_rate: Rate,
+    /// Cumulative host disk counters.
+    pub disk: DiskCounters,
+    /// Throughput against the previous sample. Zero on the first sample.
+    pub disk_rate: Rate,
     /// Filled in by the sampler once the process table has been read.
     pub tasks: TaskStats,
 }
@@ -399,6 +493,10 @@ impl Default for SystemSnapshot {
             uptime: 0,
             clk_tck: 100,
             page_size: 4096,
+            net: NetCounters::default(),
+            net_rate: Rate::default(),
+            disk: DiskCounters::default(),
+            disk_rate: Rate::default(),
             tasks: TaskStats::default(),
         }
     }

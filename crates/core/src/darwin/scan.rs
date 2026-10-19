@@ -485,9 +485,122 @@ pub fn swap_usage() -> crate::system::SwapInfo {
     }
 }
 
+/// Host-wide network byte counters from `sysctl(NET_RT_IFLIST2)`.
+///
+/// # Why not `getifaddrs`
+///
+/// `getifaddrs` works and is what most code uses, but on 64-bit Darwin it hands
+/// back `struct if_data`, whose `ifi_ibytes` / `ifi_obytes` are **32-bit**. A
+/// machine that has moved more than 4 GiB wraps those counters constantly, and
+/// the wrap is indistinguishable from a genuine counter reset, so the meter
+/// would spike to zero every few seconds on any active link.
+///
+/// `NET_RT_IFLIST2` returns `if_msghdr2` with a `struct if_data64` — 64-bit
+/// counters, no wrap. It is a routing-socket dump, so the reply is a sequence of
+/// variable-length messages that have to be walked by `ifm_msglen`, not a flat
+/// array. A zero `ifm_msglen` would loop forever, so it is treated as the end.
+///
+/// Loopback is skipped for the same reason as on Linux: it never reaches a wire.
+pub fn net_counters() -> crate::system::NetCounters {
+    let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
+
+    // Size first. The routing table changes between calls, so a short reply is
+    // retried rather than truncated.
+    let mut len: usize = 0;
+    // SAFETY: a null buffer with a zero length is the documented way to ask for
+    // the size of the reply.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || len == 0 {
+        return crate::system::NetCounters::default();
+    }
+
+    for _ in 0..4 {
+        // Headroom: interfaces can be added between the size query and the read.
+        let mut buf = vec![0u8; len + 1024];
+        let mut got = buf.len();
+        // SAFETY: the buffer is `got` bytes and `got` is passed as its length.
+        let rc = unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                mib.len() as u32,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut got,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc != 0 {
+            return crate::system::NetCounters::default();
+        }
+        if got >= buf.len() {
+            // Filled the buffer exactly: the reply was truncated, retry larger.
+            len = got;
+            continue;
+        }
+        buf.truncate(got);
+        return parse_iflist2(&buf);
+    }
+    crate::system::NetCounters::default()
+}
+
+/// Walk the `NET_RT_IFLIST2` reply, summing the non-loopback interfaces.
+fn parse_iflist2(buf: &[u8]) -> crate::system::NetCounters {
+    let mut out = crate::system::NetCounters::default();
+    let mut offset = 0usize;
+
+    while offset + std::mem::size_of::<libc::if_msghdr2>() <= buf.len() {
+        // The messages are packed and *unaligned*: `if_msghdr2` is declared
+        // `repr(packed(4))`, and consecutive messages are not 8-byte aligned. A
+        // direct reference would be UB on a strict-alignment target, so copy it
+        // out instead of casting.
+        let mut hdr = std::mem::MaybeUninit::<libc::if_msghdr2>::uninit();
+        // SAFETY: `offset + size_of::<if_msghdr2>() <= buf.len()` is the loop
+        // condition, so the copy stays inside the buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                buf.as_ptr().add(offset),
+                hdr.as_mut_ptr().cast::<u8>(),
+                std::mem::size_of::<libc::if_msghdr2>(),
+            );
+        }
+        // SAFETY: every byte was initialised by the copy above.
+        let hdr = unsafe { hdr.assume_init() };
+
+        let msglen = hdr.ifm_msglen as usize;
+        if msglen == 0 {
+            break; // malformed; stop rather than spin
+        }
+
+        // Only interface-info messages carry the counters; the reply also
+        // contains address and other messages that must simply be skipped.
+        if hdr.ifm_type == libc::RTM_IFINFO2 as u8 {
+            // The packed struct's field reads are fine; taking a *reference* to
+            // one would not be.
+            let data = hdr.ifm_data;
+            let loopback = hdr.ifm_flags & libc::IFF_LOOPBACK != 0;
+            if !loopback {
+                out.rx_bytes = out.rx_bytes.saturating_add(data.ifi_ibytes);
+                out.tx_bytes = out.tx_bytes.saturating_add(data.ifi_obytes);
+            }
+        }
+
+        offset = offset.saturating_add(msglen);
+    }
+
+    out
+}
+
 /// Memory page size reported by the VM subsystem.
-pub fn page_size() -> u64 {
-    // SAFETY: plain static, initialised by dyld.
+pub fn page_size() -> u64 {    // SAFETY: plain static, initialised by dyld.
     let v = unsafe { libc::vm_page_size };
     if v > 0 {
         v as u64

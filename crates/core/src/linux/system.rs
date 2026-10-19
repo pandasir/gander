@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::row::{CpuTicks, Row, RowFlags};
-use crate::system::{CpuTimes, MemInfo, SwapInfo, SystemSnapshot};
+use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo, SystemSnapshot};
 use crate::table::Cache;
 use crate::Pid;
 
@@ -33,6 +33,13 @@ pub struct Sampler {
     prev_cpu: Vec<CpuTimes>,
     /// Minimum per-process state needed for the next tick's delta.
     prev_rows: HashMap<Pid, PrevRow>,
+    /// Previous host counters, for the network/disk throughput meters.
+    ///
+    /// Held as `Option` so the first sample can tell "no previous sample" from
+    /// "a previous sample that happened to be zero", which decides whether a
+    /// rate is meaningful or is simply 0 B/s.
+    prev_net: Option<(NetCounters, std::time::Instant)>,
+    prev_disk: Option<(DiskCounters, std::time::Instant)>,
     pub use_rayon: bool,
     /// Whether to emit one row per thread in addition to one per process.
     ///
@@ -57,6 +64,8 @@ impl Sampler {
             cache: Cache::new(),
             prev_cpu: Vec::new(),
             prev_rows: HashMap::new(),
+            prev_net: None,
+            prev_disk: None,
             use_rayon: true,
             show_threads: false,
         }
@@ -88,6 +97,25 @@ impl Sampler {
         let load = scan::read_loadavg(&self.root).unwrap_or([0.0; 3]);
         let uptime = scan::read_uptime(&self.root).unwrap_or(0);
 
+        // Network and disk throughput. Both are cumulative counters, so the rate
+        // needs the previous sample *and* the interval between the two; the
+        // interval is measured here rather than taken from the config, because a
+        // slow scan makes the real gap longer than the configured delay.
+        let net = scan::read_net_counters(&self.root);
+        let disk = scan::read_disk_counters(&self.root);
+        let net_rate = match self.prev_net {
+            Some((prev, at_prev)) => net.per_sec(&prev, at.duration_since(at_prev).as_secs_f64()),
+            None => crate::system::Rate::default(),
+        };
+        let disk_rate = match self.prev_disk {
+            Some((prev, at_prev)) => {
+                disk.per_sec(&prev, at.duration_since(at_prev).as_secs_f64())
+            }
+            None => crate::system::Rate::default(),
+        };
+        self.prev_net = Some((net, at));
+        self.prev_disk = Some((disk, at));
+
         let pids = scan::list_pids(&self.root).unwrap_or_default();
         let mut rows = self.read_rows(&pids, &cpu_delta, uptime, mem.total);
         if self.show_threads {
@@ -116,6 +144,10 @@ impl Sampler {
             uptime,
             clk_tck: self.clk_tck,
             page_size: self.page_size,
+            net,
+            net_rate,
+            disk,
+            disk_rate,
             tasks: task_stats(&rows),
         };
         (snapshot, rows)

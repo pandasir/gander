@@ -73,6 +73,11 @@ pub struct Sampler {
     prev_threads: HashMap<(Pid, u64), PrevThread>,
     prev_cpu: Vec<CpuTimes>,
     prev_at: Option<Instant>,
+    /// Previous host network counters, for the throughput meter.
+    ///
+    /// macOS has no host-wide disk byte counter reachable without IOKit, so
+    /// there is no `prev_disk`; see `docs/PORTABILITY.md`.
+    prev_net: Option<(crate::system::NetCounters, Instant)>,
     page_size: u64,
     cpu_count: usize,
     /// Whether to emit one row per thread in addition to one per process.
@@ -94,6 +99,7 @@ impl Sampler {
             prev_threads: HashMap::new(),
             prev_cpu: Vec::new(),
             prev_at: None,
+            prev_net: None,
             page_size: scan::page_size(),
             cpu_count,
             show_threads: false,
@@ -148,6 +154,15 @@ impl PlatformSampler for Sampler {
         let uptime = scan::uptime_secs();
         let now_secs = scan::now_secs();
 
+        // Network throughput. Cumulative counters, so the rate needs the
+        // previous sample and the interval measured between the two reads.
+        let net = scan::net_counters();
+        let net_rate = match self.prev_net {
+            Some((prev, at_prev)) => net.per_sec(&prev, at.duration_since(at_prev).as_secs_f64()),
+            None => crate::system::Rate::default(),
+        };
+        self.prev_net = Some((net, at));
+
         // --- processes -------------------------------------------------------
         // `KERN_PROC_ALL` sees every process; `proc_pidinfo` cannot. If the
         // layout self-check fails, fall back to the libproc-only path rather
@@ -188,6 +203,14 @@ impl PlatformSampler for Sampler {
             uptime,
             clk_tck: 100,
             page_size: self.page_size,
+            net,
+            net_rate,
+            // macOS exposes no host-wide disk byte counters without IOKit, and
+            // the design forbids a vendor SDK. The per-process `rusage` figures
+            // exist and are summed separately if a disk meter is ever wanted
+            // here; a host-wide one would double-count shared I/O.
+            disk: crate::system::DiskCounters::default(),
+            disk_rate: crate::system::Rate::default(),
             tasks: task_stats(&rows),
         };
         (snapshot, rows)

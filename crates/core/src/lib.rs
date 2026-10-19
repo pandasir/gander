@@ -103,6 +103,13 @@ pub mod capability {
     /// Per-process disk I/O counters are available.
     pub const PROC_IO: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
+    /// Host-wide disk byte counters are available (`/proc/diskstats`).
+    ///
+    /// Linux only: macOS exposes per-process `rusage` figures but no host-wide
+    /// byte counter that avoids IOKit, and the design forbids a vendor SDK. The
+    /// `DiskIO` meter says so instead of drawing a permanent zero.
+    pub const HOST_DISK_IO: bool = cfg!(target_os = "linux");
+
     /// Threads can be enumerated as rows.
     pub const THREADS: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 

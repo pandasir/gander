@@ -267,3 +267,117 @@ fn process_actions_are_available() {
         Ok(()) => panic!("signalling a non-existent pid should fail"),
     }
 }
+
+/// The host network counters must match `/proc/net/dev` read independently.
+///
+/// The trap this pins down: the interface name and the first counter share a
+/// colon-separated field (`eth0:1234`), so a parser that splits on whitespace
+/// first drops the receive byte count and reports a plausible-looking but wrong
+/// number. Loopback must also be excluded, or every local byte is counted twice.
+#[test]
+fn network_counters_match_proc_net_dev() {
+    let text = std::fs::read_to_string("/proc/net/dev").expect("/proc/net/dev");
+    let (mut rx, mut tx) = (0u64, 0u64);
+    for line in text.lines() {
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || name == "lo" {
+            continue;
+        }
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        // 0 = rx bytes, 8 = tx bytes.
+        rx += fields.first().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+        tx += fields.get(8).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    }
+
+    let got = gander_core::linux::scan::read_net_counters(std::path::Path::new("/proc"));
+    // Read again after: traffic happens between the two reads, so the gander
+    // figure is a lower bound for the direct one.
+    assert!(
+        got.rx_bytes >= rx && got.tx_bytes >= tx,
+        "gander rx/tx {}/{} is below the direct read {}/{}",
+        got.rx_bytes,
+        got.tx_bytes,
+        rx,
+        tx
+    );
+    // But not by an order of magnitude: that would mean loopback leaked in.
+    let slack = |a: u64, b: u64| a.saturating_sub(b) <= (b / 4).max(4 * 1024 * 1024);
+    assert!(slack(got.rx_bytes, rx), "rx {} vs {}", got.rx_bytes, rx);
+    assert!(slack(got.tx_bytes, tx), "tx {} vs {}", got.tx_bytes, tx);
+}
+
+/// Disk counters must match `/proc/diskstats` for whole disks only.
+///
+/// Summing partitions as well doubles every byte, so the direct read here applies
+/// the same `/sys/block` test the sampler does, and then asserts the sampler
+/// agrees with it.
+#[test]
+fn disk_counters_match_proc_diskstats() {
+    let Ok(text) = std::fs::read_to_string("/proc/diskstats") else {
+        return; // no block devices in this sandbox
+    };
+    let (mut read, mut written) = (0u64, 0u64);
+    let mut disks = 0usize;
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 14 {
+            continue;
+        }
+        let name = fields[2];
+        if !std::path::Path::new("/sys/block").join(name).is_dir() {
+            continue;
+        }
+        disks += 1;
+        read += fields[5].parse::<u64>().unwrap_or(0) * 512;
+        written += fields[9].parse::<u64>().unwrap_or(0) * 512;
+    }
+
+    let got = gander_core::linux::scan::read_disk_counters(std::path::Path::new("/proc"));
+    if disks == 0 {
+        // Nothing to compare against; the reader must still not panic.
+        assert_eq!(got.read_bytes, 0);
+        return;
+    }
+    // Same read-again slack as the network test: a busy disk moves on.
+    let slack = (read / 20).max(64 * 1024 * 1024);
+    assert!(
+        got.read_bytes.abs_diff(read) <= slack,
+        "read {} vs {}",
+        got.read_bytes,
+        read
+    );
+    assert!(
+        got.write_bytes.abs_diff(written) <= slack,
+        "written {} vs {}",
+        got.write_bytes,
+        written
+    );
+}
+
+/// Two samples a second apart must produce a finite, non-negative rate, and the
+/// first sample must report zero rather than a meaningless counter-since-boot
+/// divided by an unknown interval.
+#[test]
+fn throughput_rates_are_meaningful_after_two_samples() {
+    let mut sampler = gander_core::Sampler::default();
+    let (first, _) = sampler.sample();
+    assert_eq!(
+        first.net_rate.total(),
+        0.0,
+        "the first sample has no interval to divide by"
+    );
+    assert_eq!(first.disk_rate.total(), 0.0);
+
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let (second, _) = sampler.sample();
+    for rate in [second.net_rate, second.disk_rate] {
+        assert!(rate.inbound.is_finite() && rate.inbound >= 0.0, "{rate:?}");
+        assert!(rate.outbound.is_finite() && rate.outbound >= 0.0, "{rate:?}");
+    }
+    // The cumulative counters never go backwards on a live machine.
+    assert!(second.net.rx_bytes >= first.net.rx_bytes);
+    assert!(second.disk.read_bytes >= first.disk.read_bytes);
+}

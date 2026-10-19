@@ -257,6 +257,44 @@ pub fn is_same_process(root: &Path, pid: Pid, starttime: u64) -> bool {
         .unwrap_or(false)
 }
 
+/// Read host-wide network counters from `/proc/net/dev`.
+///
+/// Missing on a system with no networking at all; that is reported as zeroes
+/// rather than as an error, because the meter should show `0 B/s`, not vanish.
+pub fn read_net_counters(root: &Path) -> crate::system::NetCounters {
+    let mut path = PathBuf::from(root);
+    path.push("net");
+    path.push("dev");
+    with_file(path.as_os_str().as_bytes(), super::parse::parse_net_dev).unwrap_or_default()
+}
+
+/// Read host-wide disk counters from `/proc/diskstats`.
+///
+/// The authoritative "is this a whole disk" test is the presence of
+/// `/sys/block/<name>`; it is consulted per device, because `/proc/diskstats`
+/// mixes disks and partitions in one file. When `/sys` is not readable (a
+/// fixture tree, a container) the name heuristic is used instead.
+pub fn read_disk_counters(root: &Path) -> crate::system::DiskCounters {
+    // `root` is `/proc`; sysfs lives beside it at `/sys` for the live tree. A
+    // fixture root has neither, and the heuristic covers that case.
+    let sys_block = root
+        .parent()
+        .map(|p| p.join("sys/block"))
+        .filter(|p| p.is_dir());
+
+    let mut path = PathBuf::from(root);
+    path.push("diskstats");
+    with_file(path.as_os_str().as_bytes(), |b| {
+        super::parse::parse_diskstats(b, |name| match &sys_block {
+            Some(dir) => dir
+                .join(std::ffi::OsStr::from_bytes(name))
+                .is_dir(),
+            None => super::parse::looks_like_whole_disk(name),
+        })
+    })
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
