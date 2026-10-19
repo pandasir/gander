@@ -32,6 +32,11 @@ pub struct Config {
     pub highlight_base_name: bool,
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
+    /// Maximum number of cores rendered in the `panels` system column's
+    /// per-core grid. `0` means "no cap": render every core. Defaults to `64`,
+    /// enough for the grid no longer to dominate the column on machines we
+    /// tested on; raise it if you run gander on a box with 128 logical CPUs.
+    pub system_cores_max: usize,
 }
 
 /// One header meter, with its own display mode.
@@ -116,6 +121,7 @@ impl Default for Config {
             highlight_base_name: false,
             highlight_deleted_exe: true,
             color_scheme: "gander".into(),
+            system_cores_max: 64,
         }
     }
 }

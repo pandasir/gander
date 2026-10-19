@@ -1478,6 +1478,7 @@ impl App {
                     self.snapshot.tasks.running,
                     self.snapshot.tasks.threads,
                 ),
+                self.config.system_cores_max,
             );
             draw_panel_divider(columns[0], buf, &self.theme);
         }

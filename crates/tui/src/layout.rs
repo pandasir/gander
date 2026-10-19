@@ -122,6 +122,7 @@ pub fn draw_system_column(
     snapshot: &SystemSnapshot,
     cpu_history: &[f32],
     tasks: (usize, usize, usize),
+    cores_max: usize,
 ) {
     if area.width < 12 || area.height < 4 {
         return;
@@ -143,8 +144,14 @@ pub fn draw_system_column(
     );
 
     // Per-core sparkline grid: one cell per core, coloured by load, four rows
-    // maximum so a 64-core machine still leaves room for the table.
-    let cores = snapshot.cpu_count().min(64);
+    // maximum so a 64-core machine still leaves room for the table. The cap is
+    // configurable (`Config::system_cores_max`); `0` renders every core so a
+    // 128-core box can still be inspected in full.
+    let cores = if cores_max == 0 {
+        snapshot.cpu_count()
+    } else {
+        snapshot.cpu_count().min(cores_max)
+    };
     if cores > 0 && y + 1 < bottom {
         y += 1;
         put_str(buf, inner.x, y, &format!("{cores} cores"), theme.meter_label, inner.width);
@@ -700,7 +707,7 @@ mod tests {
             let s = snap(8);
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| {
-                draw_system_column(f.area(), f.buffer_mut(), &Theme::default(), &s, &[0.1, 0.5], (10, 2, 30))
+                draw_system_column(f.area(), f.buffer_mut(), &Theme::default(), &s, &[0.1, 0.5], (10, 2, 30), 64)
             })
             .unwrap();
         }
