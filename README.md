@@ -16,9 +16,9 @@ of on horizontal bars.
 [Releases page](https://github.com/pandasir/gander/releases):
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.3.1-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.3.1-aarch64-apple-darwin.tar.gz
-./gander-0.3.1-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.4.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.4.0-aarch64-apple-darwin.tar.gz
+./gander-0.4.0-aarch64-apple-darwin/gander
 ```
 
 Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel

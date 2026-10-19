@@ -307,9 +307,10 @@ is not a container id, and printing one would look like an answer.
 
 ## M3 — Linux depth
 
-In progress. Four of the five items are done; delay accounting is the remainder and
-stays last, because it needs raw `TASKSTATS` netlink and the payoff is small next
-to the four that landed.
+Shipped in v0.4.0. Four of the five items are done; delay accounting is the
+remainder and stays last, because it needs raw `TASKSTATS` netlink and the payoff is
+small next to the four that landed. It is the only unchecked item in the table and
+the milestone is otherwise closed.
 
 | Area | State |
 |---|---|
