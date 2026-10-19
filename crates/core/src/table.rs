@@ -25,6 +25,18 @@ pub struct Stable {
     pub uid: u32,
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// Whether the executable has been replaced or deleted on disk.
+    ///
+    /// Linux exposes this in the `/proc/<pid>/exe` symlink target itself: once the
+    /// file backing a running process is unlinked or replaced, the kernel appends
+    /// ` (deleted)` to the target. That is the only signal available — comparing
+    /// mtimes would need the path to still exist, which is exactly what deleting
+    /// it removes.
+    ///
+    /// Cached with the identity because the flag cannot change without the
+    /// process's exe being replaced, and re-reading the link per frame would be
+    /// thousands of syscalls a second for a value that almost never changes.
+    pub exe_deleted: bool,
     /// The cgroup *path*, not the raw `/proc/<pid>/cgroup` line.
     pub cgroup: Option<Box<str>>,
     /// The container's id, and the runtime that owns it.
@@ -91,10 +103,16 @@ pub struct Sort {
 }
 
 impl Default for Sort {
+    /// PID ascending, matching the shipped config default.
+    ///
+    /// Kept in step with `Config::default()` deliberately: a `ProcTable` built
+    /// without an explicit sort (tests, and any future front end) should present
+    /// the same stable order the TUI does, not silently fall back to CPU% and
+    /// reintroduce the reshuffling this default exists to avoid.
     fn default() -> Self {
         Sort {
-            field: crate::row::Field::PercentCpu,
-            dir: Dir::Desc,
+            field: crate::row::Field::Pid,
+            dir: Dir::Asc,
         }
     }
 }
@@ -228,7 +246,7 @@ pub fn find_next(rows: &[Row], order: &[usize], from: usize, needle: &str) -> Op
 ///
 /// Kept in one place so the table, the tree view and any future export all agree
 /// on what "visible" means.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Visibility {
     /// Command-line terms from `F4`.
     pub text: Option<Filter>,
@@ -238,6 +256,29 @@ pub struct Visibility {
     pub show_kernel_threads: bool,
     /// Whether thread rows are shown (from `H`).
     pub show_userland_threads: bool,
+    /// Whether processes inside a container are shown (htop's `O`).
+    ///
+    /// Linux-only in effect: `Row::container` is only ever set there, so on macOS
+    /// this is a no-op rather than a key that silently hides everything.
+    pub show_containerised: bool,
+}
+
+impl Default for Visibility {
+    /// Everything visible.
+    ///
+    /// Written out rather than derived: `derive(Default)` sets every `bool` to
+    /// `false`, which for `show_kernel_threads` and `show_containerised` means
+    /// *hidden*. A default that quietly hides rows is a trap — the first
+    /// `Visibility::default()` would have made an empty-looking table.
+    fn default() -> Self {
+        Self {
+            text: None,
+            uid: None,
+            show_kernel_threads: true,
+            show_userland_threads: true,
+            show_containerised: true,
+        }
+    }
 }
 
 impl Visibility {
@@ -247,6 +288,15 @@ impl Visibility {
         }
         if !self.show_userland_threads && row.is_thread {
             return false;
+        }
+        if !self.show_containerised {
+            // A thread has no cgroup of its own; it is in whatever its process is
+            // in, and the sampler copies that down, so this works for thread rows
+            // without a special case.
+            #[cfg(target_os = "linux")]
+            if row.container.is_some() {
+                return false;
+            }
         }
         if let Some(uid) = self.uid {
             if row.uid != uid {
@@ -276,9 +326,14 @@ pub struct ProcTable {
     pub tree_mode: bool,
     pub show_kernel_threads: bool,
     pub show_userland_threads: bool,
+    /// Whether processes inside a container are listed (htop's `O`).
+    pub show_containerised: bool,
 }
 
 impl Default for ProcTable {
+    /// Toggles mean "hidden" when `false`, so they are spelled out rather than
+    /// derived — `derive(Default)` would hide kernel threads and container
+    /// processes by default.
     fn default() -> Self {
         Self {
             rows: Vec::new(),
@@ -287,6 +342,7 @@ impl Default for ProcTable {
             tree_mode: false,
             show_kernel_threads: true,
             show_userland_threads: false,
+            show_containerised: true,
         }
     }
 }
@@ -482,5 +538,90 @@ mod tests {
         sort_order(&rows, &mut order, Sort { field: Field::Pid, dir: Dir::Asc });
         let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
         assert_eq!(pids, (1..=20u32).collect::<Vec<_>>());
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use crate::row::{Row, RowFlags};
+
+    #[test]
+    fn default_visibility_shows_everything() {
+        // The toggles mean "hidden" when false, so a derived Default would hide
+        // kernel threads and containers and make a fresh table look empty.
+        let v = Visibility::default();
+        assert!(v.show_kernel_threads);
+        assert!(v.show_userland_threads);
+        assert!(v.show_containerised);
+
+        let mut kernel = Row::default_for_test(2);
+        kernel.flags = kernel.flags.insert(RowFlags::KERNEL_THREAD);
+        assert!(v.allows(&kernel), "kernel threads visible by default");
+
+        let mut thread = Row::default_for_test(3);
+        thread.is_thread = true;
+        assert!(v.allows(&thread), "thread rows visible by default");
+    }
+
+    #[test]
+    fn hiding_kernel_threads_only_hides_kernel_threads() {
+        let v = Visibility {
+            show_kernel_threads: false,
+            ..Visibility::default()
+        };
+        let mut kernel = Row::default_for_test(2);
+        kernel.flags = kernel.flags.insert(RowFlags::KERNEL_THREAD);
+        assert!(!v.allows(&kernel));
+        assert!(v.allows(&Row::default_for_test(3)));
+    }
+
+    #[test]
+    fn hiding_threads_only_hides_threads() {
+        let v = Visibility {
+            show_userland_threads: false,
+            ..Visibility::default()
+        };
+        let mut thread = Row::default_for_test(3);
+        thread.is_thread = true;
+        assert!(!v.allows(&thread));
+        assert!(v.allows(&Row::default_for_test(4)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn hiding_containerised_processes_spares_host_processes() {
+        let visible = Visibility::default();
+        let mut containerised = Row::default_for_test(10);
+        containerised.container = Some("abc123".into());
+        containerised.container_runtime = Some("docker".into());
+        assert!(visible.allows(&containerised), "shown by default");
+
+        let hidden = Visibility {
+            show_containerised: false,
+            ..Visibility::default()
+        };
+        assert!(!hidden.allows(&containerised));
+
+        // A host process must survive the filter: the whole point of `O` is to
+        // leave the host's own processes readable.
+        assert!(hidden.allows(&Row::default_for_test(11)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_thread_of_a_containerised_process_is_also_hidden() {
+        // A thread has no cgroup of its own; the sampler copies the process's, so
+        // the filter has to work on thread rows without a special case.
+        let mut thread = Row::default_for_test(12);
+        thread.is_thread = true;
+        thread.container = Some("abc123".into());
+        thread.container_runtime = Some("docker".into());
+
+        let hidden = Visibility {
+            show_containerised: false,
+            ..Visibility::default()
+        };
+        assert!(!hidden.allows(&thread));
     }
 }
