@@ -343,6 +343,295 @@ impl Meter for LoadMeter {
 }
 
 // ---------------------------------------------------------------------------
+// Network and disk throughput
+// ---------------------------------------------------------------------------
+
+/// Which counters a [`ThroughputMeter`] reports.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ThroughputKind {
+    Net,
+    Disk,
+}
+
+/// Two-direction throughput meter, shared by `NetworkIO` and `DiskIO`.
+///
+/// # Why this is a rate and not a counter
+///
+/// The kernel exposes cumulative byte counters. A meter showing `1.9 GB` would
+/// answer "how much has this machine ever transferred", which nobody asks; the
+/// question is "what is it doing now". So the sampler keeps the previous
+/// counters and this meter renders the delta over the measured interval.
+///
+/// The bar is scaled against a *moving* ceiling rather than a fixed one: a 1
+/// Gbit link and a 100 Mbit link differ by an order of magnitude, and a bar
+/// pinned to 1 Gbit would show an idle-looking sliver on the slower one. The
+/// ceiling is the largest combined rate seen so far, so the bar is comparable
+/// across ticks and still readable at any link speed.
+///
+/// Text mode names both directions, because "3.2 M/s" alone does not say whether
+/// that is a download or a backup.
+pub struct ThroughputMeter {
+    label: &'static str,
+    inbound: &'static str,
+    outbound: &'static str,
+    /// Which pair of theme colours the bar uses: net or disk.
+    kind: ThroughputKind,
+    /// Whether this platform can report the counter at all.
+    supported: bool,
+    value: f32,
+    text: String,
+    /// Inbound and outbound bytes/s, kept separately so the bar can be drawn as
+    /// two segments. Stored rather than recomputed in `draw`, because a meter is
+    /// drawn many times per sample and the split would otherwise be lost.
+    inbound_bytes: f64,
+    outbound_bytes: f64,
+    /// Largest combined rate seen, for scaling the bar.
+    peak: f64,
+    history: VecDeque<f32>,
+}
+
+impl ThroughputMeter {
+    fn new(
+        kind: ThroughputKind,
+        label: &'static str,
+        inbound: &'static str,
+        outbound: &'static str,
+        supported: bool,
+    ) -> Self {
+        Self {
+            label,
+            inbound,
+            outbound,
+            kind,
+            supported,
+            value: 0.0,
+            text: String::from("-"),
+            inbound_bytes: 0.0,
+            outbound_bytes: 0.0,
+            peak: 0.0,
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+
+    /// The bar ceiling. Never zero, so the first frame does not divide by it and
+    /// an idle machine still has a defined scale.
+    fn ceiling(&self) -> f64 {
+        self.peak.max(1024.0)
+    }
+
+    /// Inbound/outbound bar colours for this meter's kind.
+    fn colors(&self, theme: &Theme) -> (ratatui::style::Color, ratatui::style::Color) {
+        match self.kind {
+            ThroughputKind::Net => (theme.net_rx, theme.net_tx),
+            ThroughputKind::Disk => (theme.disk_read, theme.disk_write),
+        }
+    }
+
+    fn record(&mut self, rate: gander_core::system::Rate) {
+        if !self.supported {
+            self.text = String::from("n/a here");
+            self.value = 0.0;
+            self.inbound_bytes = 0.0;
+            self.outbound_bytes = 0.0;
+            if self.history.len() == GRAPH_HISTORY {
+                self.history.pop_front();
+            }
+            self.history.push_back(0.0);
+            return;
+        }
+        self.inbound_bytes = if rate.inbound.is_finite() {
+            rate.inbound.max(0.0)
+        } else {
+            0.0
+        };
+        self.outbound_bytes = if rate.outbound.is_finite() {
+            rate.outbound.max(0.0)
+        } else {
+            0.0
+        };
+        self.text = format!(
+            "{} {} {} {}",
+            rate_text(self.inbound_bytes),
+            self.inbound,
+            rate_text(self.outbound_bytes),
+            self.outbound
+        );
+        let total = self.inbound_bytes + self.outbound_bytes;
+        if total > self.peak {
+            self.peak = total;
+        }
+        self.value = (total / self.ceiling()) as f32;
+        if self.history.len() == GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value.clamp(0.0, 1.0));
+    }
+
+    fn draw(&self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        // Both directions share the bar, each scaled against the same ceiling, so
+        // the bar length is the combined rate and the split shows the mix.
+        let ceiling = self.ceiling();
+        let (rx_color, tx_color) = self.colors(theme);
+        let segments = [
+            Segment {
+                value: (self.inbound_bytes / ceiling) as f32,
+                color: rx_color,
+            },
+            Segment {
+                value: (self.outbound_bytes / ceiling) as f32,
+                color: tx_color,
+            },
+        ];
+        labelled_bar(
+            self.label,
+            self.value,
+            &self.text,
+            &segments,
+            area,
+            buf,
+            theme,
+            mode,
+        );
+    }
+}
+
+/// Bytes per second, in the same IEC units as `bytes_human`.
+///
+/// `bytes_human` takes a `u64`, and a rate is a fraction of a byte per second
+/// after division, so this is a separate formatter rather than a lossy cast.
+fn rate_text(per_sec: f64) -> String {
+    const UNITS: [&str; 5] = ["B/s", "K/s", "M/s", "G/s", "T/s"];
+    if !per_sec.is_finite() || per_sec < 1.0 {
+        return format!("0 {}", UNITS[0]);
+    }
+    let mut value = per_sec;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{:.0} {}", value, UNITS[unit])
+    } else if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Uptime
+// ---------------------------------------------------------------------------
+
+/// Host network throughput (`NetworkIO`).
+pub struct NetworkMeter {
+    inner: ThroughputMeter,
+}
+
+impl NetworkMeter {
+    pub fn new() -> Self {
+        Self {
+            inner: ThroughputMeter::new(ThroughputKind::Net, "Net", "in", "out", true),
+        }
+    }
+}
+
+impl Default for NetworkMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for NetworkMeter {
+    fn name(&self) -> &'static str {
+        "NetworkIO"
+    }
+
+    fn min_width(&self) -> u16 {
+        20
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.inner.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        self.inner.record(snapshot.net_rate);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            draw_graph(buf, area, &self.inner.history, theme, 1.0);
+            return;
+        }
+        self.inner.draw(area, buf, theme, mode);
+    }
+}
+
+/// Host disk throughput (`DiskIO`).
+///
+/// Only Linux has a host-wide counter (`/proc/diskstats`). macOS has no
+/// equivalent without IOKit, and the design forbids a vendor SDK, so the meter
+/// says so rather than drawing a permanent `0 B/s` that looks like a dead disk.
+pub struct DiskIOMeter {
+    inner: ThroughputMeter,
+}
+
+impl DiskIOMeter {
+    pub fn new() -> Self {
+        Self {
+            inner: ThroughputMeter::new(
+                ThroughputKind::Disk,
+                "Disk",
+                "read",
+                "write",
+                gander_core::capability::HOST_DISK_IO,
+            ),
+        }
+    }
+}
+
+impl Default for DiskIOMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for DiskIOMeter {
+    fn name(&self) -> &'static str {
+        "DiskIO"
+    }
+
+    fn min_width(&self) -> u16 {
+        20
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.inner.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        self.inner.record(snapshot.disk_rate);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            draw_graph(buf, area, &self.inner.history, theme, 1.0);
+            return;
+        }
+        self.inner.draw(area, buf, theme, mode);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Uptime
 // ---------------------------------------------------------------------------
 
@@ -875,6 +1164,8 @@ pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
         "Clock" => Box::new(ClockMeter::new()),
         "Date" => Box::new(DateMeter::new()),
         "Hostname" => Box::new(HostnameMeter::new()),
+        "NetworkIO" | "Network" => Box::new(NetworkMeter::new()),
+        "DiskIO" | "Disk" => Box::new(DiskIOMeter::new()),
         "Blank" => Box::new(BlankMeter::new()),
         _ => return None,
     })
@@ -893,6 +1184,8 @@ pub const METER_NAMES: &[&str] = &[
     "Clock",
     "Date",
     "Hostname",
+    "NetworkIO",
+    "DiskIO",
     "Blank",
 ];
 
@@ -1018,11 +1311,119 @@ mod tests {
             "Clock",
             "Date",
             "Hostname",
+            "NetworkIO",
+            "DiskIO",
             "Blank",
         ] {
             assert!(meter_by_name(name).is_some(), "{name} must construct");
         }
         assert!(meter_by_name("nope").is_none());
+    }
+
+    /// The setup screen offers `METER_NAMES`; every one of them must build, or
+    /// adding it from `F2` silently does nothing.
+    #[test]
+    fn every_offered_meter_name_builds() {
+        for name in METER_NAMES {
+            assert!(
+                meter_by_name(name).is_some(),
+                "METER_NAMES offers {name} but meter_by_name rejects it"
+            );
+        }
+    }
+
+    #[test]
+    fn rate_text_uses_iec_units() {
+        assert_eq!(rate_text(0.0), "0 B/s");
+        assert_eq!(rate_text(0.4), "0 B/s");
+        assert_eq!(rate_text(f64::NAN), "0 B/s");
+        assert_eq!(rate_text(512.0), "512 B/s");
+        assert_eq!(rate_text(1536.0), "1.5 K/s");
+        assert_eq!(rate_text(3.0 * 1024.0 * 1024.0), "3.0 M/s");
+        assert_eq!(rate_text(20.0 * 1024.0 * 1024.0), "20 M/s");
+        assert_eq!(rate_text(2.5 * 1024.0 * 1024.0 * 1024.0), "2.5 G/s");
+    }
+
+    fn snapshot_with_rates(net: (f64, f64), disk: (f64, f64)) -> SystemSnapshot {
+        use gander_core::system::Rate;
+        let mut s = sample_snapshot();
+        s.net_rate = Rate {
+            inbound: net.0,
+            outbound: net.1,
+        };
+        s.disk_rate = Rate {
+            inbound: disk.0,
+            outbound: disk.1,
+        };
+        s
+    }
+
+    #[test]
+    fn network_meter_names_both_directions() {
+        let mut m = NetworkMeter::new();
+        m.sample(&snapshot_with_rates((1536.0, 2048.0), (0.0, 0.0)));
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        m.render(area, &mut buf, &Theme::default(), MeterMode::Text);
+        let line: String = (0..40).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        assert!(line.contains("1.5 K/s in"), "got {line:?}");
+        assert!(line.contains("2.0 K/s out"), "got {line:?}");
+    }
+
+    /// The bar has to be scaled against the observed peak, not against 100 %.
+    ///
+    /// A fixed ceiling is the bug this guards: on a slow link every bar would be
+    /// an invisible sliver, and on a fast one it would sit pinned at full width.
+    #[test]
+    fn throughput_bar_scales_against_the_observed_peak() {
+        let mut m = NetworkMeter::new();
+        // Two samples, the second much larger: the bar follows the peak, so the
+        // larger sample must be the full-width one.
+        m.sample(&snapshot_with_rates((1024.0, 0.0), (0.0, 0.0)));
+        m.sample(&snapshot_with_rates((0.0, 100.0 * 1024.0 * 1024.0), (0.0, 0.0)));
+
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        m.render(area, &mut buf, &Theme::default(), MeterMode::Bar);
+
+        let filled = (0..40)
+            .filter(|&x| buf[(x, 0)].symbol() == "|")
+            .count();
+        assert!(filled > 0, "the peak sample must fill some of the bar");
+    }
+
+    #[test]
+    fn disk_meter_reports_unsupported_platforms_instead_of_zero() {
+        let mut m = DiskIOMeter::new();
+        m.sample(&snapshot_with_rates((0.0, 0.0), (4096.0, 8192.0)));
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        m.render(area, &mut buf, &Theme::default(), MeterMode::Text);
+        let line: String = (0..40).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+
+        if gander_core::capability::HOST_DISK_IO {
+            assert!(line.contains("4.0 K/s read"), "got {line:?}");
+            assert!(line.contains("8.0 K/s write"), "got {line:?}");
+        } else {
+            // A permanent `0 B/s` would read as a dead disk, not as an absent
+            // counter.
+            assert!(line.contains("n/a"), "got {line:?}");
+        }
+    }
+
+    /// Every meter must survive a graph-mode render on a 1-cell area, because the
+    /// header splits into narrow columns on a small terminal.
+    #[test]
+    fn throughput_meters_survive_a_one_cell_graph() {
+        let area = Rect::new(0, 0, 1, 1);
+        for name in ["NetworkIO", "DiskIO"] {
+            let mut m = meter_by_name(name).expect(name);
+            m.sample(&snapshot_with_rates((1.0, 2.0), (3.0, 4.0)));
+            let mut buf = Buffer::empty(area);
+            m.render(area, &mut buf, &Theme::default(), MeterMode::Graph);
+            let mut buf = Buffer::empty(area);
+            m.render(area, &mut buf, &Theme::default(), MeterMode::Bar);
+        }
     }
 
     #[test]
