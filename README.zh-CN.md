@@ -10,7 +10,20 @@ gander 展示你的机器上正在运行什么、各自花了多少资源。它�
 
 ## 安装
 
-需要 Rust 工具链（**1.75+**）。不需要其他任何东西：不需要 libcurses，不需要
+**预编译二进制**（macOS 和 Linux）在
+[Releases 页面](https://github.com/pandasir/gander/releases)：
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.1.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.1.0-aarch64-apple-darwin.tar.gz
+./gander-0.1.0-aarch64-apple-darwin/gander
+```
+
+按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
+macOS；`x86_64-unknown-linux-musl` 是静态链接的二进制，任何发行版都能直接跑）。
+每个包旁边都有对应的 `.sha256` 校验文件。
+
+**从源码构建** — 需要 Rust 工具链（**1.75+**）。不需要其他任何东西：不需要 libcurses，不需要
 ncurses 开发头文件，也不需要 `rustc` 之外的 C 编译器。
 
 ```bash
@@ -27,7 +40,7 @@ cargo install --path crates/bin
 cargo run --release              # 启动 TUI
 ```
 
-目前还没有预编译二进制或发行版软件包，从源码构建是当下唯一受支持的安装方式。
+目前还没有发行版软件包；从源码构建或下载 release 二进制是当下受支持的安装方式。
 
 ## 用法
 

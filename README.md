@@ -11,8 +11,22 @@ of on horizontal bars.
 
 ## Install
 
-Requires a Rust toolchain (**1.75+**). Nothing else: no libcurses, no ncurses
-development headers, no C compiler beyond what `rustc` already needs.
+**Prebuilt binaries** (macOS and Linux) are on the
+[Releases page](https://github.com/pandasir/gander/releases):
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.1.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.1.0-aarch64-apple-darwin.tar.gz
+./gander-0.1.0-aarch64-apple-darwin/gander
+```
+
+Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
+macOS; `x86_64-unknown-linux-musl` is a static binary that runs on any distro).
+Each archive has a `.sha256` checksum next to it.
+
+**From source** — requires a Rust toolchain (**1.75+**). Nothing else: no
+libcurses, no ncurses development headers, no C compiler beyond what `rustc`
+already needs.
 
 ```bash
 git clone https://github.com/pandasir/gander
@@ -29,8 +43,8 @@ Prefer to run it without installing:
 cargo run --release              # the TUI
 ```
 
-There are no prebuilt binaries or distro packages yet; building from source is
-the only supported way to install today.
+There are no distro packages yet; building from source or grabbing a release
+binary are the supported ways to install today.
 
 ## Usage
 

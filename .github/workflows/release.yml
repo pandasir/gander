@@ -1,0 +1,107 @@
+name: Release
+
+# A push of a `v*` tag builds release binaries for every target, bundles
+# them into tar.gz archives with checksums, and publishes one GitHub
+# Release with all of them attached.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: gander
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS: the runner is arm64; the x86_64 target is cross-compiled
+          # with the official toolchain (no third-party cross setup needed).
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          # Linux: gnu for the common case, musl for a fully static binary
+          # that runs on any distribution regardless of glibc version.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Bundle
+        id: bundle
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="${BIN}-${version}-${{ matrix.target }}"
+          dir="${name}"
+          mkdir -p "${dir}"
+          cp "target/${{ matrix.target }}/release/${BIN}" "${dir}/"
+          cp README.md README.zh-CN.md LICENSE "${dir}/"
+          tar -czf "${name}.tar.gz" "${dir}"
+          # shasum on macOS, sha256sum on Linux.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          else
+            shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          fi
+          echo "asset=${name}.tar.gz"   >> "$GITHUB_OUTPUT"
+          echo "digest=${name}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ steps.bundle.outputs.asset }}
+            ${{ steps.bundle.outputs.digest }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          body: |
+            Download the archive for your platform, verify it, and run:
+
+            ```
+            tar -xzf gander-*.tar.gz
+            ./gander-*/gander
+            ```
+
+            | File | Platform |
+            |---|---|
+            | `aarch64-apple-darwin` | macOS, Apple Silicon |
+            | `x86_64-apple-darwin` | macOS, Intel |
+            | `x86_64-unknown-linux-gnu` | Linux (glibc) |
+            | `x86_64-unknown-linux-musl` | Linux (static, any distro) |
+
+            Every archive has a `.sha256` checksum next to it.
