@@ -83,6 +83,18 @@ pub struct Theme {
 
     pub graph_low: Color,
     pub graph_high: Color,
+
+    /// Network throughput bar: received, then transmitted.
+    ///
+    /// Separate from the CPU colours on purpose. Reusing `cpu_normal` /
+    /// `cpu_kernel` made a network bar visually identical to a CPU bar, and the
+    /// header then had two differently-meaning bars with the same palette —
+    /// the same mistake `meter_cursor` vs `row_value_bar` was split to avoid.
+    pub net_rx: Color,
+    pub net_tx: Color,
+    /// Disk throughput bar: read, then written.
+    pub disk_read: Color,
+    pub disk_write: Color,
 }
 
 impl Default for Theme {
@@ -202,6 +214,10 @@ impl Theme {
 
             graph_low: Color::Green,
             graph_high: Color::Red,
+            net_rx: Color::Green,
+            net_tx: Color::Blue,
+            disk_read: Color::Yellow,
+            disk_write: Color::Red,
         }
     }
 
@@ -260,6 +276,10 @@ impl Theme {
             panel_selected: Style::default().add_modifier(Modifier::REVERSED),
             graph_low: Color::Gray,
             graph_high: Color::White,
+            net_rx: Color::White,
+            net_tx: Color::Gray,
+            disk_read: Color::Gray,
+            disk_write: Color::White,
         }
     }
 
@@ -381,6 +401,10 @@ impl Theme {
 
             graph_low: hex(0x0ea5a5),
             graph_high: purple,
+            net_rx: hex(0x2dd4bf),
+            net_tx: hex(0x60a5fa),
+            disk_read: hex(0xfbbf24),
+            disk_write: hex(0xf87171),
         }
     }
 
@@ -475,6 +499,10 @@ impl Theme {
 
             graph_low: blue,
             graph_high: hex(0xc0564f),
+            net_rx: Color::Green,
+            net_tx: Color::Blue,
+            disk_read: Color::Yellow,
+            disk_write: Color::Red,
         }
     }
 
@@ -568,6 +596,10 @@ impl Theme {
 
             graph_low: hex(0x2f6f4f),
             graph_high: green_bright,
+            net_rx: hex(0x4ade80),
+            net_tx: hex(0x86efac),
+            disk_read: hex(0xfacc15),
+            disk_write: hex(0xf87171),
         }
     }
 
@@ -662,6 +694,10 @@ impl Theme {
 
             graph_low: hex(0x93c5fd),
             graph_high: blue,
+            net_rx: hex(0x2f6f4f),
+            net_tx: hex(0x2563eb),
+            disk_read: hex(0xb45309),
+            disk_write: hex(0xb91c1c),
         }
     }
 
@@ -757,6 +793,10 @@ impl Theme {
 
             graph_low: hex(0x3d444d),
             graph_high: hex(0xa8b0ba),
+            net_rx: hex(0x8b949e),
+            net_tx: hex(0x6e7681),
+            disk_read: hex(0x9ca3af),
+            disk_write: hex(0x8b949e),
         }
     }
 }
