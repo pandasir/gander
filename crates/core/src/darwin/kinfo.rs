@@ -177,7 +177,12 @@ pub fn list_processes() -> std::io::Result<Vec<RawProc>> {
 
         buf.truncate(records * STRIDE);
         let mut out = Vec::with_capacity(records);
-        for rec in buf.chunks_exact(STRIDE) {
+        // `as_chunks` rather than `chunks_exact`: STRIDE is a constant, so the
+        // length is known at compile time and each record decodes to a fixed
+        // array. The buffer was just truncated to a whole number of records, so
+        // the remainder is always empty.
+        let (records_slice, _remainder) = buf.as_chunks::<STRIDE>();
+        for rec in records_slice {
             if let Some(p) = decode(rec) {
                 out.push(p);
             }
