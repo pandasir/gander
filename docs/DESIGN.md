@@ -71,8 +71,10 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 - cgroup / container columns — **done**; see
   [ROADMAP.md § How container detection works](ROADMAP.md#how-container-detection-works)
   for why membership needs the PID namespace and not just the cgroup path
-- Open files (`l`), env (`e`), command line wrapped (`w`), file locks (`x`),
-  strace attach (`s`)
+- Open files (`l`), env (`e`), command line wrapped (`w`), file locks (`x`)
+- strace attach (`s`) — **not implemented**; the key opens a panel that explains why
+  it is a terminal handover rather than a pane, and prints the command to run
+  instead. (It was listed here as done while having no handler at all.)
 - Display options: hide kernel threads, hide userland threads, highlight
   base name, highlight stale exe
 

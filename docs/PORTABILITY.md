@@ -18,7 +18,10 @@ design.
 | Start time | field 22 of `stat` (ticks) | `pbi_start_tvsec/tvusec` |
 | cmdline | `/proc/<pid>/cmdline` | `sysctl(KERN_PROCARGS2)` |
 | exe | `readlink /proc/<pid>/exe` | `proc_pidpath` |
+| cwd | `readlink /proc/<pid>/cwd` | `proc_pidinfo(PROC_PIDVNODEPATHINFO)` |
 | uid | `/proc/<pid>/status` | `proc_bsdinfo.pbi_uid` |
+| session | field 4 of `stat` | `getsid(2)` |
+| tty / tpgid | fields 5 and 8 of `stat` | `e_tdev` / `e_tpgid` from `proc_bsdinfo` |
 | threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` |
 | per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
 | host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` |

@@ -64,14 +64,28 @@ takes effect immediately; `Esc` clears the filter and closes the prompt.
 
 `F9`, `F7` and `F8` all act on **every tagged process** when anything is tagged, and
 on the selection otherwise. A status message on the function bar reports the result.
+
+### Info screens
+
+These each open a scrollable panel; `Esc` closes it.
+
+| Key | Action |
+|---|---|
 | `a` | CPU affinity panel (real mask on Linux) |
 | `i` | I/O priority panel (Linux only) |
 | `e` | Environment of the selected process |
 | `w` | Full command line, wrapped |
 | `l` | Open file descriptors |
 | `x` | File locks |
-| `s` | Attach strace *(M2)* |
-| `b` | Backtrace *(M3)* |
+| `Z` | SELinux security context (Linux; explains itself elsewhere) |
+| `s` | Trace — **not implemented**, the panel says what it would need |
+| `b` | Backtrace — **not implemented**, same |
+
+`s` and `b` have no implementation. They are bound on purpose: a key that silently
+does nothing is indistinguishable from a broken program, so both open a screen that
+names the obstacle and the workaround (`strace -p <pid>`, `lldb -p <pid>`) instead.
+`s` in particular used to be documented here and in `DESIGN.md` with **no handler
+at all**, so pressing it produced nothing whatsoever.
 
 ## Display
 

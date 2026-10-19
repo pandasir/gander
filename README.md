@@ -185,6 +185,34 @@ Search and filter history lives separately, at
 copy between machines, history is a byproduct of using this one. `Up` / `Down` in
 the `F3` / `F4` prompt walks it, so re-running yesterday's filter is one key.
 
+### Identity columns
+
+Seven columns that describe *which* process this is rather than what it is doing.
+All of them work on both platforms.
+
+| Column | Meaning |
+|---|---|
+| `SESSION` | Login session id (`SID`); `-` when the kernel will not say |
+| `TTY` | Controlling terminal, decoded to `pts/3` or `tty1`; `?` when there is none |
+| `TPGID` | The foreground job's process group on that terminal |
+| `STARTTIME` | Wall-clock start, boot time + the process's start ticks |
+| `TGID` | Thread group id: the process a thread row belongs to |
+| `SCHED_POLICY` | `other`, `fifo`, `rr`, `batch`, `idle`, `deadline` |
+| `PROC_COMM` | The kernel's short command name |
+| `PROC_EXE` | Resolved executable path |
+| `CWD` | Working directory |
+
+`COMM` and `PROC_COMM` are not the same column, and that is not an accident: `COMM`
+is htop's Command column and shows the *command line*, while `PROC_COMM` is the
+executable's base name as the kernel holds it. htop makes the same distinction.
+
+`STARTTIME` is shifted by the snapshot's boot time and rendered in **local** time,
+so it agrees with the `Clock` in the header instead of silently being UTC.
+
+`TTY` decodes the kernel's `tty_nr` device number rather than printing it: `34816`
+is not a terminal anyone recognises, `pts/0` is. `TPGID` renders `-` for the
+kernel's `-1`, which means "no foreground job" and is not a process group.
+
 ### Container columns (Linux)
 
 `F2` → Columns offers two more on Linux:

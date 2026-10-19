@@ -471,6 +471,74 @@ this task's life" rather than "waiting now".
 clamped to 100: the honest reading is "essentially all of it", and an unclamped
 value would sort above a process that really is stalled all the time.
 
+## Post-M3 fixes
+
+Three discrepancies between what the code did and what the repository said, found
+by auditing the two against each other rather than by a failing test.
+
+### `s` did not exist
+
+`docs/KEYS.md` and `docs/DESIGN.md` both listed "strace attach (`s`)" as an M2
+feature, and `handle_list_key` had no `s` arm. Pressing it did nothing: no screen,
+no status line, no error. Every other unimplemented key (`Z`, `b`) had been given an
+explanation screen for exactly this reason, which is what made the omission easy to
+miss — the pattern *looked* followed.
+
+`s` now opens a panel that says why attaching a tracer is a terminal handover and
+not a pane (strace writes a live stream the alternate screen would swallow), and
+prints `strace -p <pid>` and the ptrace-permission caveat. A test asserts the panel
+mentions both the obstacle and the workaround, because "not implemented yet." alone
+teaches the reader nothing.
+
+The `strace` attach itself remains unbuilt, and the docs now say so.
+
+### Nine `Field` variants were unreachable
+
+`Session`, `Tty`, `Tpgid`, `StartTime`, `Tgid`, `SchedPolicy`, `ProcComm`, `ProcExe`
+and `Cwd` were declared in the `Field` enum with **no `FieldMeta` entry**. Three
+consequences, none of which failed loudly:
+
+- `Field::name()` returned `"UNKNOWN"`. The `htoprc` importer maps htop ids onto
+these variants, so `fields=0 5 2` imported to `["PID", "UNKNOWN", "STATE",
+  "COMM"]`, and `TabConfig::fields()`'s `filter_map` silently dropped the entry. An
+  import that lost a column looked exactly like an import that worked.
+- `sort_key=` on one of them fell through to `PERCENT_CPU`, because
+  `TabConfig::sort` uses `Field::from_name(..).unwrap_or(Field::PercentCpu)`.
+- They never appeared in the `F2` → Columns list, which iterates `Field::all()`.
+
+All nine now have metadata, a renderer arm and a `sort_order` comparator. Two other
+variants (`IoReadRate`, `IoWriteRate`) were deleted rather than given metadata: they
+had no implementation, and their htop field ids could not be verified against
+`ProcessField.h`, so naming them would have invented config keys.
+
+A test (`every_variant_has_metadata`) now walks every variant and asserts it has a
+name, a title, a description, and that the name round-trips through `from_name`. It
+is a written-out list rather than a derived one, because `Field` has no enumeration
+macro and adding one for a single test is not worth the dependency — so a new
+variant still needs the list edited, which is the point.
+
+### `TTY` and `TPGID` were also unparsed
+
+Both were in the enum and neither was read from `/proc/<pid>/stat`, so even with
+metadata they would have rendered a constant. `tty_nr` was parsed and unused;
+`tpgid` was not parsed at all. Both are now filled, and `TTY` decodes the device
+number to `pts/N` instead of printing `34816`.
+
+`session` was in the same position on macOS: `proc_bsdinfo` carries no session id
+and the `kinfo_proc` field that does is not among the offsets `darwin::kinfo`
+decodes. It now comes from `getsid(2)`, cached with the process identity so the
+syscall is paid once per process rather than once per tick.
+
+### Smaller fixes in the same pass
+
+The in-app help screen and `--help` listed a fraction of the bindings: `L`, `H`,
+`O`, `Z`, `b`, `Tab`, `u`, and the whole navigation group (`PgUp`/`PgDn`, `g`/`G`,
+`Left`/`Right`) were missing, so the only way to discover them was `docs/KEYS.md`
+— which is not on the machine the user is looking at. Both lists are now complete.
+
+The `docs/KEYS.md` "Acting on processes" table was broken by a paragraph in the
+middle, leaving eight keys outside the table; it is now two tables.
+
 ## Deliberately not planned
 
 - A PCP-style dynamic metric engine (runtime-defined columns/meters).
