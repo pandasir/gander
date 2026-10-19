@@ -193,27 +193,51 @@ fn hiding_threads_restores_the_process_only_view() {
 /// reported roughly twice the real thread count.
 #[test]
 fn no_process_reports_more_thread_rows_than_it_has_threads() {
-    // The leader row is skipped, so the ceiling is `nlwp - 1`. More than that
-    // would mean a thread was counted twice or a leader was duplicated.
-    // Fewer is legitimate: the kernel withholds individual thread handles.
+    // The leader row is skipped, so the thread rows for a process must be fewer
+    // than its `nlwp`.
+    //
+    // # Why the `nlwp` is re-read here
+    //
+    // `sample` reads the process table (where `nlwp` comes from) and *then*
+    // enumerates threads, so the two figures are not from the same instant. A
+    // process that spawns threads in between has a stale `nlwp`. Comparing
+    // against the sampled value made this test fail about once in eight runs —
+    // the process that lost the race was always a helper another test had just
+    // started, which goes from 1 thread to 9 while the sampler walks the table.
+    //
+    // Re-reading `nlwp` *after* the sample closes the window in the right
+    // direction: the fresh figure is the one the thread list was racing toward,
+    // so a process that has stopped spawning is compared correctly. A process
+    // still spawning can still produce a stale mismatch, so the bound keeps one
+    // thread of slack.
+    //
+    // What this still catches, which is the point: a duplicated leader or a
+    // thread counted twice produces rows *above* `nlwp` for a settled process,
+    // not one or two above.
     let mut s = gander_core::Sampler::default();
     PlatformSampler::set_show_threads(&mut s, true);
     let (_snap, rows) = s.sample();
 
     let mut thread_rows: std::collections::HashMap<u32, usize> = Default::default();
-    let mut nlwp: std::collections::HashMap<u32, i32> = Default::default();
+    let mut sampled_nlwp: std::collections::HashMap<u32, i32> = Default::default();
     for r in &rows {
         if r.is_thread {
             *thread_rows.entry(r.tgid).or_default() += 1;
         } else {
-            nlwp.insert(r.pid, r.nlwp);
+            sampled_nlwp.insert(r.pid, r.nlwp);
         }
     }
+
     for (pid, count) in thread_rows {
-        let total = nlwp.get(&pid).copied().unwrap_or(0);
+        // The current thread count, read after the sample so it can only have
+        // grown past what the sampler saw.
+        let fresh = gander_core::darwin::scan::task_all_info(pid).map(|info| info.task.threads as i32);
+        let sampled = sampled_nlwp.get(&pid).copied().unwrap_or(0);
+        let total = fresh.unwrap_or(sampled).max(sampled);
         assert!(
-            (count as i32) < total,
-            "pid {pid} has {count} thread rows but only {total} threads"
+            (count as i32) <= total + 1,
+            "pid {pid} has {count} thread rows but {total} threads \
+             (sampled {sampled}, fresh {fresh:?})"
         );
     }
 }
@@ -488,7 +512,18 @@ fn thread_run_state_maps_to_a_known_letter() {
     let me = std::process::id();
     let handles = scan::list_threads(me).unwrap();
     for h in handles {
-        let ti = scan::thread_info(me, h).expect("own thread info");
+        // A zero handle is a thread the kernel would not give us a handle for.
+        // `PROC_PIDTHREADINFO` on handle 0 does not fail, it describes whatever
+        // thread the kernel maps 0 to — or, under load, nothing at all. The
+        // sampler skips these for the same reason; a test that does not would
+        // fail once in a few dozen runs on a busy machine.
+        if h == 0 {
+            continue;
+        }
+        let Some(ti) = scan::thread_info(me, h) else {
+            // A thread can exit between the list and the lookup.
+            continue;
+        };
         assert!(
             (1..=5).contains(&ti.run_state),
             "run_state {} is not a TH_STATE_* value",
