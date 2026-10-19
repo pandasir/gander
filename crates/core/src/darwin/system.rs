@@ -215,12 +215,18 @@ impl PlatformSampler for Sampler {
             disk: crate::system::DiskCounters::default(),
             disk_rate: crate::system::Rate::default(),
             tasks: task_stats(&rows),
+            // Neither exists on macOS: no `/proc/pressure`, no zram module.
+            psi: None,
+            zram: crate::system::ZramInfo::default(),
         };
         (snapshot, rows)
     }
 
-    fn set_show_threads(&mut self, on: bool) {
-        self.show_threads = on;
+    fn set_scan_options(&mut self, opts: crate::ScanOptions) {
+        self.show_threads = opts.threads;
+        // `smaps` and `gpu` are Linux-only reads; macOS has neither
+        // `/proc/<pid>/smaps_rollup` nor `drm-usage-stats`, so a request for them
+        // changes nothing here rather than being silently half-honoured.
     }
 
     fn supports_threads() -> bool {

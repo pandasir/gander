@@ -47,6 +47,15 @@ pub struct Sampler {
     /// which on a busy desktop is roughly 1700 extra file reads per tick. htop
     /// makes the same trade (`hide_userland_threads`).
     show_threads: bool,
+    /// Whether a column needing `/proc/<pid>/smaps_rollup` is on screen.
+    ///
+    /// The kernel walks every VMA to produce that file, so reading it for every
+    /// process costs tens of milliseconds — more than the rest of the scan put
+    /// together. Set from the front end whenever the visible column set changes;
+    /// when false the sampler never opens the file at all.
+    read_smaps: bool,
+    /// Whether a GPU column is on screen (reads each process's `fdinfo`).
+    read_gpu: bool,
 }
 
 impl Default for Sampler {
@@ -68,6 +77,8 @@ impl Sampler {
             prev_disk: None,
             use_rayon: true,
             show_threads: false,
+            read_smaps: false,
+            read_gpu: false,
         }
     }
 
@@ -96,6 +107,18 @@ impl Sampler {
 
         let load = scan::read_loadavg(&self.root).unwrap_or([0.0; 3]);
         let uptime = scan::read_uptime(&self.root).unwrap_or(0);
+
+        // Pressure stall information, zram devices, and the zswap pool ceiling.
+        // All three are Linux-only subsystems and all three are absent on kernels
+        // built without them, so each reports `None`/empty rather than zeroes that
+        // would render as an idle machine.
+        let psi = scan::read_psi(&self.root);
+        let zram = scan::read_zram(&self.root);
+        // `max_pool_percent` is a percentage of physical memory, so it can only be
+        // resolved once `MemTotal` is known.
+        if let Some(percent) = scan::read_zswap_max_percent(&self.root) {
+            mem.zswap_max = mem.total.saturating_mul(percent.min(100)) / 100;
+        }
 
         // Network and disk throughput. Both are cumulative counters, so the rate
         // needs the previous sample *and* the interval between the two; the
@@ -149,6 +172,8 @@ impl Sampler {
             disk,
             disk_rate,
             tasks: task_stats(&rows),
+            psi,
+            zram,
         };
         (snapshot, rows)
     }
@@ -300,6 +325,28 @@ impl Sampler {
             scan::apply_stat(&mut row, &fields, page_size);
             row.comm = comm;
 
+            // The PSS family, only when the front end says a column needs it.
+            // `None` (not zero) when unread: another user's process refuses, and a
+            // zero would read as "this process uses no memory".
+            #[cfg(target_os = "linux")]
+            if self.read_smaps {
+                if let Some(rollup) = super::fsops::read_smaps_rollup(&self.root, pid) {
+                    row.pss = Some(rollup.pss);
+                    row.epss = Some(rollup.epss());
+                    row.private = Some(rollup.private());
+                    row.swap_bytes = Some(rollup.swap);
+                }
+            }
+            // GPU counters from `drm-usage-stats`, gated the same way and for the
+            // same reason: one `readdir` plus a read per descriptor, per process.
+            #[cfg(target_os = "linux")]
+            if self.read_gpu {
+                if let Some(gpu) = super::scan::read_gpu_usage(&self.root, pid) {
+                    row.gpu_percent = gpu.percent();
+                    row.gpu_ns = Some(gpu.gpu_ns);
+                }
+            }
+
             let d_proc = fields.cpu_ticks().saturating_sub(prev_proc_ticks) as f32;
             row.percent_cpu = if total_delta > 0.0 {
                 // May exceed 100% on multicore: correct, and matches htop.
@@ -397,8 +444,10 @@ impl crate::PlatformSampler for Sampler {
         "linux (/proc)"
     }
 
-    fn set_show_threads(&mut self, on: bool) {
-        self.show_threads = on;
+    fn set_scan_options(&mut self, opts: crate::ScanOptions) {
+        self.show_threads = opts.threads;
+        self.read_smaps = opts.smaps;
+        self.read_gpu = opts.gpu;
     }
 
     fn supports_threads() -> bool {

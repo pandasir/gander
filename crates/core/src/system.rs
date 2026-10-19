@@ -106,6 +106,27 @@ pub struct MemInfo {
     pub inactive: u64,
     pub purgeable: u64,
     pub speculative: u64,
+
+    // --- M3: zswap and huge pages -----------------------------------------
+    /// Bytes currently held in the zswap pool (`Meminfo: Zswap`).
+    ///
+    /// Not part of the memory *bar*: zswap pages are anonymous pages that have
+    /// been compressed, so they are already counted in `used`. Reporting them
+    /// again would double-count. They get their own meter instead.
+    pub zswap: u64,
+    /// Bytes swapped out to zswap over the machine's lifetime (`Zswapped`).
+    pub zswapped: u64,
+    /// The zswap pool's ceiling, from
+    /// `/sys/module/zswap/parameters/max_pool_percent` times physical memory.
+    /// `0` when the parameter is unreadable.
+    pub zswap_max: u64,
+    /// Huge page counters, in *pages* (`Meminfo: HugePages_*`).
+    pub huge_pages_total: u64,
+    pub huge_pages_free: u64,
+    pub huge_pages_rsvd: u64,
+    pub huge_pages_surplus: u64,
+    /// Bytes per huge page (`Hugepagesize`), `0` when huge pages are disabled.
+    pub huge_page_size: u64,
     /// `internal_page_count`: anonymous pages, the "by backing store" family.
     ///
     /// macOS reports memory twice over, once by usage (`active`, `inactive`, …)
@@ -321,6 +342,30 @@ impl MemInfo {
         ];
     }
 
+    /// Huge pages in use, in bytes.
+    ///
+    /// `total - free` rather than `total - free - rsvd`: reserved pages are
+    /// already committed to a process that has not faulted them in yet, so a
+    /// `free` figure that includes them overstates what is actually available.
+    /// htop prints `used/total` with the same subtraction.
+    pub fn huge_used_bytes(&self) -> u64 {
+        let used_pages = self.huge_pages_total.saturating_sub(self.huge_pages_free);
+        used_pages.saturating_mul(self.huge_page_size)
+    }
+
+    pub fn huge_total_bytes(&self) -> u64 {
+        self.huge_pages_total.saturating_mul(self.huge_page_size)
+    }
+
+    /// Whether the kernel has huge pages configured at all.
+    ///
+    /// A machine with `HugePages_Total` of 0 has the feature compiled in but
+    /// nothing reserved; a meter for it would be a permanent empty bar, so the
+    /// meter says `n/a here` instead. Same reasoning as `DiskIO` on macOS.
+    pub fn huge_pages_configured(&self) -> bool {
+        self.huge_pages_total > 0 && self.huge_page_size > 0
+    }
+
     /// Backwards-compatible alias used by the Linux parser.
     pub fn compute_used(&mut self) {
         self.finish_linux();
@@ -444,6 +489,154 @@ impl Rate {
     }
 }
 
+/// One PSI resource's `some` and `full` averages.
+///
+/// `/proc/pressure/<resource>` reports two lines:
+///
+/// ```text
+/// some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/// full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/// ```
+///
+/// `some` is the share of wall time during which *at least one* task was
+/// stalled; `full` is the share during which *every* runnable task was stalled,
+/// i.e. the machine genuinely had nothing to run.
+///
+/// **All four resources report both lines**, `cpu` included. An earlier revision
+/// of this comment claimed `cpu` had no `full` line — that is wrong, and checking
+/// a real `/proc/pressure/cpu` (Linux 6.x) shows both. The two lines mean slightly
+/// different things for `cpu` (a task runnable-but-not-running is `some`; the
+/// whole CPU idle while tasks wait is `full`), which is exactly why the kernel
+/// reports both. Code here must not assume `has_full` is false for any resource.
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
+pub struct PsiLine {
+    /// Percentage of wall time stalled, averaged over 10 s.
+    pub avg10: f32,
+    /// Percentage of wall time stalled, averaged over 60 s.
+    pub avg60: f32,
+    /// Percentage of wall time stalled, averaged over 300 s.
+    pub avg300: f32,
+    /// Total microseconds stalled since boot. Cumulative, so it can be used for
+    /// a rate the same way the network counters are.
+    pub total_us: u64,
+}
+
+/// Pressure stall information for one resource.
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
+pub struct PsiResource {
+    /// Readable at all. `false` means the file was missing.
+    pub present: bool,
+    /// The `some` line.
+    pub some: PsiLine,
+    /// The `full` line. Left at zero when the file has none.
+    pub full: PsiLine,
+    /// Whether this resource's file carried a `full` line.
+    ///
+    /// True for every resource on current kernels, `cpu` included. Kept because
+    /// it is the file that decides, not us: a future kernel is free to drop a
+    /// line, and a meter that assumed one was present would draw a fabricated
+    /// zero instead of leaving the value out.
+    pub has_full: bool,
+}
+
+/// Host pressure stall information.
+///
+/// # Why this exists on top of CPU% and load average
+///
+/// Neither of those answers "is the machine actually struggling". A box at 90 %
+/// CPU with nothing waiting is busy but healthy; a box at 30 % CPU with an `io`
+/// `full` average of 40 % is making every process wait on the disk, and both
+/// CPU% and load average look unremarkable while it happens. PSI is the kernel's
+/// own answer to "how much time did work actually lose", and it is the one
+/// number that distinguishes the two cases.
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
+pub struct Psi {
+    pub cpu: PsiResource,
+    pub memory: PsiResource,
+    pub io: PsiResource,
+    pub irq: PsiResource,
+}
+
+impl Psi {
+    /// Whether any resource was readable. A `Psi` where nothing is present is
+    /// worse than `None`: it draws three empty bars that look like an idle
+    /// machine instead of an absent feature.
+    pub fn any_present(&self) -> bool {
+        self.cpu.present || self.memory.present || self.io.present || self.irq.present
+    }
+
+    /// The resources in display order, with their labels.
+    pub fn rows(&self) -> [(&'static str, PsiResource); 4] {
+        [
+            ("CPU", self.cpu),
+            ("MEM", self.memory),
+            ("IO", self.io),
+            ("IRQ", self.irq),
+        ]
+    }
+}
+
+/// One compressed RAM block device (`/sys/block/zram<N>`).
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct ZramDevice {
+    pub name: String,
+    /// Uncompressed size of the data held, in bytes.
+    pub orig_data_size: u64,
+    /// Size actually occupied in RAM after compression, in bytes.
+    pub compr_data_size: u64,
+    /// Bytes of RAM the device has taken from the allocator.
+    pub mem_used_total: u64,
+}
+
+impl ZramDevice {
+    /// Compression ratio, `orig / compressed`. `1.0` when nothing is stored, so
+    /// a caller never divides by zero and an empty device does not claim an
+    /// infinite ratio.
+    pub fn ratio(&self) -> f32 {
+        if self.compr_data_size == 0 {
+            1.0
+        } else {
+            self.orig_data_size as f32 / self.compr_data_size as f32
+        }
+    }
+}
+
+/// Every zram device on the machine, and their totals.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct ZramInfo {
+    pub devices: Vec<ZramDevice>,
+}
+
+impl ZramInfo {
+    pub fn present(&self) -> bool {
+        !self.devices.is_empty()
+    }
+
+    pub fn orig_total(&self) -> u64 {
+        self.devices.iter().map(|d| d.orig_data_size).sum()
+    }
+
+    pub fn compr_total(&self) -> u64 {
+        self.devices.iter().map(|d| d.compr_data_size).sum()
+    }
+
+    pub fn mem_total(&self) -> u64 {
+        self.devices.iter().map(|d| d.mem_used_total).sum()
+    }
+
+    /// Aggregate ratio across all devices. Computed from the totals rather than
+    /// averaged over the devices, so a 1 MB and a 1 GB device do not count
+    /// equally.
+    pub fn ratio(&self) -> f32 {
+        let compr = self.compr_total();
+        if compr == 0 {
+            1.0
+        } else {
+            self.orig_total() as f32 / compr as f32
+        }
+    }
+}
+
 /// One immutable sample handed from the sampler thread to the renderer.
 #[derive(Clone, Debug)]
 pub struct SystemSnapshot {
@@ -468,6 +661,11 @@ pub struct SystemSnapshot {
     pub disk_rate: Rate,
     /// Filled in by the sampler once the process table has been read.
     pub tasks: TaskStats,
+    /// Pressure stall information. `None` where the kernel does not provide it
+    /// (macOS, or a Linux kernel older than 4.20).
+    pub psi: Option<Psi>,
+    /// Compressed RAM block devices. Empty when the machine has none.
+    pub zram: ZramInfo,
 }
 
 impl Default for SystemSnapshot {
@@ -487,6 +685,8 @@ impl Default for SystemSnapshot {
             disk: DiskCounters::default(),
             disk_rate: Rate::default(),
             tasks: TaskStats::default(),
+            psi: None,
+            zram: ZramInfo::default(),
         }
     }
 }

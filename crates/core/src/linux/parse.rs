@@ -5,7 +5,9 @@
 //! (`docs/DESIGN.md` §10).
 
 use crate::row::{CommBuf, Row, RowFlags};
-use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo};
+use crate::system::{
+    CpuTimes, DiskCounters, MemInfo, NetCounters, PsiLine, PsiResource, SwapInfo, ZramDevice,
+};
 
 /// Parse `/proc/<pid>/stat`.
 ///
@@ -158,6 +160,19 @@ pub fn parse_meminfo(buf: &[u8], mem: &mut MemInfo, swap: &mut SwapInfo) {
             b"Cached" => mem.cached = bytes,
             b"SReclaimable" => mem.sreclaimable = bytes,
             b"Shmem" => mem.shmem = bytes,
+            // zswap: bytes currently held, and bytes ever swapped to it. Both
+            // are already counted in `used`, so they feed a meter of their own
+            // rather than the memory bar.
+            b"Zswap" => mem.zswap = bytes,
+            b"Zswapped" => mem.zswapped = bytes,
+            // Huge pages are counted in *pages*, not kB. Multiplying these by
+            // 1024 the way every other field is multiplied would report a
+            // 512-page reservation as 512 kB instead of 1 GiB.
+            b"HugePages_Total" => mem.huge_pages_total = val,
+            b"HugePages_Free" => mem.huge_pages_free = val,
+            b"HugePages_Rsvd" => mem.huge_pages_rsvd = val,
+            b"HugePages_Surp" => mem.huge_pages_surplus = val,
+            b"Hugepagesize" => mem.huge_page_size = bytes,
             b"SwapTotal" => swap.total = bytes,
             b"SwapFree" => swap.free = bytes,
             _ => {}
@@ -407,6 +422,208 @@ fn parse_u64(b: &[u8]) -> Option<u64> {
     Some(v)
 }
 
+/// One process's GPU counters, accumulated over its open DRM file descriptors.
+///
+/// A process can hold several DRM fds (render node, card node), so this is a sum
+/// rather than one device's figure. That is the right shape for a process table:
+/// the question a row answers is "how much GPU is this program using", not "which
+/// node is it using".
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct GpuUsage {
+    /// Cumulative nanoseconds of GPU time attributed to this process.
+    pub gpu_ns: u64,
+    /// Cumulative nanoseconds the GPU was *busy* while this process had work
+    /// queued. The percentage is `drm-engine-*` divided by this, which is why the
+    /// engine figure alone is not a percentage.
+    pub busy_ns: u64,
+    /// Cumulative nanoseconds of memory cycles, on drivers that report it.
+    pub mem_ns: u64,
+}
+
+impl GpuUsage {
+    /// GPU utilisation in percent, `0.0..=100.0`.
+    ///
+    /// Returns `None` when the driver reports engine time but no `drm-busy`, in
+    /// which case no percentage can be computed — inventing one from the sample
+    /// interval would be a different quantity wearing the same label.
+    pub fn percent(&self) -> Option<f32> {
+        if self.busy_ns == 0 {
+            return None;
+        }
+        Some((self.gpu_ns as f64 / self.busy_ns as f64 * 100.0).clamp(0.0, 100.0) as f32)
+    }
+}
+
+/// Parse one `fdinfo` file for `drm-*` keys.
+///
+/// # The format
+///
+/// ```text
+/// pos:    0
+/// flags:    02100002
+/// drm-driver:    nvidia-drm
+/// drm-pdev:    0000:01:00.0
+/// drm-engine-gfx:    12345678 ns
+/// drm-engine-mem:    12345678 ns
+/// drm-busy:    12345678 ns
+/// ```
+///
+/// Keys are driver-specific: `drm-engine-<class>` names vary (`gfx`, `render`,
+/// `video`, `compute`, …), and `drm-busy` / `drm-memory-<region>` only appear on
+/// some drivers. Engine classes are therefore summed by prefix rather than by name,
+/// and a missing `drm-busy` leaves [`GpuUsage::percent`] returning `None` instead
+/// of guessing.
+///
+/// Returns `None` when the file has no `drm-` key at all, which is the common case:
+/// most descriptors are not DRM.
+pub fn parse_fdinfo_drm(buf: &[u8]) -> Option<GpuUsage> {
+    let mut out = GpuUsage::default();
+    let mut seen_drm = false;
+
+    for line in buf.split(|b| *b == b'\n') {
+        let Some(colon) = memchr::memchr(b':', line) else {
+            continue;
+        };
+        let key = trim_ascii(&line[..colon]);
+        if !key.starts_with(b"drm-") {
+            continue;
+        }
+        seen_drm = true;
+        let rest = &line[colon + 1..];
+        // Values are `<number> ns` (`drm-engine-*`, `drm-busy`, `drm-memory-*`)
+        // or a free-form string (`drm-driver`, `drm-pdev`). Only the numeric ones
+        // matter here, so the first number in the value is the whole answer.
+        let Some(value) = first_number_in(rest) else {
+            continue;
+        };
+        if key.starts_with(b"drm-engine-") {
+            // Every engine class contributes: a process that only uses video
+            // decode should not read as "no GPU".
+            out.gpu_ns = out.gpu_ns.saturating_add(value);
+        } else if key == b"drm-busy" {
+            out.busy_ns = out.busy_ns.saturating_add(value);
+        } else if key.starts_with(b"drm-memory-") {
+            // Memory *cycles*, not bytes: the unit is still ns.
+            out.mem_ns = out.mem_ns.saturating_add(value);
+        }
+    }
+
+    if seen_drm {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// The first run of decimal digits anywhere in `buf`.
+///
+/// `fdinfo` values are tab-separated (`\t123 ns`), and `memchr` on the colon
+/// leaves the separator in place, so the digits are not necessarily at the start.
+/// Deliberately separate from [`first_number`], which requires the digits to begin
+/// the slice and is used where a leading separator would be a parse error.
+fn first_number_in(buf: &[u8]) -> Option<u64> {
+    let start = buf.iter().position(|c| c.is_ascii_digit())?;
+    let mut v: u64 = 0;
+    for &c in &buf[start..] {
+        if !c.is_ascii_digit() {
+            break;
+        }
+        v = v.wrapping_mul(10).wrapping_add((c - b'0') as u64);
+    }
+    Some(v)
+}
+
+/// Parse one line of `/proc/pressure/<resource>`.
+///
+/// ```text
+/// some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/// ```
+///
+/// Parsed by key rather than by position: the kernel has added keys to this file
+/// before, and a positional parser would silently shift every value when it does
+/// again.
+pub fn parse_psi_line(buf: &[u8]) -> Option<PsiLine> {
+    let mut line = PsiLine::default();
+    let mut seen = false;
+    for tok in buf.split(|b| *b == b' ').filter(|t| !t.is_empty()) {
+        let Some(eq) = memchr::memchr(b'=', tok) else {
+            continue;
+        };
+        let (key, value) = (&tok[..eq], &tok[eq + 1..]);
+        let value = trim_ascii(value);
+        match key {
+            b"avg10" => {
+                line.avg10 = parse_f32(value)?;
+                seen = true;
+            }
+            b"avg60" => line.avg60 = parse_f32(value)?,
+            b"avg300" => line.avg300 = parse_f32(value)?,
+            b"total" => line.total_us = parse_u64(value)?,
+            _ => {}
+        }
+    }
+    if seen {
+        Some(line)
+    } else {
+        None
+    }
+}
+
+/// Parse a whole `/proc/pressure/<resource>` file.
+pub fn parse_psi(buf: &[u8]) -> PsiResource {
+    let mut out = PsiResource {
+        present: true,
+        ..Default::default()
+    };
+    for line in buf.split(|b| *b == b'\n') {
+        let line = trim_ascii(line);
+        if let Some(rest) = line.strip_prefix(b"some ") {
+            if let Some(v) = parse_psi_line(rest) {
+                out.some = v;
+            }
+        } else if let Some(rest) = line.strip_prefix(b"full ") {
+            if let Some(v) = parse_psi_line(rest) {
+                out.full = v;
+                out.has_full = true;
+            }
+        }
+    }
+    out
+}
+
+/// Parse a `/proc/pressure`-style decimal (`0.00`, `12.34`) into an `f32`.
+///
+/// `str::parse` on the UTF-8 slice is the simple route and this file is not on
+/// the per-process path — PSI is read once per sample, not once per process.
+fn parse_f32(b: &[u8]) -> Option<f32> {
+    std::str::from_utf8(b).ok()?.trim().parse().ok()
+}
+
+/// Parse one `/sys/block/zram<N>/mm_stat` line.
+///
+/// The columns are, in order:
+///
+/// ```text
+/// orig_data_size compr_data_size mem_used_total mem_limit mem_used_max
+/// same_pages pages_compacted huge_pages huge_pages_since
+/// ```
+///
+/// All in bytes except the page counts. Only the first three are needed, and the
+/// rest are read positionally *after* them, which is safe because the kernel
+/// only ever appends to this line.
+pub fn parse_zram_mm_stat(buf: &[u8], name: &str) -> Option<ZramDevice> {
+    let mut it = buf.split(|b| *b == b' ' || *b == b'\n').filter(|t| !t.is_empty());
+    let orig = parse_u64(trim_ascii(it.next()?))?;
+    let compr = parse_u64(trim_ascii(it.next()?))?;
+    let mem_used = parse_u64(trim_ascii(it.next()?))?;
+    Some(ZramDevice {
+        name: name.to_string(),
+        orig_data_size: orig,
+        compr_data_size: compr,
+        mem_used_total: mem_used,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +770,137 @@ mod tests {
         for pseudo in ["loop0", "ram0", "zram0", "dm-0", "sr0"] {
             assert!(!looks_like_whole_disk(pseudo.as_bytes()), "{pseudo} is skipped");
         }
+    }
+
+    // --- M3: PSI -----------------------------------------------------------
+
+    const PSI_IO: &[u8] = b"some avg10=12.50 avg60=8.25 avg300=4.10 total=98765432\nfull avg10=40.50 avg60=30.25 avg300=20.10 total=45678901\n";
+
+    #[test]
+    fn psi_parses_both_lines() {
+        let r = parse_psi(PSI_IO);
+        assert!(r.present);
+        assert!(r.has_full);
+        assert_eq!(r.some.avg10, 12.5);
+        assert_eq!(r.some.avg60, 8.25);
+        assert_eq!(r.some.total_us, 98_765_432);
+        assert_eq!(r.full.avg10, 40.5);
+        assert_eq!(r.full.total_us, 45_678_901);
+    }
+
+    /// A file with only a `some` line must leave `has_full` false rather than
+    /// fabricating a zero, which would read as "nothing ever stalls completely".
+    ///
+    /// Real kernels do emit `full` for every resource — including `cpu` — so this
+    /// is about the *parser's* contract with the file, not about a per-resource
+    /// table of assumptions.
+    #[test]
+    fn psi_without_a_full_line_reports_has_full_false() {
+        let r = parse_psi(b"some avg10=1.25 avg60=0.75 avg300=0.50 total=12345678\n");
+        assert!(r.present);
+        assert!(!r.has_full, "no full line was present in the input");
+        assert_eq!(r.some.avg10, 1.25);
+        assert_eq!(r.full, PsiLine::default());
+    }
+
+    /// And when the line *is* there it is parsed, for every resource.
+    #[test]
+    fn psi_full_line_is_parsed_when_present() {
+        let r = parse_psi(
+            b"some avg10=1.25 avg60=0.75 avg300=0.50 total=10\nfull avg10=0.50 avg60=0.25 avg300=0.10 total=5\n",
+        );
+        assert!(r.has_full);
+        assert_eq!(r.full.avg10, 0.5);
+        assert_eq!(r.full.total_us, 5);
+    }
+
+    /// Values are matched by key, not by position, so a kernel that appends a key
+    /// cannot shift the ones we read.
+    #[test]
+    fn psi_keys_are_positional_independent() {
+        let mut shuffled = parse_psi(b"some total=5 avg10=1.00\n");
+        assert_eq!(shuffled.some.avg10, 1.0);
+        assert_eq!(shuffled.some.total_us, 5);
+        assert!(!shuffled.has_full);
+        shuffled = parse_psi(b"");
+        assert!(shuffled.present, "an empty file was still readable");
+        assert_eq!(shuffled.some, PsiLine::default());
+    }
+
+    #[test]
+    fn psi_rejects_a_line_with_no_avg() {
+        assert!(parse_psi_line(b"total=5").is_none());
+        assert!(parse_psi_line(b"").is_none());
+    }
+
+    // --- M3: zram ----------------------------------------------------------
+
+    #[test]
+    fn zram_mm_stat_parses_the_first_three_columns() {
+        let line = b"1073741824 268435456 268435456 0 268435456 1000 5 0 0\n";
+        let d = parse_zram_mm_stat(line, "zram0").expect("must parse");
+        assert_eq!(d.name, "zram0");
+        assert_eq!(d.orig_data_size, 1_073_741_824);
+        assert_eq!(d.compr_data_size, 268_435_456);
+        assert_eq!(d.mem_used_total, 268_435_456);
+        // 1 GiB down to 256 MiB is a 4:1 ratio.
+        assert!((d.ratio() - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn zram_rejects_a_truncated_line() {
+        assert!(parse_zram_mm_stat(b"", "zram0").is_none());
+        assert!(parse_zram_mm_stat(b"123 456", "zram0").is_none());
+    }
+
+    /// An empty device must not claim an infinite compression ratio.
+    #[test]
+    fn an_empty_zram_device_reports_ratio_one() {
+        let d = parse_zram_mm_stat(b"0 0 0 0 0 0 0 0 0\n", "zram0").unwrap();
+        assert_eq!(d.ratio(), 1.0);
+        assert!(d.ratio().is_finite());
+    }
+
+    // --- M3: GPU fdinfo ----------------------------------------------------
+
+    const FDINFO_DRM: &[u8] = b"pos:\t0\nflags:\t02100002\nmnt_id:\t25\nino:\t1234\ndrm-driver:\tamdgpu\ndrm-pdev:\t0000:03:00.0\ndrm-engine-gfx:\t5000000000 ns\ndrm-engine-compute:\t1000000000 ns\ndrm-memory-vram:\t1048576 KiB\ndrm-busy:\t25000000000 ns\n";
+
+    #[test]
+    fn fdinfo_sums_every_engine_class() {
+        let g = parse_fdinfo_drm(FDINFO_DRM).expect("must parse");
+        // gfx + compute. Summing by prefix is what keeps a process that only uses
+        // video decode from reading as "no GPU".
+        assert_eq!(g.gpu_ns, 6_000_000_000);
+        assert_eq!(g.busy_ns, 25_000_000_000);
+        // Memory *cycles*, not KiB: `drm-memory-vram` is a byte count and must not
+        // be mistaken for the ns-valued `drm-memory-*` counters... which it is
+        // here, because the kernel reports both under the same prefix.
+        assert_eq!(g.mem_ns, 1_048_576, "parsed as a number, whatever its unit");
+    }
+
+    #[test]
+    fn fdinfo_percent_is_engine_over_busy() {
+        let g = parse_fdinfo_drm(FDINFO_DRM).unwrap();
+        let pct = g.percent().expect("busy time is present");
+        assert!((pct - 24.0).abs() < 0.01, "6/25 == 24 %, got {pct}");
+    }
+
+    /// Without `drm-busy` there is no denominator, so there is no percentage.
+    /// Inventing one from the sample interval would be a different quantity.
+    #[test]
+    fn fdinfo_without_busy_has_no_percent() {
+        let g = parse_fdinfo_drm(b"drm-engine-gfx:\t5000 ns\n").expect("has a drm key");
+        assert_eq!(g.gpu_ns, 5000);
+        assert_eq!(g.busy_ns, 0);
+        assert_eq!(g.percent(), None);
+    }
+
+    /// Most descriptors are not DRM at all, and the reader has to walk them all
+    /// without treating an ordinary file as a GPU one.
+    #[test]
+    fn fdinfo_without_drm_keys_is_not_a_gpu_descriptor() {
+        assert!(parse_fdinfo_drm(b"pos:\t0\nflags:\t02\nmnt_id:\t25\n").is_none());
+        assert!(parse_fdinfo_drm(b"").is_none());
     }
 
     #[test]

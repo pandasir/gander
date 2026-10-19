@@ -9,6 +9,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
+use crate::linux::parse::GpuUsage;
 use crate::row::Row;
 use crate::table::{Cache, Stable};
 use crate::Pid;
@@ -338,6 +339,131 @@ pub fn read_disk_counters(root: &Path) -> crate::system::DiskCounters {
         })
     })
     .unwrap_or_default()
+}
+
+/// Read `/proc/pressure/{cpu,memory,io,irq}`.
+///
+/// Returns `None` when none of them exist. PSI arrived in Linux 4.20 and is only
+/// present when `CONFIG_PSI=y`; on older kernels or a `psi=0` boot parameter the
+/// files are absent, and a meter that drew four empty bars would look like an
+/// idle machine rather than an unavailable feature.
+///
+/// The four files are read individually: a kernel can expose `cpu` and `memory`
+/// but not `irq` (the per-resource files are gated on the kernel's own feature
+/// detection), so one missing file must not discard the other three.
+pub fn read_psi(root: &Path) -> Option<crate::system::Psi> {
+    let mut psi = crate::system::Psi::default();
+    let read = |name: &str| -> Option<crate::system::PsiResource> {
+        let path = root.join("pressure").join(name);
+        with_file(path.as_os_str().as_bytes(), super::parse::parse_psi)
+    };
+
+    if let Some(r) = read("cpu") {
+        psi.cpu = r;
+    }
+    if let Some(r) = read("memory") {
+        psi.memory = r;
+    }
+    if let Some(r) = read("io") {
+        psi.io = r;
+    }
+    if let Some(r) = read("irq") {
+        psi.irq = r;
+    }
+
+    if psi.any_present() {
+        Some(psi)
+    } else {
+        None
+    }
+}
+
+/// Read every zram device's `/sys/block/zram<N>/mm_stat`.
+///
+/// `root` here is `/proc`, and sysfs lives beside it at `/sys`. A fixture tree or
+/// a container with a masked `/sys` simply reports no devices.
+pub fn read_zram(root: &Path) -> crate::system::ZramInfo {
+    let mut out = crate::system::ZramInfo::default();
+    let Some(sys) = root.parent().map(|p| p.join("sys/block")) else {
+        return out;
+    };
+    let Ok(entries) = fs::read_dir(&sys) else {
+        return out;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_bytes = name.as_bytes();
+        // `zram0`, `zram1`, … — a device, not some other entry that happens to
+        // start with the same letters.
+        if !name_bytes.starts_with(b"zram")
+            || !name_bytes[b"zram".len()..].iter().all(u8::is_ascii_digit)
+            || name_bytes.len() == b"zram".len()
+        {
+            continue;
+        }
+        let Ok(name_str) = std::str::from_utf8(name_bytes) else {
+            continue;
+        };
+        let mm_stat = sys.join(&name).join("mm_stat");
+        if let Some(device) = with_file(mm_stat.as_os_str().as_bytes(), |b| {
+            super::parse::parse_zram_mm_stat(b, name_str)
+        })
+        .flatten()
+        {
+            out.devices.push(device);
+        }
+    }
+
+    out.devices.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Read `/proc/<pid>/fdinfo/*` and sum every DRM descriptor's counters.
+///
+/// # Cost
+///
+/// One `readdir` plus one open/read per file descriptor. On a desktop this is a
+/// few thousand small reads per sample, which is why it is gated behind
+/// `ScanOptions::gpu` — the same treatment `smaps_rollup` gets. A process with no
+/// descriptors (kernel threads have no `fd` directory at all) costs one failed
+/// `readdir`.
+///
+/// `None` means "no GPU work visible": either the process holds no DRM fd, or the
+/// files are unreadable because it belongs to another user.
+pub fn read_gpu_usage(proc_root: &Path, pid: crate::Pid) -> Option<GpuUsage> {
+    let fdinfo = proc_root.join(pid.to_string()).join("fdinfo");
+    let entries = fs::read_dir(fdinfo).ok()?;
+
+    let mut total: Option<GpuUsage> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let Some(usage) = super::parse::parse_fdinfo_drm(&bytes) else {
+            continue;
+        };
+        let acc = total.get_or_insert_with(GpuUsage::default);
+        acc.gpu_ns = acc.gpu_ns.saturating_add(usage.gpu_ns);
+        acc.busy_ns = acc.busy_ns.saturating_add(usage.busy_ns);
+        acc.mem_ns = acc.mem_ns.saturating_add(usage.mem_ns);
+    }
+    total
+}
+
+/// Read `max_pool_percent` from `/sys/module/zswap/parameters`.
+///
+/// Used to give the zswap meter a ceiling. Returns `None` when zswap is not
+/// loaded or the parameter is unreadable, in which case the meter scales against
+/// the largest value it has seen instead.
+pub fn read_zswap_max_percent(root: &Path) -> Option<u64> {
+    let sys = root.parent()?.join("sys/module/zswap/parameters");
+    with_file(sys.join("max_pool_percent").as_os_str().as_bytes(), |b| {
+        let text = String::from_utf8_lossy(b);
+        text.trim().parse::<u64>().ok()
+    })
+    .flatten()
 }
 
 #[cfg(test)]
