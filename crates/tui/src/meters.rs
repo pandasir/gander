@@ -192,9 +192,9 @@ fn sanitize(ch: char) -> char {
 
 /// Write `text` at `(x, y)`, clipped to `max_width`.
 pub fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_width: u16) {
-    let mut x = x;
     let limit = x.saturating_add(max_width);
-    for ch in text.chars() {
+    for (dx, ch) in (0u16..).zip(text.chars()) {
+        let x = x + dx;
         if x >= limit || x >= buf.area.right() {
             break;
         }
@@ -202,7 +202,6 @@ pub fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_w
             cell.set_char(sanitize(ch));
             cell.set_style(style);
         }
-        x += 1;
     }
 }
 
