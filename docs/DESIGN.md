@@ -65,9 +65,12 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 ### M2 — power features
 
 - Screen tabs (independent column layout + sort + filter per tab) `Tab`/`Shift-Tab`
+  — **done**
 - Multi-select bulk actions across the tagged set
-- CPU affinity panel (`a`), I/O priority (`i`) — Linux
-- cgroup / container columns
+- CPU affinity panel (`a`), I/O priority (`i`) — Linux — **done**
+- cgroup / container columns — **done**; see
+  [ROADMAP.md § How container detection works](ROADMAP.md#how-container-detection-works)
+  for why membership needs the PID namespace and not just the cgroup path
 - Open files (`l`), env (`e`), command line wrapped (`w`), file locks (`x`),
   strace attach (`s`)
 - Display options: hide kernel threads, hide userland threads, highlight

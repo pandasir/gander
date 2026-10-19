@@ -14,9 +14,9 @@ gander 展示你的机器上正在运行什么、各自花了多少资源。它�
 [Releases 页面](https://github.com/pandasir/gander/releases)：
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.1.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.1.0-aarch64-apple-darwin.tar.gz
-./gander-0.1.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.2.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.2.0-aarch64-apple-darwin.tar.gz
+./gander-0.2.0-aarch64-apple-darwin/gander
 ```
 
 按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
@@ -123,6 +123,19 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 配置是你会复制到另一台机器的*决定*，历史只是使用这台机器的*副产品*。在
 `F3` / `F4` 提示符里按 `Up` / `Down` 即可翻阅，重跑昨天的过滤只需要一个键。
 
+### 容器列（Linux）
+
+`F2` → Columns 在 Linux 上额外提供两列：
+
+- **`CONTAINER`** —— 进程所属容器，格式 `运行时:id`，例如
+  `docker:1f2e3d4c5b6a`、`kubepods:1a2b3c4d-...`、`lxc:web-1`。宿主进程显示 `-`。
+- **`CGROUP`** —— 完整 cgroup 路径，id 不够用时查看。
+
+识别同时使用 cgroup 路径**和** PID namespace，因为两者都不充分：路径能给出运行时
+和 id，但在自带 cgroup namespace 的容器里只会读到 `/`；namespace 能说明"在容器里"
+但说不出是哪个。namespace 判定为容器、路径又给不出名字时显示 `container:?`，而不是
+编造一个 id。
+
 ### 表头 meter
 
 `F2` → Header 可增删与排序；`I` 切换选中 meter 的显示模式（text / bar /
@@ -143,6 +156,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 |---|---|---|
 | 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` |
+| 容器列 | cgroup + PID namespace | 不可用 |
 | 线程按行显示 | 支持（`H`） | 支持（`H`） |
 | CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 |
 | I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 |
@@ -155,7 +169,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 293 个，Linux 260 个
+cargo test                 # macOS 300 个，Linux 279 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```

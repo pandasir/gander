@@ -23,6 +23,8 @@ design.
 | per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
 | host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` |
 | host disk throughput | `/proc/diskstats` + `/sys/block` | none without IOKit |
+| cgroup path | `/proc/<pid>/cgroup` | no cgroup concept |
+| container detection | cgroup path + PID namespace | no containers |
 | Test coverage | fixtures + live | live only (no fixture format to replay) |
 
 Both backends implement `PlatformSampler`, and `gander_core::Sampler` resolves to
@@ -246,7 +248,7 @@ also why `htop` runs `sudo htop` when you want full detail.
 
 | Feature | Why |
 |---|---|
-| cgroup, container columns | No cgroup concept. Fields are `#[cfg]`-gated out. |
+| cgroup, container columns | No cgroup concept. Fields are `#[cfg]`-gated out, so `CGROUP` and `CONTAINER` do not appear in the setup screen at all rather than appearing and rendering `-`. |
 | PSI pressure meters | No `/proc/pressure`. |
 | Zram / Zswap | Linux-only subsystems. ZFS ARC could be added later. |
 | PSS / EPSS | No `smaps_rollup`; `ri_phys_footprint` is the closest analogue and is already available via rusage. |

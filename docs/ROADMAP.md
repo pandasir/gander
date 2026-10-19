@@ -29,7 +29,7 @@ on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 293 tests on macOS, 260 on Linux, zero clippy warnings on both | done |
+| 300 tests on macOS, 279 on Linux, zero clippy warnings on both | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## The interface
@@ -173,16 +173,80 @@ of drawing a permanent `0 B/s` that looks like a dead disk.
   was no way to see that a filter was active. It now occupies the table's header
   row in both layouts, which is where htop puts it.
 
-## Then: M2 / M3
+## M2 — power features
+
+In progress. Screen tabs, bulk actions, the affinity/I/O panels and the modal
+screens were already done ahead of schedule during M0/M1; the cgroup columns are
+the first item that had to wait for this milestone.
+
+| Area | State |
+|---|---|
+| Screen tabs with per-tab columns and sort | done (ahead of schedule) |
+| CPU affinity (`a`) and I/O priority (`i`) panels | done (ahead of schedule) |
+| Open files (`l`), env (`e`), command line (`w`), file locks (`x`) | done (ahead of schedule) |
+| `CGROUP` column: the process's cgroup path | done |
+| `CONTAINER` column: runtime + container id | done |
+| Multi-select bulk actions across the tagged set | not started |
+| Hide-containerised filter (htop's `O`) | not started |
+| Highlight base name / stale exe | config exists, rendering not wired |
+
+### How container detection works
+
+Two signals, because neither is sufficient on its own.
+
+**The cgroup path is the informative one.** `/proc/<pid>/cgroup` names the runtime
+and the container, so it is what the column displays:
+
+| runtime | example path | shown as |
+|---|---|---|
+| Docker (v1) | `/docker/1f2e3d4c…` | `docker:1f2e3d4c5b6a` |
+| Docker (v2, systemd) | `/system.slice/docker-1f2e3d4c….scope` | `docker:1f2e3d4c5b6a` |
+| Podman | `/machine.slice/libpod-1f2e….scope` | `podman:1f2e3d4c5b6a` |
+| Kubernetes | `…/kubepods-burstable-pod<uid>.slice/cri-containerd-<id>.scope` | `kubepods:<uid>` |
+| LXC | `/lxc.payload.<name>` | `lxc:<name>` |
+| systemd-nspawn | `/machine.slice/machine-<name>.scope` | `nspawn:<name>` |
+
+The bare marker (`container_from_cgroup` used to return `"docker"`) is not enough:
+every containerised process on the machine then renders the same word, which is a
+boolean dressed up as data. The id is what distinguishes rows. Kubernetes is
+tested before the plain runtimes because its leaf is `cri-containerd-<id>.scope` —
+testing `containerd` first loses the pod identity, and the pod is the thing that
+stays put across a container restart.
+
+**The PID namespace is the membership test.** A container with its own cgroup
+namespace sees `/` in `/proc/<pid>/cgroup`, so the path says nothing and a
+cgroup-only check reports "no container" for a process that is plainly inside one.
+Comparing `/proc/<pid>/ns/pid` against **our own** `/proc/self/ns/pid` answers the
+question the column asks. Anchoring on `/proc/1` looks equivalent and is not:
+inside a container pid 1 *is* the container's init, so every process compares equal
+and nothing is ever flagged. htop does the same thing (`LinuxProcessTable.c` reads
+`PROCDIR "/self/ns/pid"` into `rootPidNs`).
+
+When the namespace says "containerised" but the cgroup path could not name it, the
+column says `container:?` rather than inventing an identifier. A namespace inode
+is not a container id, and printing one would look like an answer.
+
+### Two bugs found here
+
+- **`row.cgroup` held the raw `/proc/<pid>/cgroup` line**, so the column would have
+  shown `0::/init.scope` — hierarchy id and an empty controller list — for every
+  process. It now holds the path, preferring the unified (empty-controller) entry.
+  The field had been loaded since M0 and never displayed, which is why nobody
+  noticed.
+- **A new `Field` with no arm in `sort_order` silently sorts by pid.** The `_` arm
+  is the pid comparator, so "sort by CONTAINER" reordered by pid and looked like a
+  sort that did nothing on an already pid-sorted list. Both new columns have their
+  own comparator, and there is a test for each.
+
+## Then: M3
 
 See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 
-1. cgroup / container columns — the parsers already exist in `linux/fsops.rs`.
-2. PSS / EPSS columns, loaded lazily and only when visible.
-3. PSI pressure meters.
-4. Zram / Zswap / HugePages meters.
-5. GPU columns via `drm-usage-stats` (no vendor SDK).
-6. Delay accounting via `TASKSTATS` netlink — lowest priority.
+1. PSS / EPSS columns, loaded lazily and only when visible.
+2. PSI pressure meters.
+3. Zram / Zswap / HugePages meters.
+4. GPU columns via `drm-usage-stats` (no vendor SDK).
+5. Delay accounting via `TASKSTATS` netlink — lowest priority.
 
 ## Deliberately not planned
 

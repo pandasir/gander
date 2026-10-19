@@ -15,9 +15,9 @@ of on horizontal bars.
 [Releases page](https://github.com/pandasir/gander/releases):
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.1.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.1.0-aarch64-apple-darwin.tar.gz
-./gander-0.1.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.2.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.2.0-aarch64-apple-darwin.tar.gz
+./gander-0.2.0-aarch64-apple-darwin/gander
 ```
 
 Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
@@ -136,6 +136,21 @@ Search and filter history lives separately, at
 copy between machines, history is a byproduct of using this one. `Up` / `Down` in
 the `F3` / `F4` prompt walks it, so re-running yesterday's filter is one key.
 
+### Container columns (Linux)
+
+`F2` → Columns offers two more on Linux:
+
+- **`CONTAINER`** — the container a process is in, as `runtime:id`, e.g.
+  `docker:1f2e3d4c5b6a`, `kubepods:1a2b3c4d-...`, `lxc:web-1`. `-` for a host
+  process.
+- **`CGROUP`** — the full cgroup path, for when the id is not enough.
+
+Detection uses the cgroup path *and* the PID namespace, because neither is
+sufficient: the path names the runtime and the id but reads `/` inside a container
+that has its own cgroup namespace, and the namespace says "containerised" without
+saying which. A process the namespace flags but the path cannot name shows
+`container:?` rather than an invented id.
+
 ### Header meters
 
 `F2` → Header adds and reorders them; `I` cycles the selected meter's mode
@@ -159,6 +174,7 @@ a 100 Mbit link.
 |---|---|---|
 | Process list | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | Per-process details | `/proc/<pid>` | Mach + `proc_pidinfo` |
+| Container columns | cgroup + PID namespace | not available |
 | Threads as rows | yes (`H`) | yes (`H`) |
 | CPU affinity (`a`) | read/write | scheduler hint only, explains why |
 | I/O priority (`i`) | read/write | not available, explains why |
@@ -171,7 +187,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 293 on macOS, 260 on Linux
+cargo test                 # 300 on macOS, 279 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
