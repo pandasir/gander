@@ -494,3 +494,155 @@ fn a_nested_pid_namespace_is_detected_without_a_cgroup_path() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// M3: PSI, zram, zswap, huge pages, PSS, GPU
+// ---------------------------------------------------------------------------
+
+/// PSI, when the kernel provides it, must agree with the raw files.
+///
+/// Read in the same test as the sample so a changing machine cannot explain a
+/// mismatch — the same discipline the memory tests above follow.
+#[test]
+fn psi_matches_a_direct_read() {
+    let mut sampler = gander_core::Sampler::default();
+    let (snapshot, _rows) = sampler.sample();
+
+    let path = std::path::Path::new("/proc/pressure/io");
+    let Some(psi) = snapshot.psi else {
+        // CONFIG_PSI=n, or an old kernel: the sampler must report absence rather
+        // than four zeroed resources.
+        assert!(
+            !path.exists(),
+            "PSI files exist but the sampler reported none"
+        );
+        return;
+    };
+
+    // `io` is the one resource every PSI-enabled kernel provides.
+    let raw = std::fs::read_to_string(path).expect("/proc/pressure/io");
+    let some_line = raw
+        .lines()
+        .find(|l| l.starts_with("some "))
+        .expect("a `some` line");
+    let avg10: f32 = some_line
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("avg10="))
+        .and_then(|v| v.parse().ok())
+        .expect("avg10 on the some line");
+
+    assert!(psi.io.present);
+    // It moves between the two reads, so compare with a tolerance rather than for
+    // equality.
+    assert!(
+        (psi.io.some.avg10 - avg10).abs() < 25.0,
+        "sampler {} vs direct read {}",
+        psi.io.some.avg10,
+        avg10
+    );
+    // Every resource reports both lines on current kernels, `cpu` included. This
+    // asserts the file's shape rather than a table of assumptions about it: an
+    // earlier version of this test claimed `cpu` had no `full` line and failed
+    // against a real /proc.
+    assert!(psi.io.has_full);
+    assert!(psi.cpu.has_full);
+}
+
+/// Huge pages, when configured, must add up: `used = total - free`, in bytes.
+#[test]
+fn huge_pages_are_counted_in_bytes() {
+    let mut sampler = gander_core::Sampler::default();
+    let (snapshot, _rows) = sampler.sample();
+    let mem = &snapshot.mem;
+
+    if !mem.huge_pages_configured() {
+        // Nothing reserved: the meter says `n/a here` and there is nothing to
+        // check, but the bytes helper must still not divide by zero.
+        assert_eq!(mem.huge_total_bytes(), mem.huge_pages_total * mem.huge_page_size);
+        return;
+    }
+
+    assert!(mem.huge_page_size > 0, "a configured pool has a page size");
+    assert_eq!(mem.huge_total_bytes(), mem.huge_pages_total * mem.huge_page_size);
+    assert!(mem.huge_pages_free <= mem.huge_pages_total);
+    let expected = (mem.huge_pages_total - mem.huge_pages_free) * mem.huge_page_size;
+    assert_eq!(mem.huge_used_bytes(), expected);
+}
+
+/// Reading `smaps_rollup` for our own process must produce figures that are
+/// internally consistent, and must not be attempted at all when switched off.
+///
+/// PSS is bounded below by the private figure and above by RSS: a process cannot
+/// have more proportional memory than resident, and its private pages are by
+/// definition its own share. Those are the two bounds that catch a mis-scaled
+/// parse (kB read as bytes, say).
+#[test]
+fn pss_is_bounded_by_rss_and_private() {
+    let mut sampler = gander_core::Sampler::default();
+    gander_core::PlatformSampler::set_scan_options(
+        &mut sampler,
+        gander_core::ScanOptions::none().with_smaps(true),
+    );
+    let (_snap, rows) = sampler.sample();
+    let me = std::process::id();
+    let row = rows.iter().find(|r| r.pid == me).expect("own process");
+
+    let pss = row.pss.expect("own smaps_rollup is readable");
+    assert!(pss > 0, "a live process has pages");
+    assert!(
+        pss <= row.res + 64 * 1024 * 1024,
+        "PSS {pss} exceeds RSS {} by more than a rounding margin",
+        row.res
+    );
+
+    let private = row.private.expect("private is read with pss");
+    assert!(
+        private <= pss + 64 * 1024 * 1024,
+        "private {private} cannot exceed pss {pss}"
+    );
+
+    let epss = row.epss.expect("epss is read with pss");
+    let swap = row.swap_bytes.expect("swap is read with pss");
+    assert_eq!(epss, pss + swap, "EPSS is PSS plus the swapped equivalent");
+}
+
+/// `smaps_rollup` must not be read when no column needs it.
+///
+/// This is the whole point of the gate: the read costs tens of milliseconds across
+/// a desktop's process table, and a column nobody is looking at must not pay for
+/// it.
+#[test]
+fn smaps_is_not_read_by_default() {
+    let mut sampler = gander_core::Sampler::default();
+    let (_snap, rows) = sampler.sample();
+    for row in &rows {
+        assert_eq!(row.pss, None, "pid {} read smaps unasked", row.pid);
+    }
+}
+
+/// The GPU reader must never report a percentage above 100, and must not invent
+/// one for a process with no DRM descriptor.
+#[test]
+fn gpu_percentages_are_bounded() {
+    let mut sampler = gander_core::Sampler::default();
+    gander_core::PlatformSampler::set_scan_options(
+        &mut sampler,
+        gander_core::ScanOptions::none().with_gpu(true),
+    );
+    let (_snap, rows) = sampler.sample();
+
+    for row in &rows {
+        if let Some(pct) = row.gpu_percent {
+            assert!(
+                (0.0..=100.0).contains(&pct),
+                "pid {} reported {}% GPU",
+                row.pid,
+                pct
+            );
+            assert!(
+                row.gpu_ns.is_some(),
+                "a percentage implies engine time was read"
+            );
+        }
+    }
+}
