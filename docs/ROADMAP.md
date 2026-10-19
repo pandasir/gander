@@ -307,10 +307,7 @@ is not a container id, and printing one would look like an answer.
 
 ## M3 — Linux depth
 
-Shipped in v0.4.0. Four of the five items are done; delay accounting is the
-remainder and stays last, because it needs raw `TASKSTATS` netlink and the payoff is
-small next to the four that landed. It is the only unchecked item in the table and
-the milestone is otherwise closed.
+Complete. All five items shipped: four in v0.4.0, delay accounting in v0.5.0.
 
 | Area | State |
 |---|---|
@@ -318,7 +315,7 @@ the milestone is otherwise closed.
 | PSI pressure: `PSI` meter, and a pressure block in the `panels` column | done |
 | `Zram` / `Zswap` / `HugePages` meters | done |
 | GPU columns (`GPU%`, `GPU_TIME`) via `drm-usage-stats` in `fdinfo` | done |
-| Delay accounting (`TASKSTATS` netlink) | not started |
+| Delay accounting: `CPUD%` / `IOD%` / `SWPD%` over `TASKSTATS` netlink | done, needs `CAP_NET_ADMIN` |
 
 ### The cost gate, and why it is one struct
 
@@ -435,6 +432,45 @@ A process with no DRM descriptor renders `-`, not `0.0`: it is not using zero
 percent of the GPU, it is not using the GPU at all, and those read differently in a
 sorted list.
 
+### Delay accounting, and the two ways it is absent
+
+`CPUD%`, `IOD%` and `SWPD%` are the share of a task's life spent *waiting*:
+runnable but not on a CPU, blocked on synchronous block I/O, and waiting for a page
+to be swapped back in. CPU% says how much work a process does; these say how much
+of its time was spent unable to do any. A process at 0.0 % CPU with 40 % `IOD%` is
+not idle, it is stuck, and no other column in the table can tell those apart.
+
+The data comes from `TASKSTATS` over generic netlink, which htop reaches through
+`libnl3` — `dlopen`ed and called through function pointers, so a missing library
+degrades rather than fails. gander speaks the protocol directly instead. It is four
+messages, and it keeps the dependency list at `libc` only.
+
+**It needs `CAP_NET_ADMIN`.** `TASKSTATS_CMD_GET` is not readable by an ordinary
+process, which is the normal case: an unprivileged `gander` gets `EPERM` on every
+request. The sampler records the first refusal and stops asking — one wasted
+syscall rather than one per process per tick — and every row renders `-`. That is
+the same rule the PSS columns follow: `-` is "not measured", `0.0%` is a
+measurement, and only one of them is true.
+
+`CONFIG_TASKSTATS=n` is the other absence: the generic-netlink family does not
+exist, `DelayAcct::open()` returns `None`, and the columns stay empty. Both cases
+look identical from the table, which is correct — the user cannot act on the
+difference.
+
+**The percentage is a lifetime average**, not an interval rate. The kernel keeps
+cumulative `*_delay_total` counters in nanoseconds and `ac_etime` in microseconds;
+`delay / (etime × 1000)` is the share of the task's whole life spent waiting. htop
+computes the same figure from the same two numbers. It does not respond to a change
+in behaviour within one tick the way `CPU%` does — a process that stalled for a
+minute an hour ago carries that minute for the next hour. Reading it as a
+current-state gauge would be wrong, which is why the description says "share of
+this task's life" rather than "waiting now".
+
+`cpu_delay_total` is documented as updated non-atomically with respect to
+`ac_etime`, so a sample can show more delay than elapsed time. The percentage is
+clamped to 100: the honest reading is "essentially all of it", and an unclamped
+value would sort above a process that really is stalled all the time.
+
 ## Deliberately not planned
 
 - A PCP-style dynamic metric engine (runtime-defined columns/meters).
@@ -468,7 +504,12 @@ sorted list.
   `max_pool_percent` will see the bar stop short of full.
 - `M_PSS` and friends need `CAP_SYS_PTRACE` to read another user's process, which
   is the normal Linux permission model. Those rows show `-`.
-- Delay accounting (item 5 of M3) is not implemented.
+- Delay accounting needs `CAP_NET_ADMIN`, so an unprivileged `gander` shows `-` in
+  `CPUD%`, `IOD%` and `SWPD%`. That is the kernel's permission model, not a
+  limitation of the read.
+- The delay percentages are lifetime averages rather than interval rates, because
+  the kernel exposes no interval counter. A process that stalled once an hour ago
+  still shows that stall.
 - macOS has no host-wide disk throughput counter without IOKit, so the `DiskIO`
   meter reports `n/a here` there. The per-process figures are parsed
   (`proc_pid_rusage`) but not displayed yet.

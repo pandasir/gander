@@ -287,6 +287,7 @@ also why `htop` runs `sudo htop` when you want full detail.
 | `a` affinity panel | `thread_policy_set` exists but is per-thread, not per-process; deferred. |
 | `i` I/O priority | No `ioprio_set` equivalent. |
 | GPU columns | Needs `IOKit`/`IOAccelerator`; a different mechanism from Linux `drm-usage-stats`, and the design forbids a vendor SDK. Gated out of the column list on macOS. |
+| Delay accounting | `TASKSTATS` is a Linux generic-netlink family with no Darwin equivalent. The `CPUD%`/`IOD%`/`SWPD%` columns are gated out on macOS. |
 | `DiskIO` meter (host-wide) | No host-wide disk byte counter without IOKit. Per-process `rusage` figures exist but summing them double-counts shared I/O. The meter reports `n/a here`. |
 
 ## Network and disk counters
@@ -385,9 +386,10 @@ and renumbering everything.
 | zswap | `Meminfo: Zswap`, `/sys/module/zswap/parameters/max_pool_percent` | world-readable |
 | huge pages | `Meminfo: HugePages_*`, `Hugepagesize` | world-readable |
 | GPU | `/proc/<pid>/fdinfo/*`, `drm-*` keys | own processes |
+| Delay accounting | `TASKSTATS` generic netlink | **`CAP_NET_ADMIN`** |
 
-The two expensive ones — `smaps_rollup` and `fdinfo` — are only read when a column
-that needs them is on screen. See [ROADMAP.md § The cost gate](ROADMAP.md#the-cost-gate-and-why-it-is-one-struct).
+The expensive ones — `smaps_rollup`, `fdinfo` and the `TASKSTATS` round trip — are
+only read when a column that needs them is on screen. See [ROADMAP.md § The cost gate](ROADMAP.md#the-cost-gate-and-why-it-is-one-struct).
 
 ### The trap in `/proc/meminfo`'s huge page counters
 
@@ -425,6 +427,8 @@ tree on any unix:
 | disk counters vs `/proc/diskstats` | matches a direct sum over `/sys/block` disks |
 | throughput after two samples | finite, non-negative, counters monotonic |
 | PSI vs a direct read of `/proc/pressure/io` | within 25 points (it moves between reads) |
+| delay percentages | bounded to `0..=100`, all three present or all three absent, and never populated unasked |
+| delay accounting without `CAP_NET_ADMIN` | `EPERM` once, then every column `-` — asserted, not just observed |
 | huge pages | `used = total - free`, in bytes; page counts not multiplied by 1024 |
 | PSS | bounded by RSS, `private <= pss`, `epss == pss + swap` |
 | `smaps_rollup` unread by default | every row has `pss == None` |

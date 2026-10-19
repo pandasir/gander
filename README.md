@@ -249,6 +249,9 @@ On Linux, `F2` → Columns also offers the PSS family and the GPU pair:
 | `M_SWAP` | Memory this process has pushed to swap |
 | `GPU%` | Share of GPU time, from `drm-usage-stats` |
 | `GPU_TIME` | Cumulative GPU time, summed over every engine class |
+| `CPUD%` | Share of this task's life runnable but waiting for a CPU |
+| `IOD%` | Share of this task's life waiting for synchronous block I/O |
+| `SWPD%` | Share of this task's life waiting for a page to be swapped in |
 
 **Why PSS rather than RES.** RSS counts a shared page once per process, so two
 processes sharing 100 MB of libraries both report 100 MB and the `RES` column adds
@@ -266,6 +269,21 @@ figures were not read shows `-`, never `0`: another user's `smaps_rollup` needs
 **No vendor SDK.** The GPU figures come from the kernel's own `drm-usage-stats`
 keys, so `amdgpu`, `i915`/`xe` and `nouveau` work with nothing installed. A driver
 that does not implement them shows dashes.
+
+**The delay columns answer a different question.** `CPU%` says how much work a
+process does; `IOD%` says how much of its life it spent unable to do any. A process
+at 0.0 % CPU with 40 % `IOD%` is not idle, it is stuck — and nothing else in the
+table distinguishes the two. They come from `TASKSTATS` over generic netlink,
+speaking the protocol directly rather than linking `libnl3`.
+
+They need `CAP_NET_ADMIN`, which an ordinary process does not have: unprivileged
+`gander` gets `EPERM`, stops asking after the first refusal, and renders `-` in all
+three columns. That is deliberate — `0.0%` would claim the process never waited, and
+the figure was never obtained.
+
+The percentages are **lifetime averages**, not interval rates: the kernel keeps
+cumulative counters, so a stall an hour ago still shows. Read them as "how much of
+this process's existence was spent waiting", not "what is it doing right now".
 
 ### Themes
 
@@ -298,6 +316,7 @@ all four draw paths (htop, panels, setup, dialogs) inherit it.
 | PSI pressure (some/full) | `/proc/pressure` | not available |
 | Zram / Zswap / HugePages meters | `/sys/block/zram*`, `meminfo` | not available |
 | GPU columns (`GPU%`, `GPU_TIME`) | `drm-usage-stats` in `fdinfo` | not available |
+| Delay columns (`CPUD%`, `IOD%`, `SWPD%`) | `TASKSTATS` netlink (needs `CAP_NET_ADMIN`) | not available |
 | Threads as rows | yes (`H`) | yes (`H`) |
 | CPU affinity (`a`) | read/write | scheduler hint only, explains why |
 | I/O priority (`i`) | read/write | not available, explains why |
@@ -310,7 +329,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 350 on macOS, 349 on Linux
+cargo test                 # 356 on macOS, 366 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```

@@ -223,6 +223,9 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 | `M_SWAP` | 该进程换出到 swap 的内存量 |
 | `GPU%` | GPU 时间占比，来自 `drm-usage-stats` |
 | `GPU_TIME` | 累计 GPU 时间，对所有引擎类求和 |
+| `CPUD%` | 该任务生命中处于「可运行但在等 CPU」的比例 |
+| `IOD%` | 该任务生命中等待同步块 I/O 的比例 |
+| `SWPD%` | 该任务生命中等待换入页的比例 |
 
 **为什么用 PSS 而不是 RES。** RSS 对每个进程各算一次共享页，所以两个进程共享
 100 MB 库时各自都报 100 MB，`RES` 列加起来就是 200 MB 并不存在的内存。PSS 把每个
@@ -237,6 +240,18 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 **不依赖任何厂商 SDK。** GPU 数字来自内核自己的 `drm-usage-stats` 键，所以
 `amdgpu`、`i915`/`xe` 和 `nouveau` 无需安装任何东西即可工作。不实现这些键的驱动
 显示短横线。
+
+**延迟列回答的是另一个问题。** `CPU%` 说的是进程做了多少活，`IOD%` 说的是它生命中
+有多少时间*做不了*活。一个 0.0% CPU 但 `IOD%` 为 40% 的进程不是空闲，是卡住了——
+表里没有别的列能区分这两者。数据来自 generic netlink 上的 `TASKSTATS`，直接说协议
+而不是链接 `libnl3`。
+
+它们需要 `CAP_NET_ADMIN`，普通进程没有：无特权的 `gander` 会拿到 `EPERM`，在第一次
+被拒后停止询问，三列全部显示 `-`。这是有意的——`0.0%` 会宣称该进程从不等待，而这个
+数字根本没取到。
+
+百分比是**生命周期平均值**而非区间速率：内核只保存累计计数器，所以一小时前的一次卡顿
+现在仍然显示。把它读作「这个进程的存在中有多少时间在等待」，而不是「它现在在干什么」。
 
 ### 主题
 
@@ -268,6 +283,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 | PSI 压力（some/full） | `/proc/pressure` | 不可用 |
 | Zram / Zswap / HugePages meter | `/sys/block/zram*`、`meminfo` | 不可用 |
 | GPU 列（`GPU%`、`GPU_TIME`） | `fdinfo` 里的 `drm-usage-stats` | 不可用 |
+| 延迟列（`CPUD%`、`IOD%`、`SWPD%`） | `TASKSTATS` netlink（需 `CAP_NET_ADMIN`） | 不可用 |
 | 线程按行显示 | 支持（`H`） | 支持（`H`） |
 | CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 |
 | I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 |
@@ -280,7 +296,7 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 350 个，Linux 349 个
+cargo test                 # macOS 356 个，Linux 366 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```

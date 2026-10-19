@@ -87,8 +87,9 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 - [x] GPU columns via `drm-usage-stats` (no vendor SDK) — `GPU%` and `GPU_TIME`,
       gated the same way (`ScanOptions::gpu`)
 - [x] Container detection via cgroup + namespace (not heuristics) — landed in M2
-- [ ] Delay accounting (`TASKSTATS` netlink) — **lowest priority**, needs raw
-      netlink
+- [x] Delay accounting (`TASKSTATS` netlink) — the `CPUD%`, `IOD%` and `SWPD%`
+      columns, gated the same way (`ScanOptions::delayacct`). Needs
+      `CAP_NET_ADMIN`; without it the columns render `-`
 - [ ] Backtrace (libunwind-ptrace) **[later]**, demangling **[later]**
 
 The gating decision is one value (`gander_core::ScanOptions`) rather than a setter
