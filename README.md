@@ -5,7 +5,8 @@
 > A cross-platform interactive process viewer in Rust — `take a gander` at your system.
 
 gander shows you what is running on your machine and what it is costing. It runs
-on **Linux and macOS**, keeps htop's keybindings, and is built on a different
+on **Linux and macOS**, keeps almost all of htop's keybindings (the two that differ
+are [listed below](#keys-that-differ-from-htop)), and is built on a different
 screen layout than htop — one that spends its space on the process list instead
 of on horizontal bars.
 
@@ -24,9 +25,12 @@ Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
 macOS; `x86_64-unknown-linux-musl` is a static binary that runs on any distro).
 Each archive has a `.sha256` checksum next to it.
 
-**From source** — requires a Rust toolchain (**1.75+**). Nothing else: no
-libcurses, no ncurses development headers, no C compiler beyond what `rustc`
-already needs.
+**From source** — requires **Rust 1.89+**. Nothing else: no libcurses, no ncurses
+development headers, no C compiler beyond what `rustc` already needs.
+
+The floor is not decorative: `ratatui` 0.30 needs 1.88 and `uuid` needs 1.89, and
+building on an older toolchain fails. CI builds against whatever `Cargo.toml`
+declares, so this number cannot drift away from reality unnoticed.
 
 ```bash
 git clone https://github.com/pandasir/gander
@@ -58,18 +62,45 @@ gander --filter "python|node"              # only matching command lines
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
-Run `gander --help` for the full list. Every keybinding is htop's, so there is
-nothing new to learn: [docs/KEYS.md](docs/KEYS.md). The only additions are `L`
-(switch layout) and `H` (show one row per thread, Linux).
+Run `gander --help` for the full list; every keybinding is either htop's or
+listed in [docs/KEYS.md](docs/KEYS.md).
+
+## Keys that differ from htop
+
+Two of htop's existing bindings mean something else here, so an htop user pressing
+them gets a different action than expected:
+
+| Key | htop | gander |
+|---|---|---|
+| `I` | invert the sort order | cycle the selected header meter's display mode |
+| `+` / `-` | expand / collapse a subtree in tree view | faster / slower sampling |
+
+`+`/`-` were only ambiguous in tree view; outside it htop does not bind them, so
+the common case is unaffected. `I` is a real conflict — there is no invert-sort
+key any more; use `F6` / `<` `>` / `.` to reach the order you want.
+
+Genuinely new keys:
+
+| Key | Action |
+|---|---|
+| `L` | switch layout: `panels` ⇄ `htop` |
+| `I` | cycle the selected header meter's mode (text / bar / graph) |
+| `Shift+Left` / `Shift+Right` | move the header meter cursor |
+
+`H` is **not** new — it is htop's "hide user threads" — and it works on both
+platforms, not just Linux.
 
 ## Why gander over htop
 
 **The process list gets the vertical space.** htop draws its meters horizontally,
 and its height grows with the core count: one row per core. gander puts the system
 state in a vertical side column whose height barely changes, with per-core load in
-a grid that fits 16 cores in two rows. Measured on this 8-core machine in a 120x24
-terminal: htop shows **13** process rows, gander shows **21** — and the gap widens
-on machines with more cores.
+a grid that fits 16 cores in two rows.
+
+Measured on this 10-core machine in a 120x24 terminal, both freshly started and
+captured through a real terminal emulator: htop shows **11** process rows, gander
+shows **21** — nearly twice the list. The gap widens on machines with more cores,
+because only htop's side of it grows.
 
 **You never leave the list to inspect a process.** In htop, learning a process's
 command line, its exact memory, or whether it is sleeping or running means opening
@@ -96,6 +127,17 @@ usable in monitoring and shell pipelines, which htop cannot do.
 only about 60% of it. Run state comes from `proc_taskinfo`, because the `p_stat`
 field on current Darwin reports "runnable" for a process blocked in `read(2)`.
 
+**Host throughput in the header.** htop has per-process I/O rate columns, but no
+host-wide network or disk meter. gander's `NetworkIO` and `DiskIO` scale their bars
+against the largest rate seen so far rather than a fixed ceiling, so they are
+legible on a 100 Mbit link and on a 10 Gbit one.
+
+**It tells you *which* container.** htop's `CONTAINER` column flags membership;
+gander shows `docker:1f2e3d4c5b6a` or `kubepods:<pod-uid>`. Detection combines the
+cgroup path (which names the runtime and id) with the PID namespace (which is the
+only reliable membership test — a container with its own cgroup namespace reports
+`/` and would otherwise look like the host).
+
 ## The two layouts
 
 gander ships two, and `L` switches between them. The choice persists.
@@ -106,12 +148,19 @@ value bars, and the persistent inspector:
 ```
   CPU    21.5%│ PID  CPU%  MEM%   RES  COMMAND             2032 iTerm2
   ████░░░░░░░░│ 2032  23.9  1.9   152M  /Applications/iTe…  /Applications/iTerm…
-  8 cores     │ 24087 11.4  0.1   5.9M  gander              USER   panda
-  ▂▂▂▂▃▂▁▁    │ 6511   7.4  3.0   242M  Google Chrome       STATE  S sleeping
-  MEM  3.7G/8G│ …                     …                    CPU    23.9%
-  SWP 168M/1G │                                            MEM    1.9% 114M
+  10 cores    │ 24087 11.4  0.1   5.9M  gander              USER   panda
+  ▂▂▂▂▃▂▁▁ ·  │ 6511   7.4  3.0   242M  Google Chrome       STATE  S sleeping
+  MEM  5.5G/16G│ …                     …                    CPU    23.9%
+  SWP  3.9G/5G│                                            MEM    1.9% 114M
   LOAD 2.69…  │                                            TIME   30:09.95
+  UP     5h 3m│
+  TASKS  552  │
+  RUN      1  │
+  THR   3370  │
 ```
+
+The per-core grid paints one cell per core, colour-banded by load, and the
+sparkline under it is aggregate CPU over time.
 
 **`htop`** — the classic arrangement, fully supported. Set `layout = "htop"` in
 the config to make it the default.
@@ -166,7 +215,28 @@ throughput meters:
 
 Both are rates over cumulative counters, scaled against the largest rate seen so
 far rather than a fixed ceiling — a bar pinned to 1 Gbit is an invisible sliver on
-a 100 Mbit link.
+a 100 Mbit link. Unlike the container columns these work on macOS too, where
+`DiskIO` reports itself unavailable rather than showing zero.
+
+### Themes
+
+Eight, chosen with `F2` → Colors (or `color_scheme` in the config):
+
+| | |
+|---|---|
+| `gander` (the default) | teal on deep navy, purple accents |
+| `default` | htop's own palette |
+| `monochrome` | no colour at all |
+| `midnight` | blue-on-blue, low contrast |
+| `classic` | deep navy, one accent, solid blue selection |
+| `verdant` | green-leaning |
+| `paper` | light background, for a bright terminal |
+| `quiet` | desaturated greys |
+
+`paper` is the one that matters structurally: every style sets a foreground and
+most leave the background unset, which is invisible on a dark theme and broken on a
+light one. The renderer paints the theme background over the whole frame first, so
+all four draw paths (htop, panels, setup, dialogs) inherit it.
 
 ## Platform support
 

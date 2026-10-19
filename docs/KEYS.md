@@ -1,7 +1,28 @@
 # Keybindings
 
-Identical to htop on purpose: a user trying gander should not have to relearn
-anything. Column/key semantics are taken from htop's `htop.1` and `Action.c`.
+Mostly identical to htop on purpose: a user trying gander should not have to
+relearn anything. Column/key semantics are taken from htop's `htop.1` and
+`Action.c`.
+
+## Where gander differs from htop
+
+Two of htop's existing bindings were repurposed, so an htop user pressing them gets
+a different action than expected:
+
+| Key | htop | gander |
+|---|---|---|
+| `I` | invert the sort order | cycle the selected header meter's display mode |
+| `+` / `-` | expand / collapse a subtree (tree view only) | faster / slower sampling |
+
+There is no invert-sort key any more; use `F6` / `<` `>` / `.` to reach the order
+you want. `+`/`-` only clash inside tree view, where htop binds them and gander
+does not expand or collapse at all.
+
+Keys that are genuinely new (not in htop): `L`, and the header meter cursor moved
+by `Shift+Left`/`Shift+Right`.
+
+`H` is **not** new — it is htop's "hide user threads" — and it works on both
+platforms.
 
 ## Navigation
 
@@ -55,7 +76,7 @@ takes effect immediately; `Esc` clears the filter and closes the prompt.
 |---|---|
 | `L` | Switch layout: `panels` ⇄ `htop` (see [LAYOUT.md](LAYOUT.md)) |
 | `Shift+Left` / `Shift+Right` | Move the header meter cursor (htop layout) |
-| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter; htop layout) |
+| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter). **htop's `I` inverts the sort order** — see the table above |
 | `K` | Toggle kernel threads |
 | `H` | Toggle one row per thread |
 | `+` / `-` | Faster / slower sampling (100 ms … 10 s) |

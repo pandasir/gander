@@ -5,8 +5,8 @@
 > 用 Rust 写的跨平台交互式进程查看器 —— 对你的系统 `take a gander`（瞧一眼）。
 
 gander 展示你的机器上正在运行什么、各自花了多少资源。它支持 **Linux 和 macOS**，
-沿用 htop 的按键，但屏幕布局与 htop 不同 —— 一个把空间花在进程列表上、
-而不是花在横向进度条上的布局。
+沿用 htop 的绝大部分按键（不同的两个列在[下文](#与-htop-不同的按键)），但屏幕布局与
+htop 不同 —— 一个把空间花在进程列表上、而不是花在横向进度条上的布局。
 
 ## 安装
 
@@ -23,8 +23,12 @@ tar -xzf gander-0.2.0-aarch64-apple-darwin.tar.gz
 macOS；`x86_64-unknown-linux-musl` 是静态链接的二进制，任何发行版都能直接跑）。
 每个包旁边都有对应的 `.sha256` 校验文件。
 
-**从源码构建** — 需要 Rust 工具链（**1.75+**）。不需要其他任何东西：不需要 libcurses，不需要
+**从源码构建** — 需要 **Rust 1.89+**。不需要其他任何东西：不需要 libcurses，不需要
 ncurses 开发头文件，也不需要 `rustc` 之外的 C 编译器。
+
+这个下限不是装饰：`ratatui` 0.30 要求 1.88，`uuid` 要求 1.89，用更旧的工具链会
+直接编译失败。CI 会按 `Cargo.toml` 声明的版本构建，因此这个数字不会在无人察觉的
+情况下与现实脱节。
 
 ```bash
 git clone https://github.com/pandasir/gander
@@ -54,15 +58,40 @@ gander --filter "python|node"              # 只显示匹配的命令行
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
-完整参数见 `gander --help`。所有按键都与 htop 一致，无需重新学习：
-[docs/KEYS.md](docs/KEYS.md)。仅有的新增是 `L`（切换布局）和 `H`（每个线程一行）。
+完整参数见 `gander --help`；每个按键要么是 htop 的，要么列在
+[docs/KEYS.md](docs/KEYS.md) 里。
+
+## 与 htop 不同的按键
+
+htop 有两个既有绑定在这里含义不同，htop 用户按下去会得到不一样的结果：
+
+| 按键 | htop | gander |
+|---|---|---|
+| `I` | 反转排序方向 | 切换当前选中表头 meter 的显示模式 |
+| `+` / `-` | 树状视图下展开 / 折叠子树 | 加快 / 放慢采样 |
+
+`+`/`-` 只在树状视图中有歧义；在别处 htop 并未绑定它们，因此常见场景不受影响。
+`I` 是实打实的冲突 —— 已经不再有反转排序的按键，要换顺序请用 `F6` / `<` `>` / `.`。
+
+真正新增的按键：
+
+| 按键 | 作用 |
+|---|---|
+| `L` | 切换布局：`panels` ⇄ `htop` |
+| `I` | 切换当前选中表头 meter 的模式（text / bar / graph） |
+| `Shift+Left` / `Shift+Right` | 移动表头 meter 光标 |
+
+`H` **不是**新增按键 —— 它就是 htop 的"隐藏用户态线程"，且两个平台都支持，不只 Linux。
 
 ## 相比 htop 的优势
 
 **把纵向空间留给进程列表。** htop 的 meter 是横向排列的，而它的高度随核数增长 ——
 每个核占一行。gander 把系统状态放在纵向侧栏里，高度基本不变，其中每核负载用网格
-显示，16 个核两行就能放下。在本机（8 核）的 120x24 终端实测：htop 显示 **13** 行
-进程，gander 显示 **21** 行；核数越多差距越大。
+显示，16 个核两行就能放下。
+
+在本机（10 核）的 120x24 终端实测，两者都是刚启动、经真实终端模拟器抓屏：htop
+显示 **11** 行进程，gander 显示 **21** 行 —— 接近两倍。核数越多差距越大，因为
+只有 htop 那一侧会随核数变高。
 
 **查看进程详情不必离开列表。** 在 htop 里，想知道某进程的命令行、确切内存占用、
 或是处于睡眠还是运行状态，都要打开一个模态界面（`w`、`e`、`l`），从而丢失滚动
@@ -86,6 +115,15 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 运行状态取自 `proc_taskinfo`，因为当前 Darwin 的 `p_stat` 字段会把阻塞在
 `read(2)` 里的进程报告为"可运行"。
 
+**表头里有主机吞吐量。** htop 有按进程的 I/O 速率列，但没有主机级的网络或磁盘
+meter。gander 的 `NetworkIO` 和 `DiskIO` 以迄今见过的最大速率为标尺（而非固定
+上限），因此在 100 Mbit 和 10 Gbit 链路上都读得出来。
+
+**它会告诉你*是哪个*容器。** htop 的 `CONTAINER` 列只标记"是否在容器里"；gander
+显示 `docker:1f2e3d4c5b6a` 或 `kubepods:<pod-uid>`。识别同时用 cgroup 路径（给出
+运行时与 id）和 PID namespace（唯一可靠的成员判定 —— 自带 cgroup namespace 的
+容器会读到 `/`，只靠路径会把它当成宿主机）。
+
 ## 两种布局
 
 gander 内置两套布局，按 `L` 切换，选择会被记住。
@@ -95,12 +133,18 @@ gander 内置两套布局，按 `L` 切换，选择会被记住。
 ```
   CPU    21.5%│ PID  CPU%  MEM%   RES  COMMAND             2032 iTerm2
   ████░░░░░░░░│ 2032  23.9  1.9   152M  /Applications/iTe…  /Applications/iTerm…
-  8 cores     │ 24087 11.4  0.1   5.9M  gander              USER   panda
-  ▂▂▂▂▃▂▁▁    │ 6511   7.4  3.0   242M  Google Chrome       STATE  S sleeping
-  MEM  3.7G/8G│ …                     …                    CPU    23.9%
-  SWP 168M/1G │                                            MEM    1.9% 114M
+  10 cores    │ 24087 11.4  0.1   5.9M  gander              USER   panda
+  ▂▂▂▂▃▂▁▁ ·  │ 6511   7.4  3.0   242M  Google Chrome       STATE  S sleeping
+  MEM  5.5G/16G│ …                     …                    CPU    23.9%
+  SWP  3.9G/5G│                                            MEM    1.9% 114M
   LOAD 2.69…  │                                            TIME   30:09.95
+  UP     5h 3m│
+  TASKS  552  │
+  RUN      1  │
+  THR   3370  │
 ```
+
+每核网格是一核一格、按负载分色带，其下方的 sparkline 是聚合 CPU 的时间曲线。
 
 **`htop`** —— 经典布局，完整支持。在配置里写 `layout = "htop"` 可设为默认。
 
@@ -149,6 +193,25 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 两者都是对累计计数器的*速率*，并以迄今见过的最大速率（而非固定上限）为标尺
 ——固定在 1 Gbit 的进度条在 100 Mbit 链路上会细得看不见。
+
+### 主题
+
+共八套，在 `F2` → Colors 里选（或配置里的 `color_scheme`）：
+
+| | |
+|---|---|
+| `gander`（默认） | 深海军蓝底上的青色，紫色点缀 |
+| `default` | htop 自己的配色 |
+| `monochrome` | 完全无彩色 |
+| `midnight` | 蓝上加蓝，低对比 |
+| `classic` | 深海军蓝，单一强调色，实心蓝选中行 |
+| `verdant` | 偏绿 |
+| `paper` | 浅色背景，适合亮色终端 |
+| `quiet` | 去饱和的灰阶 |
+
+`paper` 在结构上是关键的那一套：每个样式都设了前景色，而多数不设背景色 —— 这在
+深色主题下看不出来，在浅色主题下就是坏的。渲染器会先用主题背景铺满整帧，因此四条
+绘制路径（htop、panels、setup、对话框）都自动继承。
 
 ## 平台支持
 
