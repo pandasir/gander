@@ -234,6 +234,11 @@ impl Sampler {
             row.cmdline = stable.cmdline.clone();
             row.exe = stable.exe.clone();
             row.cgroup = stable.cgroup.clone();
+            #[cfg(target_os = "linux")]
+            {
+                row.container = stable.container.clone();
+                row.container_runtime = stable.container_runtime.clone();
+            }
             row.flags = row.flags.insert(RowFlags::USERLAND_THREAD);
             row.nlwp = 1;
 
@@ -308,6 +313,11 @@ impl Sampler {
             row.cmdline = stable.cmdline;
             row.exe = stable.exe;
             row.cgroup = stable.cgroup;
+            #[cfg(target_os = "linux")]
+            {
+                row.container = stable.container;
+                row.container_runtime = stable.container_runtime;
+            }
 
             row.elapsed = if self.clk_tck > 0 {
                 uptime.saturating_sub(starttime.checked_div(self.clk_tck).unwrap_or(0))

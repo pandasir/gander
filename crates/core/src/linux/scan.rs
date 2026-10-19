@@ -192,17 +192,53 @@ pub fn read_identity(root: &Path, pid: Pid, starttime: u64, cache: &mut Cache) -
     stable.exe = exe;
 
     let mut cgroup = None;
+    #[cfg(target_os = "linux")]
+    let mut container = None;
+    #[cfg(target_os = "linux")]
+    let mut container_runtime = None;
     proc_path(root, pid, "cgroup", |p| {
-        cgroup = with_file(p, |b| {
-            String::from_utf8_lossy(b)
-                .lines()
-                .last()
-                .map(|l| l.trim().to_string())
-        })
-        .flatten()
-        .map(String::into_boxed_str);
+        if let Some(entries) = with_file(p, super::fsops::parse_cgroup) {
+            // The path, not the raw line: `12:cpuset:/docker/abc` carries the
+            // hierarchy id and controller list, which no column wants.
+            cgroup = super::fsops::preferred_path(&entries)
+                .map(|s| s.to_string().into_boxed_str());
+            #[cfg(target_os = "linux")]
+            if let Some(c) = super::fsops::container_from_cgroup(&entries) {
+                container = Some(c.id.into_boxed_str());
+                container_runtime = Some(c.runtime.to_string().into_boxed_str());
+            }
+        }
     });
     stable.cgroup = cgroup;
+
+    // A container with its own cgroup namespace reports `/` in
+    // `/proc/<pid>/cgroup`, so the path above says nothing. The PID namespace
+    // still distinguishes a *child* container, and without this the difference
+    // between "not containerised" and "containerised but unidentified" is lost.
+    //
+    // Only consulted when the path did not already identify a container: the path
+    // is the *informative* signal (it names the runtime and the id), the namespace
+    // is the *membership* signal, and the path wins when both exist.
+    //
+    // The id is left as `?` rather than filled with something we made up. A
+    // namespace inode is not a container id, and printing one would look like an
+    // identifier while telling the reader nothing they can act on.
+    #[cfg(target_os = "linux")]
+    if container.is_none()
+        && matches!(
+            super::fsops::in_different_pid_namespace(root, pid),
+            Some(true)
+        )
+    {
+        container = Some("?".to_string().into_boxed_str());
+        container_runtime = Some("container".to_string().into_boxed_str());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        stable.container = container;
+        stable.container_runtime = container_runtime;
+    }
 
     stable.is_kernel_thread = stable.cmdline.is_none() && stable.exe.is_none();
 

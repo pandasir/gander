@@ -25,7 +25,17 @@ pub struct Stable {
     pub uid: u32,
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// The cgroup *path*, not the raw `/proc/<pid>/cgroup` line.
     pub cgroup: Option<Box<str>>,
+    /// The container's id, and the runtime that owns it.
+    ///
+    /// Cached here rather than recomputed per frame: classification is a few
+    /// `find`s over a path, which is cheap once per process and wasteful
+    /// thousands of times per second.
+    #[cfg(target_os = "linux")]
+    pub container: Option<Box<str>>,
+    #[cfg(target_os = "linux")]
+    pub container_runtime: Option<Box<str>>,
     pub is_kernel_thread: bool,
 }
 
@@ -123,6 +133,30 @@ pub fn sort_order(rows: &[Row], order: &mut [usize], sort: Sort) {
         F::MinFlt => order.sort_unstable_by_key(|&i| rows[i].min_flt),
         F::MajFlt => order.sort_unstable_by_key(|&i| rows[i].maj_flt),
         F::Processor => order.sort_unstable_by_key(|&i| rows[i].processor),
+        // Text columns sort by their text, not by pid: falling through to the
+        // pid comparator made "sort by CGROUP" silently reorder by pid, which
+        // looks like a sort that does nothing on an already pid-sorted list.
+        #[cfg(target_os = "linux")]
+        F::Cgroup => order.sort_unstable_by(|a, b| {
+            rows[*a]
+                .cgroup
+                .as_deref()
+                .unwrap_or("")
+                .cmp(rows[*b].cgroup.as_deref().unwrap_or(""))
+        }),
+        // Group by runtime first, then by id: sorting containers by id alone
+        // interleaves docker and kubernetes ids, which is not what a reader
+        // scanning the column is looking for.
+        #[cfg(target_os = "linux")]
+        F::Container => order.sort_unstable_by(|a, b| {
+            let key = |i: usize| {
+                (
+                    rows[i].container_runtime.as_deref().unwrap_or(""),
+                    rows[i].container.as_deref().unwrap_or(""),
+                )
+            };
+            key(*a).cmp(&key(*b))
+        }),
         _ => order.sort_unstable_by_key(|&i| rows[i].pid),
     }
 

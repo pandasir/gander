@@ -286,6 +286,25 @@ const FIELD_META: &[FieldMeta] = &[
         false,
         Align::Right,
     ),
+    // Linux-only: cgroup membership, and the container derived from it.
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Cgroup,
+        "CGROUP",
+        " CGROUP ",
+        "Full cgroup path",
+        false,
+        Align::Left,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Container,
+        "CONTAINER",
+        " CONTAINER ",
+        "Container id, prefixed with its runtime",
+        false,
+        Align::Left,
+    ),
 ];
 
 /// Names of the fields shown in the default M0 layout.
@@ -443,7 +462,24 @@ pub struct Row {
     /// Lazily loaded, cached until the process exits.
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// The process's cgroup path, e.g. `/system.slice/docker-1f2e….scope`.
+    ///
+    /// The *path*, not the raw `/proc/<pid>/cgroup` line: the raw line is
+    /// `12:cpuset:/docker/abc` and carries the hierarchy id and controller list,
+    /// which no column wants. The v2 entry (empty controller list) is preferred
+    /// when present, because that is the hierarchy the whole machine shares.
     pub cgroup: Option<Box<str>>,
+    /// The container this process belongs to, if any.
+    ///
+    /// Derived from `cgroup` once per process and cached with it. Linux-only
+    /// because the detection is cgroup-based; `None` everywhere else.
+    #[cfg(target_os = "linux")]
+    pub container: Option<Box<str>>,
+    /// The runtime that owns the container (`docker`, `kubepods`, …), kept apart
+    /// from `container` so the `CONTAINER` column can show `docker:1f2e…` without
+    /// re-parsing the path at render time.
+    #[cfg(target_os = "linux")]
+    pub container_runtime: Option<Box<str>>,
 
     /// Tree bookkeeping, filled by `tree::build`.
     pub depth: u16,
@@ -488,6 +524,10 @@ impl Row {
             cmdline: None,
             exe: None,
             cgroup: None,
+            #[cfg(target_os = "linux")]
+            container: None,
+            #[cfg(target_os = "linux")]
+            container_runtime: None,
             depth: 0,
             has_children: false,
             is_last_child: false,
