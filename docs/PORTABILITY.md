@@ -186,7 +186,7 @@ Two bugs lived here:
 matches `getuid()` and that the table contains more than one distinct uid on a
 non-root account, which is what would have caught bug 2.
 
-## Memory accounting (this was wrong once)
+## Memory accounting (this was wrong twice)
 
 The macOS memory figure is the single easiest thing to get wrong, because
 `vm_statistics64` exposes **two overlapping families of counters**:
@@ -194,44 +194,75 @@ The macOS memory figure is the single easiest thing to get wrong, because
 - by usage: `active`, `inactive`, `wire`, `compressor`, `free`, `speculative`
 - by backing store: `internal` (anonymous), `external` (file-backed)
 
-Summing across families double-counts. The correct derivation, verified against
-`top` and Activity Monitor on an 8 GB M-series machine:
+Summing across families double-counts, so gander builds `used` from the
+by-backing-store counter plus the two page categories that family does not cover:
 
 ```text
-used = (active - purgeable) + wired + compressed + inactive
+used      = (internal - purgeable) + wired + compressed
 available = total - used
 ```
 
-Numbers from one real sample (MiB):
+That is the same number `htop` 3.4.1 prints. htop writes it the long way round
+(`darwin/Platform.c`, `Platform_setMemoryValues`):
 
-| counter | value |
+```c
+natural_t used = active + inactive + speculative + wire + compressor
+                 - purgeable - external;
+MEMORY_METER_USED       = used - compressor;
+MEMORY_METER_COMPRESSED = compressor;
+```
+
+and `MemoryMeter_updateValues` displays `USED + COMPRESSED`. Since
+`internal == active + inactive + speculative - external`, that sum is exactly the
+formula above. htop `main` (3.6-dev) states it directly as a class list: `wired`,
+`internal - purgeable`, `compressed` are `countsAsUsed`; `speculative`,
+`purgeable`, `inactive` are `countsAsCache`. Activity Monitor and `top` agree.
+
+Numbers from one real sample on the 16 GB M-series machine where the two tools
+disagreed (page size 16384; GiB):
+
+| counter | GiB |
 |---|---|
-| active | 1878 |
-| inactive | 1778 |
-| wired | 1631 |
-| compressed | 2187 |
-| purgeable | 99 |
-| free | 156 |
-| **used** | **7375** |
-| `top` reports | 7257–7491 |
+| wired | 2.28 |
+| active | 2.97 |
+| inactive | 2.84 |
+| internal | 2.85 |
+| purgeable | 0.07 |
+| compressed | 7.01 |
+| free | 0.30 |
+| **used** | **13.29** |
+| htop 3.4.1 showed | 13.3 |
 
-Two mistakes were shipped before this landed, both visible in the meter:
+**The bar segments partition physical memory exactly.** Each page is drawn once:
+`wired`, `active`, `compressed`, `purgeable`, `cache` (= `total - used -
+purgeable - free`), `free`. `free` is the kernel's own free count, so it cannot
+absorb memory some other class is holding.
 
-1. `used = wired + active + compressed` (**5590 MiB**) — `inactive` was left out,
-   so an 8 GB machine under load displayed ~5.7 GB.
-2. `available = total - wired - compressed` while `used` was computed separately,
-   so `used + available = 9.3 GB` on an 8 GB machine. That contradiction is what
-   prompted the fix.
+Mistakes shipped before this landed, each one visible in the meter:
 
-`MemInfo::is_exactly_partitioned()` encodes the invariant and is asserted by
-`crates/core/tests/mem_accounting.rs` on every macOS test run.
+1. `used = active + wired` (htop 3.3.0's formula, compressor ignored) — reported
+   **5.3 GB** on this machine while htop reported **13.3 GB**. The whole gap was
+   the compressor. htop 3.3.0 has the `MEMORY_METER_COMPRESSED` assignment
+   commented out; mimicking that made gander disagree with every other tool.
+2. `used = wired + active + compressed` — `inactive` was left out, so an 8 GB
+   machine under load displayed ~5.7 GB.
+3. `available = total - wired - compressed` while `used` was computed separately,
+   so `used + available = 9.3 GB` on an 8 GB machine.
+4. The `free` *segment* was derived as `total - used - cache`. Once `used` stopped
+   counting the compressor, ~7 GB of compressor pages fell into the free segment:
+   the bar claimed 7.8 GB free on a machine with 0.3 GB free.
+
+`MemInfo::is_exactly_partitioned()` encodes the `used`/`available` invariant and
+`crates/core/tests/mem_accounting.rs` asserts both that and the segment partition
+on every macOS test run.
 
 **Linux is different on purpose.** There `used` follows GNU `free`
-(`total - free - cached - sreclaimable - buffers`) and `available` comes from
-`MemAvailable`. They are *not* complementary — `MemAvailable` includes
-reclaimable cache that `used` also accounts for — so `used + available > total`
-is correct on Linux. An earlier revision tried to force the complement and
-clamped `MemAvailable` down to `total - used`, understating available memory.
+(`total - free - cached - sreclaimable - buffers`). That matches htop 3.4.1's
+`linux/LinuxMachine.c` verbatim. `available` comes from `MemAvailable`, so the two
+are *not* complementary — `MemAvailable` includes reclaimable cache that `used`
+also accounts for, and `used + available > total` is correct on Linux. An earlier
+revision tried to force the complement and clamped `MemAvailable` down to
+`total - used`, understating available memory.
 
 ## Permission model
 

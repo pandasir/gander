@@ -144,6 +144,9 @@ impl PlatformSampler for Sampler {
             // File-backed pages are reclaimable cache; reported for completeness
             // even though `finish_darwin` does not need them.
             cached: vm.external,
+            // Anonymous pages. `finish_darwin` keys `used` off this rather than
+            // off active/inactive/speculative, which overlap with it.
+            internal: vm.internal,
             ..Default::default()
         };
         mem.finish_darwin();

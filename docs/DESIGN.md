@@ -248,13 +248,23 @@ percent = d_cpu as f64 * 100.0 / d_total as f64;    // > 100% on multicore: fine
 - Divide by `nproc` only if the user chooses "normalized CPU%" (htop has this as
   a separate `PERCENT_NORM_CPU` column).
 
-**Memory** — replicate htop's definition, do not invent one:
+**Memory** — replicate htop's definition, do not invent one. The two platforms
+genuinely disagree, and both backends copy the matching htop platform file:
 
-```
-used = MemTotal - MemAvailable - (SReclaimable - Shmem)     // caches excluded
+```text
+# Linux, matching htop 3.4.1 linux/LinuxMachine.c (and GNU free)
+used      = MemTotal - MemFree - Cached - SReclaimable - Buffers
+available = MemAvailable                       # they are NOT complementary
+
+# macOS, matching htop 3.4.1 darwin/Platform.c
+used      = (internal - purgeable) + wired + compressed
+available = total - used
 ```
 
-`MemFree` is the wrong number and everyone gets this wrong once.
+`MemFree` alone is the wrong "used" on Linux and everyone gets this wrong once.
+On macOS the compressor is by far the largest term on a machine that has been up
+for a while; leaving it out (htop 3.3's formula) is how the meter came to report
+5 GB where htop reported 13 GB. See [PORTABILITY.md](PORTABILITY.md#memory-accounting-this-was-wrong-twice).
 
 **RSS pages → bytes**: `rss * page_size`.
 

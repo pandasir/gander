@@ -106,6 +106,14 @@ pub struct MemInfo {
     pub inactive: u64,
     pub purgeable: u64,
     pub speculative: u64,
+    /// `internal_page_count`: anonymous pages, the "by backing store" family.
+    ///
+    /// macOS reports memory twice over, once by usage (`active`, `inactive`, …)
+    /// and once by backing store (`internal`, `external`). Only this one is
+    /// needed for accounting, because `internal` is exactly
+    /// `active + inactive + speculative - external` and therefore counts each
+    /// anonymous page once instead of re-adding overlapping usage classes.
+    pub internal: u64,
 }
 
 impl MemInfo {
@@ -193,137 +201,118 @@ impl MemInfo {
         ];
     }
 
-    /// macOS accounting, matching **htop 3.3.0** exactly.
+    /// macOS accounting, matching **htop 3.4 and later**.
     ///
-    /// `used = active + wired`
-    ///
-    /// This is deliberately the same formula as `darwin/Platform.c` in htop
-    /// 3.3.0:
-    ///
-    /// ```c
-    /// mtr->values[MEMORY_METER_USED] = (vm->active_count + vm->wire_count) * page_K;
-    /// mtr->values[MEMORY_METER_CACHE] = vm->inactive_count * page_K;
+    /// ```text
+    /// used = (internal - purgeable) + wired + compressed
     /// ```
     ///
-    /// The point is that `gander` and the `htop` next to it must agree; a
-    /// different (even "better") formula makes the two impossible to compare.
+    /// htop 3.4.1 (`darwin/Platform.c`, `Platform_setMemoryValues`) says it the
+    /// long way round:
+    ///
+    /// ```c
+    /// natural_t used = vm->active_count + vm->inactive_count +
+    ///                  vm->speculative_count + vm->wire_count +
+    ///                  vm->compressor_page_count - vm->purgeable_count -
+    ///                  vm->external_page_count;
+    /// mtr->values[MEMORY_METER_USED]       = (double)(used - vm->compressor_page_count) * page_K;
+    /// mtr->values[MEMORY_METER_COMPRESSED] = (double)vm->compressor_page_count * page_K;
+    /// ```
+    ///
+    /// and `MemoryMeter_updateValues` prints `USED + COMPRESSED`. That sum is
+    /// `internal + wired + compressed`, because `internal_page_count` *is*
+    /// `active + inactive + speculative - external`. htop `main` (3.6-dev) states
+    /// the same figure directly, as a class list marked `countsAsUsed`: `wired`,
+    /// `internal - purgeable`, `compressed`. One formula therefore matches both,
+    /// and it matches Activity Monitor and `top` as well.
     ///
     /// Consequences, all intentional:
-    /// * `compressed` is **not** counted as used. htop 3.3.0 shows it as a
-    ///   separate segment, so it appears in the bar but not in the number. On a
-    ///   machine with 2 GB in the compressor this is the bulk of the gap to
-    ///   `top`.
-    /// * `inactive` is cache, not used.
-    /// * `available = total - used`, so the two figures partition memory exactly.
+    /// * The compressor **is** counted as used. On a Mac that has been running a
+    ///   while it is the largest single term — 7 GB on a 16 GB machine is normal
+    ///   — and leaving it out made gander report ~5 GB where htop reported ~13 GB.
+    /// * `inactive` and `speculative` are **not** added on top. They are part of
+    ///   `internal` (or are file cache), so adding them double-counts; that was
+    ///   the other shipped mistake, and it is why the by-backing-store counter is
+    ///   used here instead of the by-usage ones.
+    /// * `free` is `vm_stat`'s own free count. Deriving it as `total - used -
+    ///   cache` is what made the bar claim 7.8 GB free on a machine with 0.3 GB
+    ///   free: the compressor pages that `used` omitted fell through into the
+    ///   free segment.
+    /// * `available = total - used`, so the two figures partition memory exactly,
+    ///   and so do the bar segments.
     ///
-    /// Newer htop (3.4+) changed the formula. When matching a different version
-    /// is wanted, see [`MemInfo::finish_darwin_36`].
+    /// The old htop-3.3.0 formula (`used = active + wired`, compressor ignored)
+    /// is gone: it was the reason the meter disagreed with every other tool by
+    /// the size of the compressor.
     pub fn finish_darwin(&mut self) {
-        self.used = self.active.saturating_add(self.wired).min(self.total);
-        self.available = self.total.saturating_sub(self.used);
+        // Clamp every class against what is left of physical memory, so a kernel
+        // that reports overlapping or absurd counters cannot overflow the bar.
+        let wired = self.wired.min(self.total);
+        let compressed = self.compressed.min(self.total - wired);
+        // Anonymous pages, minus the ones the OS may discard on demand.
+        let internal = self.internal.min(self.total - wired - compressed);
+        let purgeable = self.purgeable.min(internal);
+        // htop's "active" is the anonymous figure net of purgeable pages; that is
+        // exactly what `MEMORY_METER_USED` reports on 3.4, and what htop `main`
+        // calls the `active` class.
+        let active = internal - purgeable;
 
-        // htop 3.3.0 on macOS sets only four values in
-        // `Platform_setMemoryValues` (darwin/Platform.c:293): USED, BUFFERS
-        // (purgeable), CACHE (inactive). COMPRESSED and AVAILABLE are explicitly
-        // left commented out, so the bar has four segments and nothing more.
-        // Reproducing that exactly is the point; see `finish_darwin_36` for the
-        // newer formula.
+        self.used = wired + compressed + active;
+
+        // Free comes from the kernel, not from arithmetic. Everything left over is
+        // reclaimable: file-backed pages (`external`), `speculative`, and the page
+        // categories neither counter describes.
+        let free = self.free.min(self.total - self.used - purgeable);
+        let cache = self.total - self.used - purgeable - free;
+        self.available = self.total - self.used;
+
+        // Order matches htop's `MEMORY_1..6`: hot classes first, then the
+        // reclaimable ones, then free. The segments partition the bar — each page
+        // is counted exactly once, so they add up to `total`.
         self.classes = vec![
-            MemoryClass {
-                label: "used",
-                bytes: self.used,
-                counts_as_used: true,
-                counts_as_cache: false,
-                counts_as_total: true,
-                color_slot: 0,
-            },
-            MemoryClass {
-                label: "buffers",
-                bytes: self.purgeable,
-                counts_as_used: false,
-                counts_as_cache: true,
-                counts_as_total: true,
-                color_slot: 1,
-            },
-            MemoryClass {
-                label: "cache",
-                bytes: self.inactive,
-                counts_as_used: false,
-                counts_as_cache: true,
-                counts_as_total: true,
-                color_slot: 2,
-            },
-            MemoryClass {
-                label: "free",
-                bytes: self
-                    .total
-                    .saturating_sub(self.used)
-                    .saturating_sub(self.purgeable)
-                    .saturating_sub(self.inactive),
-                counts_as_used: false,
-                counts_as_cache: false,
-                counts_as_total: true,
-                color_slot: 5,
-            },
-        ];
-    }
-
-    /// macOS accounting matching htop 3.6-dev: count the compressor as used.
-    ///
-    /// Kept as a named alternative rather than a config knob, because the default
-    /// must match the htop a user is most likely to have installed (3.3.x).
-    pub fn finish_darwin_36(&mut self) {
-        self.used = self
-            .active
-            .saturating_add(self.wired)
-            .saturating_add(self.compressed)
-            .min(self.total);
-        self.available = self.total.saturating_sub(self.used);
-
-        self.classes = vec![
-            MemoryClass {
-                label: "active",
-                bytes: self.active,
-                counts_as_used: true,
-                counts_as_cache: false,
-                counts_as_total: true,
-                color_slot: 1,
-            },
             MemoryClass {
                 label: "wired",
-                bytes: self.wired,
+                bytes: wired,
                 counts_as_used: true,
                 counts_as_cache: false,
                 counts_as_total: true,
                 color_slot: 0,
+            },
+            MemoryClass {
+                label: "active",
+                bytes: active,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 1,
             },
             MemoryClass {
                 label: "compressed",
-                bytes: self.compressed,
+                bytes: compressed,
                 counts_as_used: true,
                 counts_as_cache: false,
                 counts_as_total: true,
                 color_slot: 2,
             },
             MemoryClass {
-                label: "inactive",
-                bytes: self.inactive,
-                counts_as_used: false,
-                counts_as_cache: true,
-                counts_as_total: true,
-                color_slot: 5,
-            },
-            MemoryClass {
                 label: "purgeable",
-                bytes: self.purgeable,
+                bytes: purgeable,
                 counts_as_used: false,
                 counts_as_cache: true,
                 counts_as_total: true,
                 color_slot: 4,
             },
             MemoryClass {
+                label: "cache",
+                bytes: cache,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 3,
+            },
+            MemoryClass {
                 label: "free",
-                bytes: self.free,
+                bytes: free,
                 counts_as_used: false,
                 counts_as_cache: false,
                 counts_as_total: true,
@@ -607,79 +596,132 @@ mod tests {
         assert!(mem.available <= mem.total);
     }
 
-    /// Real `vm_statistics64` numbers from an 8 GB Apple Silicon Mac, taken at
-    /// the same moment htop 3.3.0 displayed 3.43 GB.
+    /// Real `vm_statistics64` numbers from a 16 GB Apple Silicon Mac (page size
+    /// 16384) at the moment htop 3.4.1 displayed `13.3G/16.0G`, while gander
+    /// still showed `5.3G/16.0G`.
     ///
-    /// htop 3.3.0 computes `used = active + wire` on macOS and leaves the
-    /// compressor out entirely (`darwin/Platform.c:299`, with the COMPRESSED
-    /// assignment commented out at :301). gander must produce the same number,
-    /// otherwise the two cannot be compared side by side.
+    /// The gap was exactly the compressor: htop 3.4.1 prints
+    /// `USED + COMPRESSED` (`MemoryMeter_updateValues`), which simplifies to
+    /// `internal + wired + compressed`. The old `used = active + wired` formula
+    /// left out both the compressor and `internal - active`, i.e. most of what
+    /// the machine was actually using.
     #[test]
-    fn darwin_used_matches_htop_330() {
-        let mib = 1024 * 1024;
+    fn darwin_used_matches_htop_341() {
+        const PAGE: u64 = 16 * 1024;
         let mut mem = MemInfo {
-            total: 8 * 1024 * mib,
-            free: 175 * mib,
-            active: 1895 * mib,
-            inactive: 1772 * mib,
-            wired: 1607 * mib,
-            compressed: 2182 * mib,
-            purgeable: 31 * mib,
-            speculative: 85 * mib,
+            total: 16 * 1024 * 1024 * 1024,
+            // vm_stat, verbatim.
+            internal: 301_497 * PAGE,
+            active: 219_954 * PAGE,
+            inactive: 216_885 * PAGE,
+            speculative: 2_022 * PAGE,
+            wired: 136_897 * PAGE,
+            compressed: 429_207 * PAGE,
+            purgeable: 0,
+            free: 4_007 * PAGE,
             ..Default::default()
         };
         mem.finish_darwin();
 
-        // 1895 + 1607 = 3502 MiB, matching htop 3.3.0.
-        assert_eq!(mem.used, 3502 * mib);
+        // htop's two printed terms: its USED value, which excludes the
+        // compressor, plus its COMPRESSED value.
+        let htop_used_excl_compressor = 301_497 * PAGE + 136_897 * PAGE;
+        let htop_compressed = 429_207 * PAGE;
+        assert_eq!(
+            mem.used,
+            htop_used_excl_compressor + htop_compressed,
+            "gander's used must equal htop's USED + COMPRESSED"
+        );
         assert_eq!(mem.used_from_classes(), mem.used);
         assert!(mem.is_exactly_partitioned());
 
-        // The compressor is deliberately *not* part of `used` here.
-        assert!(mem.used < mem.active + mem.wired + mem.compressed);
+        // The compressor is no longer the missing 7 GB.
+        assert_eq!(
+            mem.used - (mem.internal - mem.purgeable) - mem.wired,
+            htop_compressed,
+            "the remainder after active+wired is the compressor"
+        );
 
-        // htop 3.3.0 on macOS sets only USED / BUFFERS / CACHE, so the bar has
-        // four segments and no compressed segment.
+        // htop 3.4 also counts inactive/speculative as cache, not as used. They
+        // must not be added on top here, or used would be ~3.4 GB too high.
+        assert!(mem.used < mem.total);
+
         let labels: Vec<&str> = mem.classes.iter().map(|c| c.label).collect();
-        assert_eq!(labels, vec!["used", "buffers", "cache", "free"]);
+        assert_eq!(
+            labels,
+            vec![
+                "wired",
+                "active",
+                "compressed",
+                "purgeable",
+                "cache",
+                "free"
+            ]
+        );
     }
 
+    /// The bar must not claim free memory the compressor is holding.
+    ///
+    /// This is the second half of the same bug: the old formula derived the
+    /// `free` segment as `total - used - purgeable - inactive`, so the ~7 GB the
+    /// compressor occupied landed in the free segment. A machine with 0.3 GB
+    /// free drew a bar that was nearly half empty.
     #[test]
-    fn htop_36_formula_is_available_separately() {
-        let mib = 1024 * 1024;
+    fn darwin_free_segment_is_not_the_compressor() {
+        const PAGE: u64 = 16 * 1024;
         let mut mem = MemInfo {
-            total: 8 * 1024 * mib,
-            active: 1895 * mib,
-            wired: 1607 * mib,
-            compressed: 2182 * mib,
-            inactive: 1772 * mib,
-            purgeable: 31 * mib,
+            total: 16 * 1024 * 1024 * 1024,
+            internal: 301_497 * PAGE,
+            wired: 136_897 * PAGE,
+            compressed: 429_207 * PAGE,
+            purgeable: 0,
+            free: 4_007 * PAGE,
             ..Default::default()
         };
-        mem.finish_darwin_36();
-        assert_eq!(mem.used, (1895 + 1607 + 2182) * mib);
-        assert!(mem.is_exactly_partitioned());
+        mem.finish_darwin();
+
+        let free_class = mem
+            .classes
+            .iter()
+            .find(|c| c.label == "free")
+            .expect("a free class is always present");
+        // At most ~130 MiB of free memory exists on this sample; anything in the
+        // gigabytes means the compressor fell through into the wrong segment.
+        assert!(
+            free_class.bytes < 1024 * 1024 * 1024,
+            "free segment is {} MiB, which is the compressor leaking in",
+            free_class.bytes / (1024 * 1024)
+        );
     }
 
     #[test]
-    fn darwin_used_and_available_always_sum_to_total() {
-        for (active, inactive, wired, compressed, purgeable) in [
-            (0u64, 0u64, 0u64, 0u64, 0u64),
-            (500, 100, 300, 200, 0),
-            (1000, 0, 0, 0, 500),
-            (10, 10, 10, 10, 100), // purgeable > active: must not underflow
-            (1000, 1000, 1000, 1000, 0), // over-subscribed: must clamp to total
+    fn darwin_bar_segments_partition_total() {
+        // Every class flagged `counts_as_total` is a distinct set of pages, so the
+        // segments must add up to physical memory exactly -- after clamping, on
+        // absurd input included.
+        for (internal, wired, compressed, purgeable) in [
+            (0u64, 0u64, 0u64, 0u64),
+            (500, 300, 200, 0),
+            (500, 300, 200, 700),  // purgeable > internal: must not underflow
+            (400, 300, 300, 0),    // sums to total already
+            (4000, 3000, 3000, 0), // over-subscribed: must clamp
         ] {
             let mut mem = MemInfo {
                 total: 1000,
-                active,
-                inactive,
+                internal,
                 wired,
                 compressed,
                 purgeable,
                 ..Default::default()
             };
             mem.finish_darwin();
+            let classes: u64 = mem
+                .classes
+                .iter()
+                .filter(|c| c.counts_as_total)
+                .map(|c| c.bytes)
+                .sum();
+            assert_eq!(classes, mem.total, "{mem:?}");
             assert!(mem.is_exactly_partitioned(), "{mem:?}");
             assert!(mem.used <= mem.total, "{mem:?}");
         }
