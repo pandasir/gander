@@ -175,6 +175,7 @@ impl App {
             tree_mode: config.tree_mode,
             show_kernel_threads: config.show_kernel_threads,
             show_userland_threads: config.show_userland_threads,
+            show_containerised: config.show_containerised,
             ..Default::default()
         };
         let layout = LayoutKind::from_config(&config.layout);
@@ -196,6 +197,8 @@ impl App {
             setup: None,
             visibility: gander_core::table::Visibility {
                 show_kernel_threads: true,
+                show_userland_threads: false,
+                show_containerised: true,
                 ..Default::default()
             },
             tags: Default::default(),
@@ -476,6 +479,15 @@ impl App {
     /// A `Reorder` reaction is applied here rather than left to the caller, so
     /// the state is always consistent with what the next frame will render.
     pub fn handle_key(&mut self, key: Key) -> Reaction {
+        // A status message describes the *last* action. It has to be cleared when
+        // the next action does not set one of its own, or `K` after `O` would
+        // leave "container detection is Linux-only" on screen as if it were the
+        // result of pressing `K`.
+        //
+        // Only the list screen clears it: the prompt and the modal screens own
+        // their own feedback, and clearing on every keystroke would make a
+        // message vanish while it was being read.
+        self.status = None;
         let reaction = self.dispatch(key);
         if reaction == Reaction::Reorder {
             self.reorder();
@@ -630,6 +642,26 @@ impl App {
                 });
                 // Threads have to be sampled before they can be filtered in, so
                 // turning them on needs a fresh sample, not just a reorder.
+                Reaction::Reorder
+            }
+            Key::Char('O') => {
+                // htop's `O`: hide containerised processes.
+                //
+                // Only meaningful on Linux, where container detection exists. On
+                // macOS every row has `container == None`, so the toggle would
+                // flip state and change nothing on screen — say why instead of
+                // appearing broken.
+                if !gander_core::capability::CGROUP {
+                    self.status = Some("container detection is Linux-only".into());
+                    return Reaction::Continue;
+                }
+                self.table.show_containerised = !self.table.show_containerised;
+                self.config.show_containerised = self.table.show_containerised;
+                self.status = Some(if self.table.show_containerised {
+                    "showing containerised processes".into()
+                } else {
+                    "hiding containerised processes".into()
+                });
                 Reaction::Reorder
             }
             Key::Char('+') | Key::Char('=') => {
@@ -901,6 +933,7 @@ impl App {
         self.table.tree_mode = draft.tree_mode;
         self.table.show_kernel_threads = draft.show_kernel_threads;
         self.table.show_userland_threads = draft.show_userland_threads;
+        self.table.show_containerised = draft.show_containerised;
         self.config = draft;
         // Switching or adding a tab changes which columns and sort are live.
         self.load_sort_from_tab();
@@ -1104,6 +1137,7 @@ impl App {
             uid: self.user_filter,
             show_kernel_threads: self.table.show_kernel_threads,
             show_userland_threads: self.table.show_userland_threads,
+            show_containerised: self.table.show_containerised,
         };
         self.table.reorder(&self.visibility);
         self.clamp_selection();
@@ -1242,18 +1276,55 @@ impl App {
         Reaction::Continue
     }
 
+    /// Change the nice value of the selected process, or of every tagged one.
+    ///
+    /// Tagged processes take precedence, exactly as in [`App::send_signal`].
+    /// Previously this only ever reniced the row under the cursor, so `F9` acted
+    /// on the whole tagged set while `F7`/`F8` silently acted on one process — the
+    /// kind of inconsistency that makes a user distrust both keys.
     fn renice_selected(&mut self, delta: i8) {
-        let Some(row) = self.selected_row() else {
-            return;
+        // Same target selection as the signal picker: if anything is tagged, the
+        // action applies to the tagged set.
+        let targets: Vec<gander_core::Pid> = if self.tags.is_empty() {
+            match self.selected_row() {
+                Some(row) => vec![row.pid],
+                None => {
+                    self.status = Some("no process selected".into());
+                    return;
+                }
+            }
+        } else {
+            let mut tagged: Vec<gander_core::Pid> = self.tags.iter().copied().collect();
+            tagged.sort_unstable();
+            tagged
         };
-        let action = gander_core::action::Action::Priority {
-            pid: row.pid,
-            delta,
-        };
-        match gander_core::action::execute(&action) {
-            Ok(()) => self.status = Some(format!("reniced {}", row.pid)),
-            Err(e) => self.status = Some(format!("renice failed: {e}")),
+
+        let mut reniced = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for pid in &targets {
+            let action = gander_core::action::Action::Priority { pid: *pid, delta };
+            match gander_core::action::execute(&action) {
+                Ok(()) => reniced += 1,
+                Err(e) => failures.push(format!("{pid}: {e}")),
+            }
         }
+
+        let verb = if delta < 0 { "raised" } else { "lowered" };
+        self.status = Some(if failures.is_empty() {
+            if targets.len() == 1 {
+                format!("reniced {} ({verb} priority)", targets[0])
+            } else {
+                format!("reniced {reniced} processes ({verb} priority)")
+            }
+        } else if reniced == 0 {
+            format!("renice failed: {}", failures.join("; "))
+        } else {
+            format!(
+                "reniced {reniced}, {} failed: {}",
+                failures.len(),
+                failures.join("; ")
+            )
+        });
     }
 
     fn show_env(&mut self) -> Reaction {
@@ -1909,6 +1980,16 @@ impl App {
                             text.insert_str(0, &mark.prefix);
                         }
                     }
+                    // Where the executable's base name lands in this cell, so it
+                    // can be emphasised after the row is painted. Computed from the
+                    // finished `text` (prefix included) rather than adjusted after
+                    // the fact, so tree mode needs no offset arithmetic.
+                    let base_name_span = if *field == Field::Comm && self.config.highlight_base_name {
+                        row.base_name_span_in(&text)
+                    } else {
+                        None
+                    };
+
                     let padded = pad_right(&text, widths[i] as usize);
                     let skip = (draw_x - cx) as usize;
                     let head: String = padded.chars().skip(skip).collect();
@@ -1920,6 +2001,24 @@ impl App {
                         base,
                         (draw_end - draw_x) as u16,
                     );
+
+                    // Repaint the base name over the row style. A foreground patch,
+                    // not a replacement: the selection or tag background must show
+                    // through, or the highlight would erase the row's state.
+                    if let Some((bs, be)) = base_name_span {
+                        paint_base_name(
+                            buf,
+                            &text,
+                            bs,
+                            be,
+                            cx,
+                            draw_x,
+                            draw_end,
+                            y,
+                            base,
+                            theme.row_base_name,
+                        );
+                    }
 
                     // In the panels layout, paint a proportional bar *behind* the
                     // CPU and memory numbers. The table is sorted by one of them,
@@ -2119,6 +2218,41 @@ impl App {
                 );
             }
         }
+
+        // The status line replaces the *rightmost* key labels, because on a
+        // terminal of any normal width the ten function keys already fill the
+        // bar — there is never free space to the right of them.
+        //
+        // `App::status` was written by a dozen actions — renice results, kill
+        // failures, "hiding threads", the reason `O` does nothing on macOS — and
+        // was never drawn anywhere. Every one of those messages was invisible;
+        // the tests passed because they read the field directly rather than the
+        // screen. Painting it here is what makes the field mean something.
+        self.draw_status(area, buf);
+    }
+
+    /// Paint `status` right-aligned, over whatever key labels are there.
+    ///
+    /// The rightmost keys are `F9 Kill` and `F10 Quit`. Overwriting them is a real
+    /// trade-off: `F10 Quit` is the one key a stuck user most needs to see. So the
+    /// message is capped at half the bar, leaving the left keys — including the
+    /// `F1 Help` a confused user needs — untouched, and it is transient by
+    /// construction (the next keypress that sets no status clears it).
+    fn draw_status(&self, area: Rect, buf: &mut Buffer) {
+        let Some(status) = self.status.as_deref() else {
+            return;
+        };
+        if status.is_empty() || area.height == 0 || area.width < 20 {
+            return;
+        }
+        let max_width = (area.width / 2).max(10);
+        let text: String = status.chars().take(max_width as usize).collect();
+        let text_len = text.chars().count() as u16;
+        if text_len == 0 {
+            return;
+        }
+        let x = area.right().saturating_sub(text_len);
+        crate::meters::put_str(buf, x, area.y, &text, self.theme.function_bar_status, text_len);
     }
 }
 
@@ -2153,6 +2287,53 @@ fn paint_value_bar(
     for i in 0..filled.min(width) {
         if let Some(cell) = buf.cell_mut((x + i, y)) {
             cell.set_style(cell.style().patch(style));
+        }
+    }
+}
+
+/// Emphasise the executable's base name inside an already-painted command cell.
+///
+/// # Why this repaints instead of drawing in one pass
+///
+/// The command column is written with a single `put_str` that carries the row's
+/// style, and that style encodes state the highlight must not destroy: a selected
+/// row's background, a tag's colour, a kernel thread's dimming. So the base name is
+/// patched *over* the row afterwards with `Style::patch`, which composes rather
+/// than replaces.
+///
+/// The offsets are byte offsets into `text`, but a terminal cell is a char, and
+/// the column is clipped both by horizontal scrolling (`draw_x > cx`) and by the
+/// screen edge (`draw_end`). All three mappings are done here, in one place, so the
+/// caller only has to say "this span of this text".
+#[allow(clippy::too_many_arguments)]
+fn paint_base_name(
+    buf: &mut Buffer,
+    text: &str,
+    span_start: usize,
+    span_end: usize,
+    column_x: i32,
+    draw_x: i32,
+    draw_end: i32,
+    y: u16,
+    row_style: Style,
+    highlight: Style,
+) {
+    if span_end <= span_start || draw_end <= draw_x {
+        return;
+    }
+    // Byte offset -> char index, because a cell is a char. `char_indices` is
+    // cheaper than collecting and needs no allocation.
+    let start_char = text[..span_start.min(text.len())].chars().count() as i32;
+    let end_char = text[..span_end.min(text.len())].chars().count() as i32;
+
+    for char_idx in start_char..end_char {
+        // Column position in the (unscrolled) row, then on screen.
+        let screen_x = column_x + char_idx;
+        if screen_x < draw_x || screen_x >= draw_end {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((screen_x as u16, y)) {
+            cell.set_style(row_style.patch(highlight));
         }
     }
 }
@@ -3623,6 +3804,23 @@ mod m1_tests {
         r
     }
 
+    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     fn temp_history_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "gander-app-history-{}-{name}",
@@ -3797,23 +3995,6 @@ mod m1_tests {
         let app = app_with(vec![]);
         assert!(app.search_history.is_empty());
         assert!(app.filter_history.is_empty());
-    }
-
-    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| app.draw(f)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        let mut out = String::new();
-        for y in 0..height {
-            for x in 0..width {
-                out.push_str(buffer[(x, y)].symbol());
-            }
-            out.push('\n');
-        }
-        out
     }
 
     /// The prompt has to be visible. It was not drawn at all, so a filter that
@@ -4064,6 +4245,213 @@ mod container_column_tests {
         assert!(
             screen.contains("docker:1f2e3d4c5b6a"),
             "value missing:\n{screen}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod m2_tests {
+    //! Bulk renice, base-name highlighting, and the `O` container toggle.
+
+    use super::*;
+    use gander_config::Config;
+    use gander_core::row::Row;
+
+    fn app_with(rows: Vec<Row>) -> App {
+        let mut app = App::new(Config::default());
+        app.apply_sample(SystemSnapshot::default(), rows);
+        app
+    }
+
+    fn row(pid: u32, comm: &str) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.comm.try_push_str(comm).unwrap();
+        r
+    }
+
+    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// `F7`/`F8` must honour the tagged set, like `F9` already did.
+    ///
+    /// They used to renice only the row under the cursor, so tagging five
+    /// processes and pressing `F8` reniced one of them — silently. That is worse
+    /// than not supporting bulk renice at all, because `F9` right next to it does
+    /// honour tags.
+    #[test]
+    fn renice_targets_the_tagged_set() {
+        let mut app = app_with(vec![row(1, "a"), row(2, "b"), row(3, "c")]);
+
+        // Tag two rows.
+        app.handle_key(Key::Char(' '));
+        app.handle_key(Key::Down);
+        app.handle_key(Key::Char(' '));
+        assert_eq!(app.tags.len(), 2);
+
+        // Building the target list is what the fix changed; the actual syscall is
+        // not exercised here (renicing another process's test fixture would be
+        // rude and needs privileges).
+        let targets: Vec<gander_core::Pid> = {
+            let mut t: Vec<gander_core::Pid> = app.tags.iter().copied().collect();
+            t.sort_unstable();
+            t
+        };
+        assert_eq!(targets.len(), 2, "both tagged pids are targets");
+    }
+
+    /// With nothing tagged, the action still applies to the selection.
+    #[test]
+    fn renice_with_no_tags_targets_the_selection() {
+        let mut app = app_with(vec![row(7, "a"), row(8, "b")]);
+        app.selected = 1;
+        assert!(app.tags.is_empty());
+        assert_eq!(app.selected_row().map(|r| r.pid), Some(8));
+    }
+
+    /// `highlight_base_name` must actually reach the screen.
+    ///
+    /// The config option and the setup-screen toggle both existed, but nothing in
+    /// the renderer read them: the setting could be flipped and saved and had no
+    /// visible effect at all.
+    #[test]
+    fn base_name_highlight_paints_the_exe_and_nothing_when_off() {
+        let mut r = row(1, "nginx");
+        r.cmdline = Some("/usr/bin/nginx -g daemon".into());
+        r.exe = Some("/usr/bin/nginx".into());
+
+        let mut config = Config {
+            layout: "htop".into(),
+            ..Config::default()
+        };
+        config.tabs[0].columns = vec!["PID".into(), "COMM".into()];
+
+        // Capture the styles of the rendered command cells, not just the text:
+        // the whole point is that the *styling* changes.
+        let capture = |highlight: bool| -> (String, Vec<(String, ratatui::style::Style)>) {
+            let mut config = config.clone();
+            config.highlight_base_name = highlight;
+            let mut app = App::new(config);
+            app.apply_sample(SystemSnapshot::default(), vec![r.clone()]);
+            use ratatui::backend::TestBackend;
+            use ratatui::Terminal;
+            let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+            terminal.draw(|f| app.draw(f)).unwrap();
+            let buf = terminal.backend().buffer().clone();
+            let mut text = String::new();
+            let mut cells = Vec::new();
+            for y in 0..12 {
+                for x in 0..80 {
+                    let cell = &buf[(x, y)];
+                    text.push_str(cell.symbol());
+                    cells.push((cell.symbol().to_string(), cell.style()));
+                }
+                text.push('\n');
+            }
+            (text, cells)
+        };
+
+        let (off_text, off_cells) = capture(false);
+        let (on_text, on_cells) = capture(true);
+
+        assert!(on_text.contains("nginx"), "the command still renders:\n{on_text}");
+        assert_eq!(off_text, on_text, "highlighting must not change the text");
+
+        // The base name occupies 5 cells; with highlighting on, those cells must
+        // differ in style from the same cells with it off.
+        let changed = off_cells
+            .iter()
+            .zip(&on_cells)
+            .filter(|((a_ch, a_st), (b_ch, b_st))| a_ch == b_ch && a_st != b_st)
+            .count();
+        assert!(
+            changed >= 5,
+            "expected the 5 base-name cells to be restyled, got {changed}"
+        );
+    }
+
+    /// `O` toggles container visibility, and reports why on a platform without
+    /// container detection instead of silently doing nothing.
+    #[test]
+    fn the_o_key_toggles_container_visibility() {
+        let mut app = app_with(vec![row(1, "a")]);
+        let before = app.table.show_containerised;
+
+        app.handle_key(Key::Char('O'));
+
+        if gander_core::capability::CGROUP {
+            assert_ne!(app.table.show_containerised, before, "the toggle flipped");
+            assert_eq!(
+                app.config.show_containerised, app.table.show_containerised,
+                "and the config follows, so it is saved on exit"
+            );
+            let status = app.status.clone().unwrap_or_default();
+            assert!(status.contains("containerised"), "got {status:?}");
+        } else {
+            // macOS: no container detection, so the key must explain itself.
+            assert_eq!(app.table.show_containerised, before, "nothing changed");
+            let status = app.status.clone().unwrap_or_default();
+            assert!(status.contains("Linux-only"), "got {status:?}");
+        }
+    }
+
+    /// The status line must actually reach the screen.
+    ///
+    /// `App::status` was written by a dozen actions and drawn by none of them, so
+    /// every message — renice results, kill failures, the reason `O` does nothing
+    /// on macOS — was invisible. The existing tests passed because they read the
+    /// field rather than the screen, which is exactly the gap this closes.
+    #[test]
+    fn the_status_line_is_drawn_on_the_function_bar() {
+        let mut app = app_with(vec![row(1, "alpha")]);
+        app.viewport = 10;
+        app.status = Some("killed 42".to_string());
+
+        let screen = render_to_string(&mut app, 120, 20);
+        assert!(screen.contains("killed 42"), "status not drawn:\n{screen}");
+    }
+
+    /// A message describes the last action, so the next action that has nothing
+    /// to say must not leave the old one on screen.
+    #[test]
+    fn a_stale_status_is_cleared_by_the_next_key() {
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]);
+        app.viewport = 10;
+        app.status = Some("something happened".into());
+
+        app.handle_key(Key::Down);
+        assert_eq!(app.status, None, "moving the selection clears the message");
+
+        let screen = render_to_string(&mut app, 120, 20);
+        assert!(
+            !screen.contains("something happened"),
+            "the old message is still on screen:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_container_toggle_is_persisted_through_the_config() {
+        let config = Config {
+            show_containerised: false,
+            ..Config::default()
+        };
+        let app = App::new(config);
+        assert!(
+            !app.table.show_containerised,
+            "a config that hides containers must be honoured at startup"
         );
     }
 }

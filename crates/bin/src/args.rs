@@ -136,10 +136,11 @@ KEYS (in the TUI):
     F4 \\     filter      F5 t   tree         F6 < > sort
     F7 F8    nice -/+    F9 k   kill         F10 q  quit
     L        layout      H      threads      K      kernel threads
+    O        containers  I      meter mode   + -    speed
     Space    tag         c      tag children U      untag all
     a        affinity    i      I/O priority
     e        env         w      command line l      open files
-    x        locks       I      meter mode   + -    speed
+    x        locks
 
     Note: htop's I inverts the sort order; here it cycles the meter mode.
     Use F6 / < > / . to change the sort. See docs/KEYS.md.
