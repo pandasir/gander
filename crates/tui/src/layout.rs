@@ -263,6 +263,70 @@ pub fn draw_system_column(
     y = draw_kv(inner, buf, theme, y, bottom, "RUN", &format!("{running}"));
     y = draw_kv(inner, buf, theme, y, bottom, "THR", &format!("{threads}"));
 
+    // --- pressure -----------------------------------------------------------
+    // PSI is the one figure in this column that answers "is the machine
+    // struggling" rather than "how busy is it". Drawn only when the kernel
+    // reports it: macOS and pre-4.20 Linux have no `/proc/pressure`, and three
+    // empty rows would read as an idle machine rather than an absent feature.
+    if let Some(psi) = snapshot.psi {
+        if y + 1 < bottom {
+            y += 1;
+        }
+        for (label, resource) in psi.rows() {
+            if y >= bottom {
+                break;
+            }
+            if !resource.present {
+                continue;
+            }
+            // `some` is the share of time at least one task was stalled; `full`
+            // is the share of time nothing could run. Showing both, side by
+            // side, is what makes the number interpretable: high `some` with low
+            // `full` is contention, high `full` is a real stall.
+            let text = if resource.has_full && resource.full.avg10 > 0.0 {
+                format!("{:.1}/{:.1}", resource.some.avg10, resource.full.avg10)
+            } else {
+                format!("{:.1}", resource.some.avg10)
+            };
+            let color = psi_color(theme, resource.some.avg10.max(resource.full.avg10));
+            put_str(buf, inner.x, y, label, theme.meter_label, 4);
+            put_str(
+                buf,
+                inner.x + 4,
+                y,
+                &text,
+                ratatui::style::Style::default().fg(color),
+                inner.width.saturating_sub(4),
+            );
+            y += 1;
+        }
+    }
+
+    // --- compressed memory -------------------------------------------------
+    // zram and zswap both store bytes in RAM, so they belong next to MEM/SWP
+    // rather than in the header: the question they answer is "what is holding
+    // memory", and that is this column's job.
+    if snapshot.zram.present() {
+        let text = format!(
+            "{}→{}",
+            bytes_human(snapshot.zram.orig_total()),
+            bytes_human(snapshot.zram.compr_total())
+        );
+        y = draw_kv(inner, buf, theme, y, bottom, "ZRAM", &text);
+    }
+    if snapshot.mem.zswap > 0 {
+        let text = bytes_human(snapshot.mem.zswap).to_string();
+        y = draw_kv(inner, buf, theme, y, bottom, "ZSWP", &text);
+    }
+    if snapshot.mem.huge_pages_configured() {
+        let text = format!(
+            "{}/{}",
+            bytes_human(snapshot.mem.huge_used_bytes()),
+            bytes_human(snapshot.mem.huge_total_bytes())
+        );
+        y = draw_kv(inner, buf, theme, y, bottom, "HUGE", &text);
+    }
+
     // --- sparkline of aggregate CPU ---------------------------------------
     // Placed after everything else, wherever there is room, instead of at a fixed
     // offset that collided with the facts on a short terminal.
@@ -565,6 +629,21 @@ fn draw_kv(
         put_str(buf, inner.x + 7, y, value, theme.meter_value, inner.width - 7);
     }
     y + 1
+}
+
+/// Colour for a pressure percentage, in the same three bands `PsiMeter` uses.
+///
+/// Duplicated rather than shared so `layout` does not have to own a meter type:
+/// the bands are a property of the *reading* (below 10 % is normal, above 40 % is
+/// a stall), not of the widget drawing it, and both places must agree.
+fn psi_color(theme: &Theme, percent: f32) -> ratatui::style::Color {
+    if percent >= 40.0 {
+        theme.psi_high
+    } else if percent >= 10.0 {
+        theme.psi_mid
+    } else {
+        theme.psi_low
+    }
 }
 
 /// Map `0.0..=1.0` to a block that reads as a vertical level.

@@ -108,6 +108,25 @@ pub struct Theme {
     /// Disk throughput bar: read, then written.
     pub disk_read: Color,
     pub disk_write: Color,
+
+    /// PSI pressure bars, by severity.
+    ///
+    /// Three bands rather than one colour because "12 % of the time something was
+    /// stalled" and "90 % of the time everything was stalled" are different
+    /// conditions, and a single-colour bar makes them look like the same problem
+    /// at different lengths. The thresholds are in `psi_band`.
+    pub psi_low: Color,
+    pub psi_mid: Color,
+    pub psi_high: Color,
+
+    /// zram: uncompressed size, compressed size.
+    pub zram_orig: Color,
+    pub zram_compressed: Color,
+    /// zswap: bytes in the pool, and the unused remainder of it.
+    pub zswap_used: Color,
+    pub zswap_free: Color,
+    /// Huge page allocation.
+    pub huge_used: Color,
 }
 
 impl Default for Theme {
@@ -235,6 +254,14 @@ impl Theme {
             net_tx: Color::Blue,
             disk_read: Color::Yellow,
             disk_write: Color::Red,
+            psi_low: Color::Green,
+            psi_mid: Color::Yellow,
+            psi_high: Color::Red,
+            zram_orig: Color::Magenta,
+            zram_compressed: Color::Cyan,
+            zswap_used: Color::Blue,
+            zswap_free: Color::DarkGray,
+            huge_used: Color::Cyan,
         }
     }
 
@@ -301,6 +328,14 @@ impl Theme {
             net_tx: Color::Gray,
             disk_read: Color::Gray,
             disk_write: Color::White,
+            psi_low: Color::White,
+            psi_mid: Color::White,
+            psi_high: Color::White,
+            zram_orig: Color::White,
+            zram_compressed: Color::White,
+            zswap_used: Color::White,
+            zswap_free: Color::White,
+            huge_used: Color::White,
         }
     }
 
@@ -430,6 +465,14 @@ impl Theme {
             net_tx: hex(0x60a5fa),
             disk_read: hex(0xfbbf24),
             disk_write: hex(0xf87171),
+            psi_low: hex(0x4ade80),
+            psi_mid: hex(0xfbbf24),
+            psi_high: hex(0xf87171),
+            zram_orig: hex(0xc084fc),
+            zram_compressed: hex(0x22d3ee),
+            zswap_used: hex(0x60a5fa),
+            zswap_free: hex(0x475569),
+            huge_used: hex(0x22d3ee),
         }
     }
 
@@ -532,6 +575,14 @@ impl Theme {
             net_tx: Color::Blue,
             disk_read: Color::Yellow,
             disk_write: Color::Red,
+            psi_low: Color::Green,
+            psi_mid: Color::Yellow,
+            psi_high: Color::Red,
+            zram_orig: Color::Magenta,
+            zram_compressed: Color::Cyan,
+            zswap_used: Color::Blue,
+            zswap_free: Color::DarkGray,
+            huge_used: Color::Cyan,
         }
     }
 
@@ -633,6 +684,14 @@ impl Theme {
             net_tx: hex(0x86efac),
             disk_read: hex(0xfacc15),
             disk_write: hex(0xf87171),
+            psi_low: hex(0x4ade80),
+            psi_mid: hex(0xfbbf24),
+            psi_high: hex(0xf87171),
+            zram_orig: hex(0xc084fc),
+            zram_compressed: hex(0x22d3ee),
+            zswap_used: hex(0x60a5fa),
+            zswap_free: hex(0x475569),
+            huge_used: hex(0x22d3ee),
         }
     }
 
@@ -735,6 +794,14 @@ impl Theme {
             net_tx: hex(0x2563eb),
             disk_read: hex(0xb45309),
             disk_write: hex(0xb91c1c),
+            psi_low: hex(0x15803d),
+            psi_mid: hex(0xb45309),
+            psi_high: hex(0xb91c1c),
+            zram_orig: hex(0x7e22ce),
+            zram_compressed: hex(0x0e7490),
+            zswap_used: hex(0x1d4ed8),
+            zswap_free: hex(0x9ca3af),
+            huge_used: hex(0x0e7490),
         }
     }
 
@@ -840,6 +907,14 @@ impl Theme {
             net_tx: hex(0x6e7681),
             disk_read: hex(0x9ca3af),
             disk_write: hex(0x8b949e),
+            psi_low: hex(0x6b7280),
+            psi_mid: hex(0x9ca3af),
+            psi_high: hex(0xb91c1c),
+            zram_orig: hex(0x9ca3af),
+            zram_compressed: hex(0x6b7280),
+            zswap_used: hex(0x6b7280),
+            zswap_free: hex(0xd1d5db),
+            huge_used: hex(0x6b7280),
         }
     }
 }

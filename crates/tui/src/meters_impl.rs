@@ -833,6 +833,534 @@ simple_meter!(
     }
 );
 
+// ---------------------------------------------------------------------------
+// PSI pressure
+// ---------------------------------------------------------------------------
+
+/// Pressure stall information (`PSI`).
+///
+/// # Why this is not just another CPU bar
+///
+/// CPU% and load average say how *busy* the machine is, not whether it is
+/// struggling. A box pinned at 90 % CPU with nothing queued is working well; a box
+/// at 30 % CPU whose `io full` average is 40 % is making every process wait on the
+/// disk, and neither CPU% nor load average shows it. PSI is the kernel's own
+/// account of lost time, and it is the only figure that separates the two.
+///
+/// The meter draws `some` and, where the file provides it, `full`, because they
+/// answer different questions: `some` is "at least one task was waiting", `full`
+/// is "nothing could run at all". Both lines exist for every resource on current
+/// kernels; `has_full` comes from the file rather than from a table of assumptions
+/// about which resources have one.
+///
+/// Unavailable everywhere except Linux 4.20+ with `CONFIG_PSI=y`, and it says so
+/// rather than drawing four empty bars that look like an idle machine.
+pub struct PsiMeter {
+    rows: [PsiRow; 4],
+    /// Whether the snapshot last seen carried PSI at all.
+    available: bool,
+}
+
+/// One drawn row of the PSI meter.
+struct PsiRow {
+    label: &'static str,
+    some: f32,
+    full: f32,
+    has_full: bool,
+    present: bool,
+}
+
+impl PsiRow {
+    const fn empty(label: &'static str) -> Self {
+        Self {
+            label,
+            some: 0.0,
+            full: 0.0,
+            has_full: false,
+            present: false,
+        }
+    }
+}
+
+impl PsiMeter {
+    pub fn new() -> Self {
+        Self {
+            rows: [
+                PsiRow::empty("CPU"),
+                PsiRow::empty("MEM"),
+                PsiRow::empty("IO"),
+                PsiRow::empty("IRQ"),
+            ],
+            available: false,
+        }
+    }
+
+    /// Colour band for a pressure percentage.
+    ///
+    /// Deliberately not linear across the whole range: PSI values are small in
+    /// normal operation (a healthy desktop sits below 1 %), so the interesting
+    /// information is concentrated in the low end. 10 % and 40 % are the two
+    /// thresholds worth a colour change.
+    fn band(theme: &Theme, percent: f32) -> ratatui::style::Color {
+        if percent >= 40.0 {
+            theme.psi_high
+        } else if percent >= 10.0 {
+            theme.psi_mid
+        } else {
+            theme.psi_low
+        }
+    }
+}
+
+impl Default for PsiMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for PsiMeter {
+    fn name(&self) -> &'static str {
+        "PSI"
+    }
+
+    fn min_width(&self) -> u16 {
+        10
+    }
+
+    /// Four rows: one per resource.
+    ///
+    /// Stacked rather than side by side because the four resources are read as a
+    /// group — "which one is stalling this machine" is the question, and a
+    /// single-row layout would have to abbreviate them into unreadable columns.
+    fn rows(&self) -> u16 {
+        4
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        let Some(psi) = snapshot.psi else {
+            self.available = false;
+            for row in &mut self.rows {
+                *row = PsiRow::empty(row.label);
+            }
+            return;
+        };
+        self.available = psi.any_present();
+        for (row, (label, resource)) in self.rows.iter_mut().zip(psi.rows()) {
+            row.label = label;
+            row.present = resource.present;
+            // The 10-second average, not the instantaneous figure: these are
+            // already smoothed by the kernel, and the 10 s window is the one that
+            // describes "what the machine is doing" rather than "what it did this
+            // instant". The 60 s and 300 s averages are for spotting a trend, which
+            // a header meter is the wrong shape for.
+            row.some = resource.some.avg10;
+            row.full = resource.full.avg10;
+            row.has_full = resource.has_full;
+        }
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if !self.available {
+            put_str(buf, area.x, area.y, "PSI n/a here", theme.meter_label, area.width);
+            return;
+        }
+
+        let width = area.width as usize;
+        for (i, row) in self.rows.iter().enumerate() {
+            let y = area.y + i as u16;
+            if y >= area.bottom() {
+                break;
+            }
+            if !row.present {
+                put_str(buf, area.x, y, row.label, theme.meter_label, 4);
+                put_str(buf, area.x + 4, y, "-", theme.meter_value, area.width.saturating_sub(4));
+                continue;
+            }
+
+            // Text mode has to fit twice the numbers in the same four rows, so it
+            // shows `some` only; `full` is the second number in bar mode, where
+            // the bar itself carries the magnitude.
+            let text = if mode == MeterMode::Text || !row.has_full {
+                format!("{:>5.1}%", row.some)
+            } else {
+                format!("{:>5.1}%", row.full)
+            };
+            put_str(buf, area.x, y, row.label, theme.meter_label, 4);
+
+            let tail = text.len() as u16;
+            let bar_x = area.x + 4;
+            let bar_w = area
+                .width
+                .saturating_sub(4)
+                .saturating_sub(tail + 1);
+
+            if mode == MeterMode::Bar && bar_w > 0 {
+                // `some` fills the bar; `full` is drawn on top of it in a brighter
+                // band. A single segment would have to pick one of the two
+                // questions to answer, and the pair is what makes the reading
+                // meaningful: high `some` with low `full` is contention, high
+                // `full` is a stall.
+                let some = (row.some / 100.0).clamp(0.0, 1.0);
+                let full = (row.full / 100.0).clamp(0.0, 1.0);
+                let segments = [
+                    Segment {
+                        value: some,
+                        color: Self::band(theme, row.some),
+                    },
+                    Segment {
+                        value: full,
+                        color: theme.psi_high,
+                    },
+                ];
+                draw_segments(buf, bar_x, y, bar_w, &segments, theme.bar_background, '|');
+            }
+
+            let x = area.right().saturating_sub(tail);
+            put_str(buf, x, y, &text, theme.meter_value, tail);
+            let _ = width;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// zram
+// ---------------------------------------------------------------------------
+
+/// Compressed RAM block devices (`zram`).
+///
+/// zram is a swap device backed by compressed RAM rather than by a disk. The
+/// useful facts are how much was pushed into it and how much RAM that cost: a 4:1
+/// ratio means 4 GB of swap is occupying 1 GB of memory. Printing only the
+/// compressed figure would understate what is stored; printing only the
+/// uncompressed one would overstate what it costs.
+pub struct ZramMeter {
+    text: String,
+    value: f32,
+    /// Compressed bytes divided by physical memory, for the bar.
+    ratio_of_ram: f32,
+    orig: u64,
+    compressed: u64,
+    present: bool,
+    history: VecDeque<f32>,
+}
+
+impl ZramMeter {
+    pub fn new() -> Self {
+        Self {
+            text: String::from("n/a here"),
+            value: 0.0,
+            ratio_of_ram: 0.0,
+            orig: 0,
+            compressed: 0,
+            present: false,
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+}
+
+impl Default for ZramMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for ZramMeter {
+    fn name(&self) -> &'static str {
+        "Zram"
+    }
+
+    fn min_width(&self) -> u16 {
+        18
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        self.present = snapshot.zram.present();
+        if !self.present {
+            self.text = String::from("n/a here");
+            self.value = 0.0;
+            self.ratio_of_ram = 0.0;
+            self.orig = 0;
+            self.compressed = 0;
+        } else {
+            let orig = snapshot.zram.orig_total();
+            let compr = snapshot.zram.compr_total();
+            self.orig = orig;
+            self.compressed = compr;
+            self.text = format!(
+                "{} → {} ({:.1}x)",
+                bytes_human(orig),
+                bytes_human(compr),
+                snapshot.zram.ratio()
+            );
+            // The bar shows how much physical memory the pool occupies, not the
+            // compression ratio: the ratio is in the text, and a bar of "3.2x"
+            // has no natural scale.
+            self.value = if snapshot.mem.total > 0 {
+                (compr as f32 / snapshot.mem.total as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            self.ratio_of_ram = self.value;
+        }
+        if self.history.len() == GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            draw_graph(buf, area, &self.history, theme, 1.0);
+            return;
+        }
+        let segments = [Segment {
+            value: self.value,
+            color: theme.zram_orig,
+        }];
+        labelled_bar(
+            "Zram",
+            self.value,
+            &self.text,
+            &segments,
+            area,
+            buf,
+            theme,
+            mode,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// zswap
+// ---------------------------------------------------------------------------
+
+/// The zswap pool.
+///
+/// zswap sits in front of the swap device: pages on their way out are compressed
+/// into a RAM pool first, and only spill to disk when the pool is full. The
+/// interesting figure is therefore not "how much is in it" (that only grows) but
+/// how full the pool is relative to its ceiling, which is what decides whether
+/// swapping will hit the disk.
+///
+/// The ceiling comes from `max_pool_percent` (a percentage of physical memory).
+/// When that parameter is unreadable the bar scales against the largest pool size
+/// seen, the same way the throughput meters scale, rather than against a fixed
+/// guess.
+pub struct ZswapMeter {
+    text: String,
+    value: f32,
+    used: u64,
+    max: u64,
+    present: bool,
+    history: VecDeque<f32>,
+}
+
+impl ZswapMeter {
+    pub fn new() -> Self {
+        Self {
+            text: String::from("n/a here"),
+            value: 0.0,
+            used: 0,
+            max: 0,
+            present: false,
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+}
+
+impl Default for ZswapMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for ZswapMeter {
+    fn name(&self) -> &'static str {
+        "Zswap"
+    }
+
+    fn min_width(&self) -> u16 {
+        16
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        let mem = &snapshot.mem;
+        // "Present" means the pool is switched on *and* has been used. A kernel
+        // with zswap compiled in but disabled reports `Zswap: 0`, and a meter for
+        // that is a permanent empty bar — the same reasoning that makes `DiskIO`
+        // say `n/a here` on macOS.
+        self.present = mem.zswap > 0 || mem.zswap_max > 0;
+        if !self.present {
+            self.text = String::from("n/a here");
+            self.value = 0.0;
+            self.used = 0;
+            self.max = 0;
+        } else {
+            self.used = mem.zswap;
+            self.max = mem.zswap_max;
+            self.text = if self.max > 0 {
+                format!("{}/{}", bytes_human(self.used), bytes_human(self.max))
+            } else {
+                bytes_human(self.used).to_string()
+            };
+            // Against the pool ceiling when it is known, so the bar answers
+            // "will the next page spill to disk?". Without a ceiling, against
+            // physical memory, which at least gives the bar a meaning.
+            let ceiling = if self.max > 0 { self.max } else { mem.total };
+            self.value = if ceiling > 0 {
+                (self.used as f32 / ceiling as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        }
+        if self.history.len() == GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            draw_graph(buf, area, &self.history, theme, 1.0);
+            return;
+        }
+        let segments = [
+            Segment {
+                value: self.value,
+                color: theme.zswap_used,
+            },
+            Segment {
+                value: 1.0 - self.value,
+                color: theme.zswap_free,
+            },
+        ];
+        labelled_bar(
+            "Zswap",
+            self.value,
+            &self.text,
+            &segments,
+            area,
+            buf,
+            theme,
+            mode,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Huge pages
+// ---------------------------------------------------------------------------
+
+/// Huge page allocation.
+///
+/// Huge pages are pre-reserved at boot (or at runtime through `nr_hugepages`) and
+/// cannot be used for anything else, so a machine that reserved 2 GB of them is
+/// missing 2 GB whether or not a process is using them. The meter shows
+/// `used/total`, which is the figure that answers "is the reservation working".
+pub struct HugePagesMeter {
+    text: String,
+    value: f32,
+    present: bool,
+    history: VecDeque<f32>,
+}
+
+impl HugePagesMeter {
+    pub fn new() -> Self {
+        Self {
+            text: String::from("n/a here"),
+            value: 0.0,
+            present: false,
+            history: VecDeque::with_capacity(GRAPH_HISTORY),
+        }
+    }
+}
+
+impl Default for HugePagesMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Meter for HugePagesMeter {
+    fn name(&self) -> &'static str {
+        "HugePages"
+    }
+
+    fn min_width(&self) -> u16 {
+        14
+    }
+
+    fn column(&self) -> crate::meters::HeaderColumn {
+        crate::meters::HeaderColumn::Right
+    }
+
+    fn history(&self) -> Option<&VecDeque<f32>> {
+        Some(&self.history)
+    }
+
+    fn sample(&mut self, snapshot: &SystemSnapshot) {
+        let mem = &snapshot.mem;
+        self.present = mem.huge_pages_configured();
+        if !self.present {
+            // No huge pages reserved: the feature is compiled in but nothing is
+            // set aside, and a permanent `0/0` bar would look broken rather than
+            // absent.
+            self.text = String::from("n/a here");
+            self.value = 0.0;
+        } else {
+            let used = mem.huge_used_bytes();
+            let total = mem.huge_total_bytes();
+            self.text = format!("{}/{}", bytes_human(used), bytes_human(total));
+            self.value = if total > 0 {
+                (used as f32 / total as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        }
+        if self.history.len() == GRAPH_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(self.value);
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
+        if mode == MeterMode::Graph {
+            draw_graph(buf, area, &self.history, theme, 1.0);
+            return;
+        }
+        let segments = [Segment {
+            value: self.value,
+            color: theme.huge_used,
+        }];
+        labelled_bar(
+            "HugePages",
+            self.value,
+            &self.text,
+            &segments,
+            area,
+            buf,
+            theme,
+            mode,
+        );
+    }
+}
+
 /// A blank spacer meter, used to align header rows.
 pub struct BlankMeter;
 
@@ -1166,6 +1694,10 @@ pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
         "Hostname" => Box::new(HostnameMeter::new()),
         "NetworkIO" | "Network" => Box::new(NetworkMeter::new()),
         "DiskIO" | "Disk" => Box::new(DiskIOMeter::new()),
+        "PSI" | "Pressure" => Box::new(PsiMeter::new()),
+        "Zram" | "ZRAM" => Box::new(ZramMeter::new()),
+        "Zswap" | "ZSWAP" => Box::new(ZswapMeter::new()),
+        "HugePages" | "Hugepages" => Box::new(HugePagesMeter::new()),
         "Blank" => Box::new(BlankMeter::new()),
         _ => return None,
     })
@@ -1186,6 +1718,13 @@ pub const METER_NAMES: &[&str] = &[
     "Hostname",
     "NetworkIO",
     "DiskIO",
+    // M3. All three are Linux-only subsystems; each meter reports `n/a here`
+    // elsewhere rather than drawing an empty bar, so they stay in the list so a
+    // config file is portable between machines.
+    "PSI",
+    "Zram",
+    "Zswap",
+    "HugePages",
     "Blank",
 ];
 
@@ -1482,5 +2021,186 @@ mod tests {
         use gander_core::format::percent_human;
         assert_eq!(&*percent_human(12.34), "12.3");
         assert_eq!(&*percent_human(f32::NAN), "-");
+    }
+}
+
+#[cfg(test)]
+mod m3_meter_tests {
+    //! PSI, zram, zswap and huge page meters.
+    //!
+    //! The property every one of these shares: an unavailable subsystem must say
+    //! so rather than draw a zero. A permanent empty bar is indistinguishable from
+    //! a machine that is idle in exactly that dimension, and the difference
+    //! matters — `0 %` pressure and "this kernel has no PSI" are not the same
+    //! statement.
+
+    use super::*;
+    use gander_core::system::{
+        Psi, PsiLine, PsiResource, ZramDevice, ZramInfo,
+    };
+
+    fn snap() -> SystemSnapshot {
+        let mut s = SystemSnapshot::default();
+        s.mem.total = 16 * 1024 * 1024 * 1024;
+        s
+    }
+
+    fn line(avg10: f32, total: u64) -> PsiLine {
+        PsiLine {
+            avg10,
+            avg60: avg10 / 2.0,
+            avg300: avg10 / 4.0,
+            total_us: total,
+        }
+    }
+
+    fn resource(some: f32, full: f32) -> PsiResource {
+        PsiResource {
+            present: true,
+            some: line(some, 1_000),
+            full: line(full, 500),
+            has_full: true,
+        }
+    }
+
+    fn render_line(meter: &mut dyn Meter, width: u16, row: u16, mode: MeterMode) -> String {
+        let area = Rect::new(0, 0, width, meter.rows());
+        let mut buf = Buffer::empty(area);
+        meter.render(area, &mut buf, &Theme::default(), mode);
+        (0..width).map(|x| buf[(x, row)].symbol().to_string()).collect()
+    }
+
+    #[test]
+    fn psi_meter_says_so_when_the_kernel_has_none() {
+        let mut m = PsiMeter::new();
+        m.sample(&snap());
+        let text = render_line(&mut m, 20, 0, MeterMode::Text);
+        assert!(text.contains("n/a"), "got {text:?}");
+    }
+
+    #[test]
+    fn psi_meter_shows_some_and_full() {
+        let mut s = snap();
+        s.psi = Some(Psi {
+            cpu: resource(2.0, 0.0),
+            memory: resource(0.5, 0.25),
+            io: resource(12.5, 40.5),
+            irq: PsiResource::default(),
+        });
+        let mut m = PsiMeter::new();
+        m.sample(&s);
+
+        assert_eq!(m.rows(), 4, "one row per resource");
+        let io = render_line(&mut m, 24, 2, MeterMode::Bar);
+        assert!(io.contains("IO"), "got {io:?}");
+        // `full` is the figure shown in bar mode: it is the one that says the
+        // machine stalled, not merely contended.
+        assert!(io.contains("40.5"), "expected the full average, got {io:?}");
+
+        let cpu = render_line(&mut m, 24, 0, MeterMode::Bar);
+        assert!(cpu.contains("CPU"), "got {cpu:?}");
+    }
+
+    /// A resource the kernel does not expose is left out rather than drawn as a
+    /// zero-length bar.
+    #[test]
+    fn an_absent_resource_is_marked_not_zeroed() {
+        let mut s = snap();
+        s.psi = Some(Psi {
+            cpu: resource(1.0, 0.0),
+            memory: PsiResource::default(),
+            io: resource(0.0, 0.0),
+            irq: PsiResource::default(),
+        });
+        let mut m = PsiMeter::new();
+        m.sample(&s);
+        let mem = render_line(&mut m, 24, 1, MeterMode::Bar);
+        assert!(mem.contains("MEM"), "got {mem:?}");
+        assert!(mem.contains('-'), "an absent resource shows a dash, got {mem:?}");
+    }
+
+    #[test]
+    fn zram_meter_reports_both_sizes_and_the_ratio() {
+        let mut s = snap();
+        s.zram = ZramInfo {
+            devices: vec![ZramDevice {
+                name: "zram0".into(),
+                orig_data_size: 4 * 1024 * 1024 * 1024,
+                compr_data_size: 1024 * 1024 * 1024,
+                mem_used_total: 1024 * 1024 * 1024,
+            }],
+        };
+        let mut m = ZramMeter::new();
+        m.sample(&s);
+        let text = render_line(&mut m, 40, 0, MeterMode::Text);
+        assert!(text.contains("4.0G"), "uncompressed size, got {text:?}");
+        assert!(text.contains("1.0G"), "compressed size, got {text:?}");
+        assert!(text.contains("4.0x"), "ratio, got {text:?}");
+    }
+
+    #[test]
+    fn zram_meter_says_so_without_devices() {
+        let mut m = ZramMeter::new();
+        m.sample(&snap());
+        let text = render_line(&mut m, 20, 0, MeterMode::Text);
+        assert!(text.contains("n/a"), "got {text:?}");
+    }
+
+    #[test]
+    fn zswap_meter_scales_against_the_pool_ceiling() {
+        let mut s = snap();
+        s.mem.zswap = 512 * 1024 * 1024;
+        s.mem.zswap_max = 1024 * 1024 * 1024;
+        let mut m = ZswapMeter::new();
+        m.sample(&s);
+        // Half the pool used.
+        assert!((m.value - 0.5).abs() < 0.01, "got {}", m.value);
+        let text = render_line(&mut m, 40, 0, MeterMode::Text);
+        assert!(text.contains("512M"), "got {text:?}");
+    }
+
+    #[test]
+    fn huge_pages_meter_is_unavailable_when_nothing_is_reserved() {
+        let mut m = HugePagesMeter::new();
+        m.sample(&snap());
+        let text = render_line(&mut m, 24, 0, MeterMode::Text);
+        assert!(text.contains("n/a"), "got {text:?}");
+    }
+
+    #[test]
+    fn huge_pages_meter_counts_bytes_not_pages() {
+        let mut s = snap();
+        s.mem.huge_pages_total = 1024;
+        s.mem.huge_pages_free = 512;
+        s.mem.huge_page_size = 2 * 1024 * 1024;
+        let mut m = HugePagesMeter::new();
+        m.sample(&s);
+        // 512 pages of 2 MiB used out of 1024.
+        assert!((m.value - 0.5).abs() < 0.01, "got {}", m.value);
+        let text = render_line(&mut m, 32, 0, MeterMode::Text);
+        assert!(text.contains("1.0G"), "got {text:?}");
+    }
+
+    /// Every new meter must survive graph mode on a one-cell area, because the
+    /// header splits into narrow columns on a small terminal.
+    #[test]
+    fn the_m3_meters_survive_a_one_cell_graph() {
+        let area = Rect::new(0, 0, 1, 1);
+        for name in ["PSI", "Zram", "Zswap", "HugePages"] {
+            let mut m = meter_by_name(name).expect(name);
+            m.sample(&snap());
+            let mut buf = Buffer::empty(area);
+            m.render(area, &mut buf, &Theme::default(), MeterMode::Graph);
+            let mut buf = Buffer::empty(area);
+            m.render(area, &mut buf, &Theme::default(), MeterMode::Bar);
+        }
+    }
+
+    #[test]
+    fn the_m3_meters_are_offered_and_construct() {
+        for name in ["PSI", "Zram", "Zswap", "HugePages"] {
+            assert!(METER_NAMES.contains(&name), "{name} not in METER_NAMES");
+            assert!(meter_by_name(name).is_some(), "{name} does not construct");
+        }
     }
 }

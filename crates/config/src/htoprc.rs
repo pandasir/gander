@@ -273,6 +273,20 @@ fn meter_name_known(name: &str) -> bool {
             | "Clock"
             | "Date"
             | "Hostname"
+            | "NetworkIO"
+            | "Network"
+            | "DiskIO"
+            | "Disk"
+            // M3: PSI pressure, compressed RAM, huge pages. Kept in this list so
+            // an htoprc that names them imports instead of being silently
+            // dropped, and so a config written on a Linux box still loads on a
+            // Mac (where each meter reports `n/a here`).
+            | "PSI"
+            | "Pressure"
+            | "Zram"
+            | "Zswap"
+            | "HugePages"
+            | "Hugepages"
             | "Blank"
     )
 }
@@ -308,6 +322,36 @@ fn htop_field_name(id: &str) -> Option<&'static str> {
         124 => Field::ProcComm,
         125 => Field::ProcExe,
         126 => Field::Cwd,
+        // htop's PSS block, from `linux/ProcessField.h` on htop `main`:
+        //
+        //   M_PSS = 119, M_SWAP = 120, M_PSSWP = 121,
+        //   M_PRIV = 131, GPU_TIME = 132, GPU_PERCENT = 133, M_EPSS = 135
+        //
+        // The `match` below is on `raw + 1` (htop's own id), so the arms use the
+        // values above verbatim; the file stores each one minus one.
+        //
+        // The name mapping is by *meaning*, not by spelling: htop has both
+        // `M_EPSS` (135) and `M_PSSWP` (121), and they are the same figure —
+        // effective PSS, i.e. PSS plus the swapped-out equivalent. gander keeps
+        // one name for it, `M_EPSS`, and both htop ids import to it. `M_PRIV` is
+        // our `M_PRIVATE`.
+        //
+        // Gated on Linux because the fields are: importing an htoprc on macOS must
+        // drop them rather than name a `Field` this build does not have.
+        #[cfg(target_os = "linux")]
+        119 => Field::Pss,
+        #[cfg(target_os = "linux")]
+        120 => Field::Swap,
+        #[cfg(target_os = "linux")]
+        121 => Field::Epss,
+        #[cfg(target_os = "linux")]
+        131 => Field::Private,
+        #[cfg(target_os = "linux")]
+        132 => Field::GpuTime,
+        #[cfg(target_os = "linux")]
+        133 => Field::GpuPercent,
+        #[cfg(target_os = "linux")]
+        135 => Field::Epss,
         _ => return None,
     };
     Some(field.name())
@@ -354,6 +398,57 @@ header_layout=two_50_50
         assert_eq!(htop_field_name("48"), Some("USER"));
         assert_eq!(htop_field_name("0"), Some("PID"));
         assert_eq!(htop_field_name("45"), Some("USER"), "ST_UID maps to USER");
+    }
+
+    /// htop's PSS block imports to our PSS block, and the mapping is by meaning
+    /// rather than by name: htop calls `PSS + SwapPss` "M_PSSWP", we call it
+    /// `M_EPSS`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn imports_the_pss_columns() {
+        // The file stores `id - 1`: M_PSS is 119 in `ProcessField.h` and 118 in
+        // the file.
+        assert_eq!(htop_field_name("118"), Some("M_PSS"));
+        assert_eq!(htop_field_name("119"), Some("M_SWAP"));
+        assert_eq!(htop_field_name("120"), Some("M_EPSS"), "htop's M_PSSWP");
+        assert_eq!(htop_field_name("134"), Some("M_EPSS"), "htop's M_EPSS");
+        assert_eq!(htop_field_name("130"), Some("M_PRIVATE"), "htop's M_PRIV");
+        assert_eq!(htop_field_name("131"), Some("GPU_TIME"));
+        assert_eq!(htop_field_name("132"), Some("GPU%"));
+
+        let c = parse("fields=0 118 119 120 130\n");
+        let fields = c.active_tab().fields();
+        assert!(fields.contains(&Field::Pss), "{fields:?}");
+        assert!(fields.contains(&Field::Swap), "{fields:?}");
+        assert!(fields.contains(&Field::Epss), "{fields:?}");
+        assert!(fields.contains(&Field::Private), "{fields:?}");
+    }
+
+    /// An htoprc written on macOS must not name a `Field` the macOS build does
+    /// not have. The importer drops them rather than failing the whole file.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn pss_ids_are_dropped_where_the_fields_do_not_exist() {
+        assert_eq!(htop_field_name("91"), None);
+        // 48 stores htop field id 49. The point of the test is that the Linux-only
+        // ids are dropped while a common one survives.
+        let c = parse("fields=0 91 48\n");
+        let fields = c.active_tab().fields();
+        assert!(fields.contains(&Field::Pid));
+        assert!(fields.contains(&Field::User), "{fields:?}");
+    }
+
+    /// The M3 meters must survive an import, or a header edited on a Linux box is
+    /// silently reset the next time the file is read.
+    #[test]
+    fn imports_the_m3_meters() {
+        let c = parse(
+            "column_meters_0=PSI Zram Zswap HugePages\n\
+             column_meter_modes_0=1 1 1 2\n",
+        );
+        let names: Vec<&str> = c.meters_left.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["PSI", "Zram", "Zswap", "HugePages"]);
+        assert_eq!(c.meters_left[3].mode_name(), "text");
     }
 
     #[test]
