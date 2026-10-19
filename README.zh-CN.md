@@ -14,9 +14,9 @@ htop 不同 —— 一个把空间花在进程列表上、而不是花在横向�
 [Releases 页面](https://github.com/pandasir/gander/releases)：
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.2.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.2.0-aarch64-apple-darwin.tar.gz
-./gander-0.2.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.3.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.3.0-aarch64-apple-darwin.tar.gz
+./gander-0.3.0-aarch64-apple-darwin/gander
 ```
 
 按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
@@ -179,6 +179,9 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 和 id，但在自带 cgroup namespace 的容器里只会读到 `/`；namespace 能说明"在容器里"
 但说不出是哪个。namespace 判定为容器、路径又给不出名字时显示 `container:?`，而不是
 编造一个 id。
+
+按 `O` 可隐藏容器内的进程，只留宿主机的。macOS 没有容器检测，该键会直接说明，
+而不是拨动一个什么都不会发生的开关。
 
 ### 表头 meter
 

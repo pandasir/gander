@@ -61,6 +61,9 @@ takes effect immediately; `Esc` clears the filter and closes the prompt.
 |---|---|
 | `F9` / `k` | Open the signal picker |
 | `F7` / `F8` | Lower / raise nice (renice) |
+
+`F9`, `F7` and `F8` all act on **every tagged process** when anything is tagged, and
+on the selection otherwise. A status message on the function bar reports the result.
 | `a` | CPU affinity panel (real mask on Linux) |
 | `i` | I/O priority panel (Linux only) |
 | `e` | Environment of the selected process |
@@ -79,6 +82,7 @@ takes effect immediately; `Esc` clears the filter and closes the prompt.
 | `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter). **htop's `I` inverts the sort order** — see the table above |
 | `K` | Toggle kernel threads |
 | `H` | Toggle one row per thread |
+| `O` | Hide containerised processes (Linux; says so elsewhere) |
 | `+` / `-` | Faster / slower sampling (100 ms … 10 s) |
 | `F2` | Setup screen: Header, Columns, Tabs, Display, Colors |
 | `F1` / `h` / `?` | Help |

@@ -16,9 +16,9 @@ of on horizontal bars.
 [Releases page](https://github.com/pandasir/gander/releases):
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.2.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.2.0-aarch64-apple-darwin.tar.gz
-./gander-0.2.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.3.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.3.0-aarch64-apple-darwin.tar.gz
+./gander-0.3.0-aarch64-apple-darwin/gander
 ```
 
 Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
@@ -199,6 +199,9 @@ sufficient: the path names the runtime and the id but reads `/` inside a contain
 that has its own cgroup namespace, and the namespace says "containerised" without
 saying which. A process the namespace flags but the path cannot name shows
 `container:?` rather than an invented id.
+
+Press `O` to hide containerised processes and leave the host's own. On macOS there
+is no container detection, so the key says so instead of toggling nothing.
 
 ### Header meters
 

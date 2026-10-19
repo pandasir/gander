@@ -175,9 +175,9 @@ of drawing a permanent `0 B/s` that looks like a dead disk.
 
 ## M2 — power features
 
-In progress. Screen tabs, bulk actions, the affinity/I/O panels and the modal
-screens were already done ahead of schedule during M0/M1; the cgroup columns are
-the first item that had to wait for this milestone.
+Complete. Screen tabs, the affinity/I/O panels and the modal screens landed ahead
+of schedule during M0/M1; the cgroup columns, bulk renice, base-name highlighting
+and the `O` filter are this milestone's own work.
 
 | Area | State |
 |---|---|
@@ -186,9 +186,9 @@ the first item that had to wait for this milestone.
 | Open files (`l`), env (`e`), command line (`w`), file locks (`x`) | done (ahead of schedule) |
 | `CGROUP` column: the process's cgroup path | done |
 | `CONTAINER` column: runtime + container id | done |
-| Multi-select bulk actions across the tagged set | not started |
-| Hide-containerised filter (htop's `O`) | not started |
-| Highlight base name / stale exe | config exists, rendering not wired |
+| Bulk actions across the tagged set (`F9` kill, `F7`/`F8` renice) | done |
+| Hide-containerised filter (htop's `O`) | done, Linux only |
+| Highlight base name / stale exe | done |
 | Stable list: PID-ascending default, deterministic tie-break | done |
 
 ### Why the default sort is PID, not CPU%
@@ -217,6 +217,45 @@ Two bugs were in the way of this, both of which made *any* sort look unstable:
   too: on a quiet machine, "CPU% descending" listed pids as 10, 9, 8, … Separately,
   `sort_unstable_by` leaves ties unordered, so equal rows could swap between
   samples. Both now break ties by pid, ascending, in either direction.
+
+### M2's last three items
+
+**Bulk renice.** `F9` already sent a signal to every tagged process; `F7`/`F8`
+reniced only the row under the cursor. Two keys side by side where one honours tags
+and the other silently ignores them is worse than not supporting bulk renice at
+all, because it teaches the wrong expectation. Both now share the same target
+selection: the tagged set if anything is tagged, otherwise the selection.
+
+**Base-name highlighting.** `highlight_base_name` and `highlight_deleted_exe` were
+in the config, in the setup screen, and in the htoprc importer, and read by
+nothing. `Row::base_name_span` now locates the executable's base name and the
+renderer patches its cells with `Style::patch`, so the row's own state (selected,
+tagged, kernel thread) still shows through.
+
+The span is found from `exe` when available rather than by splitting the command on
+`/`, because `grep /usr/lib/foo` has a path in an *argument*. Without `exe`
+(another user's process) it falls back to argv[0]. A deleted executable is detected
+from the ` (deleted)` suffix the kernel appends to the `/proc/<pid>/exe` link
+target — the only signal available, since comparing mtimes needs the file to still
+exist.
+
+**`O` hides containerised processes.** Gated on `capability::CGROUP`: on macOS the
+key says "container detection is Linux-only" instead of flipping a toggle that
+cannot change anything. Verified against a real nested PID namespace in a
+container: five rows before, four after, and the hidden one was the containerised
+process.
+
+### A bug found while doing this: the status line was never drawn
+
+`App::status` is written by a dozen actions — renice results, kill failures,
+"showing threads", the reason `O` does nothing on macOS — and **no code ever drew
+it**. Every message was invisible. The existing tests passed because they read the
+field rather than the screen, which is exactly the gap that hid it.
+
+It is now painted right-aligned on the function bar, capped at half its width so
+`F1 Help` and the left-hand keys stay visible, and cleared by the next action that
+has nothing to say — otherwise `K` after `O` would leave "container detection is
+Linux-only" on screen as if `K` had produced it.
 
 ### How container detection works
 
