@@ -25,16 +25,58 @@ struct PrevRow {
     disk_written: u64,
 }
 
+/// Per-thread state carried between ticks, keyed by `(pid, handle)`.
+///
+/// The handle alone is not a valid key: every process reports the same handle for
+/// its main thread, so two processes' main threads would collide and inherit each
+/// other's CPU history.
+#[derive(Copy, Clone)]
+struct PrevThread {
+    /// Monotonic CPU nanoseconds from `proc_threadinfo`, user + system.
+    cpu_ns: u64,
+}
+
+/// A thread row's identity, unique across the whole table.
+///
+/// Neither native identifier is usable on its own:
+///
+/// * `handle` is not globally unique — every process reports the same handle for
+///   its main thread, so two processes' threads would collide.
+/// * `handle` is 64-bit and 95% of the values on a desktop exceed `u32`, so it
+///   cannot simply be stored in `pid`.
+///
+/// The result packs the pid into the top 16 bits and a 48-bit hash of the handle
+/// into the rest, so it is unique per `(pid, handle)` pair for any pid below
+/// 65536 (macOS `PID_MAX` is 99998, so the top bit is never needed). The low half
+/// is a xor-fold of the handle rather than the handle itself, because handles
+/// share a large common prefix — `8681251360` for every main thread — and the
+/// truncated raw value would keep only that shared part.
+///
+/// Stability: a handle does not move while the thread lives, so the identity is
+/// stable across samples. It is not unique across *time*: a thread that exits can
+/// have its handle reused, which is why the sampler also tracks `starttime`.
+pub fn thread_identity(pid: Pid, handle: u64) -> u64 {
+    let mixed = handle ^ ((pid as u64) << 32);
+    // Keep the low 48 bits of the mix and put the pid back on top, so the result is
+    // unique per (pid, handle) pair as long as pid < 2^16, which is far beyond the
+    // kernel's PID_MAX (99998 on macOS).
+    ((pid as u64) << 48) | (mixed & 0x0000_FFFF_FFFF_FFFF)
+}
+
 /// Drop the identity cache if it grows past this multiple of the live set.
 const CACHE_SLACK: usize = 4;
 
 pub struct Sampler {
     cache: Cache,
     prev_rows: HashMap<Pid, PrevRow>,
+    /// Per-thread CPU counters, keyed by `(pid, thread handle)`.
+    prev_threads: HashMap<(Pid, u64), PrevThread>,
     prev_cpu: Vec<CpuTimes>,
     prev_at: Option<Instant>,
     page_size: u64,
     cpu_count: usize,
+    /// Whether to emit one row per thread in addition to one per process.
+    show_threads: bool,
 }
 
 impl Default for Sampler {
@@ -49,10 +91,12 @@ impl Sampler {
         Self {
             cache: Cache::new(),
             prev_rows: HashMap::new(),
+            prev_threads: HashMap::new(),
             prev_cpu: Vec::new(),
             prev_at: None,
             page_size: scan::page_size(),
             cpu_count,
+            show_threads: false,
         }
     }
 }
@@ -116,7 +160,11 @@ impl PlatformSampler for Sampler {
             .prev_at
             .map(|p| at.duration_since(p).as_secs_f64())
             .unwrap_or(0.0);
-        let rows = self.read_rows(&procs, interval, now_secs, mem.total);
+        let mut rows = self.read_rows(&procs, interval, now_secs, mem.total);
+        if self.show_threads {
+            let threads = self.read_threads(&procs, &rows, interval, mem.total);
+            rows.extend(threads);
+        }
 
         self.prev_cpu = cpu.clone();
         self.prev_at = Some(at);
@@ -144,9 +192,172 @@ impl PlatformSampler for Sampler {
         };
         (snapshot, rows)
     }
+
+    fn set_show_threads(&mut self, on: bool) {
+        self.show_threads = on;
+    }
+
+    fn supports_threads() -> bool {
+        true
+    }
 }
 
 impl Sampler {
+    /// One extra row per thread, with `tgid` pointing at its process.
+    ///
+    /// The main thread is skipped: it is already present as the process row, and
+    /// duplicating it would make the tree show every process twice. On macOS it is
+    /// identified by *position* (index 0 of the list), because a thread has no pid
+    /// to compare against; see `scan::list_threads`.
+    ///
+    /// Cost, measured on this machine with 686 processes / 2609 threads: about
+    /// 2-5 ms per sample on top of the 0.7-1.4 ms the process table already
+    /// costs. That is why threads stay off by default. The claim in an earlier
+    /// version of `docs/ROADMAP.md` that this needed a Mach call per thread was
+    /// wrong: `PROC_PIDTHREADINFO` returns the name and the CPU time in one libproc
+    /// call, so no Mach port and no `task_for_pid` are involved.
+    ///
+    /// Threads inherit the process's uid, command line and exe, so only their own
+    /// CPU counters and name are read here.
+    fn read_threads(
+        &mut self,
+        procs: &[crate::darwin::kinfo::RawProc],
+        proc_rows: &[Row],
+        interval_secs: f64,
+        mem_total: u64,
+    ) -> Vec<Row> {
+        let mut out = Vec::new();
+        let mut next_prev: HashMap<(Pid, u64), PrevThread> =
+            HashMap::with_capacity(self.prev_threads.len());
+        // Memory is per address space, not per thread: every thread of a process
+        // reports the same RSS on Linux too (`/proc/<pid>/task/<tid>/stat` field
+        // 24 is the mm's figure). Inheriting it here keeps the two backends
+        // consistent instead of showing a column of zeroes on macOS.
+        let mem_of: HashMap<Pid, (u64, u64, u64)> = proc_rows
+            .iter()
+            .map(|r| (r.pid, (r.res, r.virt, r.elapsed)))
+            .collect();
+
+        for kp in procs {
+            let pid = kp.pid;
+            // Threads are only listable for processes we can inspect at all.
+            let Some(handles) = scan::list_threads(pid) else {
+                continue;
+            };
+            if handles.is_empty() {
+                continue;
+            }
+
+            // Identity is the process's, already cached under the leader's pid by
+            // `read_rows`. Reuse it rather than re-reading `KERN_PROCARGS2` for
+            // every thread of the same process.
+            let start_usec = kp.start_sec.saturating_mul(1_000_000);
+            let stable = self.identity(pid, start_usec);
+
+            for (index, handle) in handles.into_iter().enumerate() {
+                // Index 0 is the main thread, which is the process row. It is
+                // identified by position, not by being the first non-zero handle:
+                // a process whose main-thread handle is withheld reports `[0, …]`
+                // (pid 508 does), and treating the next entry as the leader would
+                // drop a real thread instead.
+                if index == 0 {
+                    continue;
+                }
+                // A withheld handle elsewhere in the list is not readable; skip it
+                // rather than asking `PROC_PIDTHREADINFO` about handle 0, which
+                // would describe whatever thread the kernel maps 0 to.
+                if handle == 0 {
+                    continue;
+                }
+
+                let Some(ti) = scan::thread_info(pid, handle) else {
+                    continue;
+                };
+
+                // `handle` cannot be used as the key on its own: every process
+                // reports the same handle for its main thread, so keying on it
+                // would make two processes share one CPU history. `(pid, handle)`
+                // is unique within a sample, and a handle is stable for as long as
+                // the thread lives.
+                let cpu_ns = ti.user_ns.saturating_add(ti.system_ns);
+                let prev = self.prev_threads.get(&(pid, handle)).copied();
+
+                // A macOS thread has no pid of its own, so `pid` stays the
+                // leader's and the thread gets its own identity. Using the
+                // leader's pid for the thread row would make it indistinguishable
+                // from the process row: kill, tagging and the selection all key on
+                // `pid`.
+                let mut row = Row::default_for_test(pid);
+                row.thread_id = Some(thread_identity(pid, handle));
+                row.tgid = pid;
+                row.is_thread = true;
+                row.ppid = pid;
+                row.starttime = start_usec;
+                row.uid = kp.uid;
+                row.nice = kp.nice.clamp(-128, 127) as i8;
+                row.priority = row.nice;
+                row.processor = -1;
+                row.nlwp = 1;
+                // A thread's identity files belong to its process.
+                row.cmdline = stable.cmdline.clone();
+                row.exe = stable.exe.clone();
+                row.flags = row
+                    .flags
+                    .insert(RowFlags::USERLAND_THREAD)
+                    .set(RowFlags::KERNEL_THREAD, stable.is_kernel_thread);
+
+                // The name is the only per-thread text macOS gives us. Fall back
+                // to the process name so a row is never blank; 46% of threads on
+                // this machine are unnamed.
+                if ti.name_str().is_empty() {
+                    let _ = row.comm.try_push_str(&kp.comm_str());
+                } else {
+                    let _ = row.comm.try_push_str(ti.name_str());
+                }
+
+                row.time_ticks = cpu_ns / 10_000_000; // hundredths of a second
+                row.state = match ti.run_state {
+                    // TH_STATE_RUNNING
+                    1 => b'R',
+                    // TH_STATE_STOPPED
+                    2 => b'T',
+                    // TH_STATE_WAITING / TH_STATE_UNINTERRUPTIBLE / HALTED
+                    _ => b'S',
+                };
+
+                // Same wall-clock formula as the process rows: `proc_threadinfo`
+                // reports nanoseconds, so a tick delta would be meaningless.
+                if interval_secs > 0.0 {
+                    if let Some(p) = prev {
+                        if cpu_ns >= p.cpu_ns {
+                            let delta = (cpu_ns - p.cpu_ns) as f64;
+                            let pct = delta / (interval_secs * 1e9) * 100.0;
+                            row.percent_cpu = (pct as f32).min(self.cpu_count as f32 * 100.0);
+                        }
+                    }
+                }
+
+                // Threads share the process's address space, so the process's
+                // resident size is the only per-thread figure that exists; this
+                // matches what Linux reports from `task/<tid>/stat`.
+                let (res, virt, elapsed) = mem_of.get(&pid).copied().unwrap_or((0, 0, 0));
+                row.res = res;
+                row.virt = virt;
+                row.elapsed = elapsed;
+                row.percent_mem = if mem_total > 0 {
+                    row.res as f32 * 100.0 / mem_total as f32
+                } else {
+                    0.0
+                };
+                next_prev.insert((pid, handle), PrevThread { cpu_ns });
+                out.push(row);
+            }
+        }
+
+        self.prev_threads = next_prev;
+        out
+    }
+
     fn read_rows(
         &mut self,
         procs: &[crate::darwin::kinfo::RawProc],
@@ -300,17 +511,74 @@ impl Sampler {
 }
 
 /// Summarise the process table for the `Tasks` meter.
+///
+/// Only process rows are counted. When thread rows are present they are
+/// *additional* rows for the same process, so counting every row would report
+/// both `total` and `threads` roughly twice over: the leader's `nlwp` already
+/// counts its threads, and each thread row contributes one more.
 fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
-    crate::system::TaskStats {
-        total: rows.len(),
-        running: rows.iter().filter(|r| r.state == b'R').count(),
-        threads: rows.iter().map(|r| r.nlwp.max(1) as usize).sum(),
+    let procs = rows.iter().filter(|r| !r.is_thread);
+    let mut stats = crate::system::TaskStats::default();
+    for row in procs {
+        stats.total += 1;
+        if row.state == b'R' {
+            stats.running += 1;
+        }
+        stats.threads += row.nlwp.max(1) as usize;
     }
+    stats
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_identity_is_unique_per_pid_and_handle() {
+        // The same handle under two pids must not collide: every process reports
+        // the same handle for its main thread.
+        let shared = 8_681_251_360u64;
+        assert_ne!(thread_identity(1, shared), thread_identity(2, shared));
+
+        // Different handles under one pid must not collide either.
+        assert_ne!(thread_identity(1, 100), thread_identity(1, 200));
+
+        // And the same pair is stable, so a thread keeps its identity across
+        // samples.
+        assert_eq!(thread_identity(42, 7), thread_identity(42, 7));
+    }
+
+    #[test]
+    fn thread_identity_does_not_collide_with_a_process_pid() {
+        // `Row::identity` returns the bare pid for a process, so a thread id must
+        // never land on a plausible pid.
+        for pid in [1u32, 2, 100, 99998] {
+            for handle in [0u64, 1, 8_681_251_360, u64::MAX] {
+                let id = thread_identity(pid, handle);
+                assert!(
+                    id > u32::MAX as u64,
+                    "thread id {id} for pid {pid} would collide with a pid"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn task_stats_count_processes_not_rows() {
+        let mut proc = Row::default_for_test(1);
+        proc.nlwp = 4;
+        proc.state = b'R';
+        let mut thread = Row::default_for_test(1);
+        thread.is_thread = true;
+        thread.thread_id = Some(thread_identity(1, 99));
+        thread.nlwp = 1;
+        thread.state = b'R';
+
+        let stats = task_stats(&[proc, thread]);
+        assert_eq!(stats.total, 1, "one process, not two rows");
+        assert_eq!(stats.running, 1, "the thread must not be counted again");
+        assert_eq!(stats.threads, 4, "nlwp already counts the threads");
+    }
 
     #[test]
     fn live_sample_produces_rows() {

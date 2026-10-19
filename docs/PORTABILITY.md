@@ -19,7 +19,7 @@ design.
 | cmdline | `/proc/<pid>/cmdline` | `sysctl(KERN_PROCARGS2)` |
 | exe | `readlink /proc/<pid>/exe` | `proc_pidpath` |
 | uid | `/proc/<pid>/status` | `proc_bsdinfo.pbi_uid` |
-| threads | `/proc/<pid>/task` *(not yet)* | `pti_threadnum` |
+| threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` |
 | disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
 | Test coverage | fixtures + live | live only (no fixture format to replay) |
 
@@ -52,6 +52,39 @@ reintroduced:
 9. **`libc` has no Darwin `kinfo_proc`.** `PROC_PIDTASKALLINFO` provides both the
    BSD and task structures in one call, which is fewer syscalls than htop's
    `sysctl(KERN_PROC_ALL)` + `proc_pidinfo` pair.
+10. **`pth_user_time` is nanoseconds; `pti_total_user` is Mach ticks.** The two
+    look alike and measure the same thing in different units. Verified by burning
+    CPU for two seconds on one thread: the per-thread sum came to 1.141 s while
+    `pti_total_user * 125/3` came to the same 1.141 s. Running the thread value
+    through `units::mach_ticks_to_nanos` inflates it 41x on Apple Silicon.
+11. **`PROC_PIDLISTTHREADS` returns thread *handles*, not tids, and they are not
+    globally unique.** Every process reports the same handle for its main thread
+    (`8681251360` on this machine) — the shell, `fork` children and Chrome alike.
+    A handle is stable while the thread lives, but it only identifies a thread
+    within its own process, so per-thread state must be keyed by `(pid, handle)`.
+12. **Thread handles are 64-bit and mostly do not fit in a pid.** 94.9% of the
+    handles on a desktop exceed `u32::MAX`, so a thread row cannot store its
+    handle in `Row::pid`. `Row::thread_id` carries it instead, and `Row::identity`
+    is the key for tags, selection and kill.
+13. **`PROC_PIDLISTTHREADS` has no size query, zero-fills the tail, and can leave
+    holes in the middle.** A null buffer returns 0 rather than a byte count, and a
+    buffer larger than the thread count comes back with the extra entries zeroed
+    while the return value is the *buffer* size. Separately, a process can report
+    `pti_threadnum = N` while the list has only `N - 1` usable handles: one slot is
+    `0` because the kernel withheld that thread's handle. `pid 508`
+    (`CarbonComponentScannerXPC`) reports `[0, 13046116576, 0]` with
+    `pti_threadnum == 3`. Only the zero *tail* is trimmed, so the main thread's
+    position is preserved.
+14. **A thread has no pid of its own on macOS.** `ps -M` prints the process's pid
+    in every thread row for the same reason. The main thread is therefore skipped
+    by *position* (index 0), not by comparing a tid to a pid as Linux does, and not
+    by "the first non-zero entry" — a withheld main-thread handle puts a real
+    thread at index 1, and treating it as the leader would silently drop it.
+15. **The number of thread rows can be less than `NLWP - 1`.** When a handle is
+    withheld (see 13), that thread cannot be described at all, so the table shows
+    one fewer row than the process's thread count claims. This is a kernel
+    permission limit, not a counting bug; it affected 54 of 709 processes on a
+    desktop.
 
 ## Seeing the whole process table
 
@@ -215,7 +248,7 @@ also why `htop` runs `sudo htop` when you want full detail.
 | PSI pressure meters | No `/proc/pressure`. |
 | Zram / Zswap | Linux-only subsystems. ZFS ARC could be added later. |
 | PSS / EPSS | No `smaps_rollup`; `ri_phys_footprint` is the closest analogue and is already available via rusage. |
-| Thread rows | `pti_threadnum` gives the count; listing threads needs the deprecated `task_threads` Mach API. Planned with the same gate as Linux's `/proc/<pid>/task`. |
+| Thread rows | Supported. `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` are both `libproc`; the earlier note here claiming this needed the deprecated `task_threads` Mach API was wrong. Threads of processes owned by another user are not listable (`proc_pidinfo` returns 0), so those rows simply have none. |
 | `a` affinity panel | `thread_policy_set` exists but is per-thread, not per-process; deferred. |
 | `i` I/O priority | No `ioprio_set` equivalent. |
 | GPU columns | Needs `IOKit`/`IOAccelerator`; different mechanism from Linux `drm-usage-stats`. |

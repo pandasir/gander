@@ -39,6 +39,9 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     // One sampler for the whole run: per-process CPU% needs two consecutive
     // samples, so a fresh sampler per iteration would always report 0.
     let mut sampler = gander_core::Sampler::default();
+    // Set before the first sample: the sampler only enumerates threads when it is
+    // told to, and a flag applied after `sample()` would cost one wasted pass.
+    gander_core::PlatformSampler::set_show_threads(&mut sampler, batch.threads);
 
     for iteration in 0..iterations {
         let rows = match sample_once(&mut sampler, sort, filter.as_ref()) {
@@ -123,6 +126,14 @@ fn write_text(
         "PID", "CPU%", "MEM%", "NI", "RES", "TIME"
     )?;
     for row in rows.iter().take(take) {
+        // A thread row is marked so the output stays greppable; on macOS a thread
+        // shares its leader's pid, so without a marker the two lines are
+        // indistinguishable.
+        let command = if row.is_thread {
+            format!("{{{}}} {}", row.comm.as_str(), row.display_command())
+        } else {
+            row.display_command().to_string()
+        };
         writeln!(
             out,
             "{:>7} {:>6} {:>5} {:>5} {:>8} {:>8} : {}",
@@ -132,7 +143,7 @@ fn write_text(
             row.nice,
             format::bytes_human(row.res),
             format::cpu_time_human(row.time_ticks, clk_tck),
-            row.display_command()
+            command
         )?;
     }
     Ok(())
@@ -152,7 +163,8 @@ fn write_json(
             out,
             "  {{\"pid\":{},\"ppid\":{},\"uid\":{},\"comm\":{},\"state\":\"{}\",\
              \"cpu_percent\":{:.2},\"mem_percent\":{:.2},\"rss\":{},\"vsize\":{},\
-             \"nice\":{},\"priority\":{},\"threads\":{},\"elapsed\":{},\"cmdline\":{}}}{}",
+             \"nice\":{},\"priority\":{},\"threads\":{},\"elapsed\":{},\"is_thread\":{},\
+             \"identity\":{},\"cmdline\":{}}}{}",
             row.pid,
             row.ppid,
             row.uid,
@@ -166,6 +178,8 @@ fn write_json(
             row.priority,
             row.nlwp,
             row.elapsed,
+            row.is_thread,
+            row.identity(),
             json_string(row.display_command()),
             comma
         )?;

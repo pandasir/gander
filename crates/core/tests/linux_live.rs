@@ -65,10 +65,22 @@ fn available_comes_from_memavailable() {
 
     // Kernels newer than 3.14 always provide MemAvailable.
     if let Some(expected) = raw.get("MemAvailable") {
-        assert_eq!(
+        // The two reads are not simultaneous, and MemAvailable moves as the
+        // kernel reclaims pages. Comparing them exactly made this test flake
+        // roughly 2 runs in 5 in a container; the accounting test above allows
+        // the same 2% drift for the same reason.
+        let expected = expected * 1024;
+        let tolerance = (snapshot.mem.total / 50).max(64 * 1024 * 1024);
+        assert!(
+            snapshot.mem.available.abs_diff(expected) <= tolerance,
+            "available {} vs MemAvailable {} (tolerance {tolerance})",
             snapshot.mem.available,
-            expected * 1024,
-            "available must be MemAvailable verbatim"
+            expected
+        );
+        // And it must still be a real MemAvailable figure, not `free`.
+        assert!(
+            snapshot.mem.available >= snapshot.mem.free,
+            "available must be at least free"
         );
     }
 }

@@ -115,7 +115,7 @@ impl Default for Config {
             layout: "panels".into(),
             highlight_base_name: false,
             highlight_deleted_exe: true,
-            color_scheme: "default".into(),
+            color_scheme: "gander".into(),
         }
     }
 }

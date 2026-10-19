@@ -12,16 +12,40 @@ use crate::Pid;
 ///
 /// Returns the row indices in depth-first display order. The input slice is not
 /// reordered; only the tree metadata on each row is updated.
+///
+/// Thread rows are nested under their process rather than looked up through
+/// `ppid`. They carry their leader's pid in `tgid`, and several threads share it,
+/// so the generic `by_pid` map (which is keyed by `pid`) cannot express the
+/// relation: a thread's `pid` is its tid, not its leader's. Handling them
+/// separately is what keeps the two namespaces from colliding.
 pub fn build(rows: &mut [Row]) -> Vec<usize> {
+    // Only process rows take part in the parent map. A thread's `pid` is a tid,
+    // which can coincidentally equal an unrelated process's pid; letting it into
+    // `by_pid` would silently re-parent that process.
     let mut by_pid: HashMap<Pid, usize> = HashMap::with_capacity(rows.len());
     for (idx, row) in rows.iter().enumerate() {
-        by_pid.insert(row.pid, idx);
+        if !row.is_thread {
+            by_pid.insert(row.pid, idx);
+        }
     }
 
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
     let mut is_root = vec![true; rows.len()];
 
     for idx in 0..rows.len() {
+        if rows[idx].is_thread {
+            // Attach to the leader if it is present; otherwise leave it a root so
+            // it still appears in the list instead of vanishing.
+            match by_pid.get(&rows[idx].tgid).copied() {
+                Some(p) if p != idx => {
+                    children[p].push(idx);
+                    is_root[idx] = false;
+                }
+                _ => is_root[idx] = true,
+            }
+            continue;
+        }
+
         let ppid = rows[idx].ppid;
         let parent = by_pid.get(&ppid).copied();
         match parent {
@@ -172,5 +196,70 @@ mod tests {
         let mut got = subtree(&rows, 1);
         got.sort_unstable();
         assert_eq!(got, vec![1, 2, 3, 4]);
+    }
+
+    fn thread_row(pid: Pid, tgid: Pid, id: u64) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.tgid = tgid;
+        r.ppid = tgid;
+        r.is_thread = true;
+        r.thread_id = Some(id);
+        r
+    }
+
+    /// A thread nests under its leader even though `by_pid` is keyed by `pid`.
+    #[test]
+    fn threads_nest_under_their_leader() {
+        let mut rows = vec![row(1, 0), thread_row(9001, 1, 1), row(2, 1)];
+        let order = build(&mut rows);
+        let pids: Vec<Pid> = order.iter().map(|&i| rows[i].pid).collect();
+        // 1, then its thread, then the child process 2.
+        assert_eq!(pids[0], 1);
+        assert_eq!(pids.len(), 3, "every row appears exactly once");
+        let thread_pos = order
+            .iter()
+            .position(|&i| rows[i].is_thread)
+            .expect("thread present");
+        assert_eq!(rows[order[thread_pos]].depth, 1, "one level under the leader");
+    }
+
+    /// A thread whose pid collides with an unrelated process must not re-parent it.
+    ///
+    /// Linux tids live in the same namespace as pids, so a tid can equal a
+    /// different process's pid. Before this was fixed, `by_pid` was built from
+    /// every row, so the thread silently became that process's tree node.
+    #[test]
+    fn a_thread_pid_does_not_reparent_an_unrelated_process() {
+        let mut rows = vec![
+            row(1, 0),
+            // pid 2 is a real child of 1
+            row(2, 1),
+            // a thread of pid 1 whose tid happens to be 3
+            thread_row(3, 1, 3),
+            // pid 3 is a real process whose parent is 2
+            row(3, 2),
+        ];
+        // The duplicate pid 3 means one of them cannot be in `by_pid`; the thread
+        // must be the one excluded.
+        let order = build(&mut rows);
+        assert_eq!(order.len(), 4);
+
+        let real_3 = order
+            .iter()
+            .position(|&i| rows[i].pid == 3 && !rows[i].is_thread)
+            .expect("the real process 3 must be in the tree");
+        assert_eq!(
+            rows[order[real_3]].depth, 2,
+            "process 3 must still be a child of 2, not of the thread"
+        );
+    }
+
+    /// A thread whose leader is missing still appears rather than vanishing.
+    #[test]
+    fn an_orphan_thread_is_a_root() {
+        let mut rows = vec![thread_row(9001, 424242, 1)];
+        let order = build(&mut rows);
+        assert_eq!(order.len(), 1);
+        assert_eq!(rows[0].depth, 0);
     }
 }

@@ -123,7 +123,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 |---|---|---|
 | Process list | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | Per-process details | `/proc/<pid>` | Mach + `proc_pidinfo` |
-| Threads as rows | yes (`H`) | not yet |
+| Threads as rows | yes (`H`) | yes (`H`) |
 | CPU affinity (`a`) | read/write | scheduler hint only, explains why |
 | I/O priority (`i`) | read/write | not available, explains why |
 
@@ -135,7 +135,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 233 on macOS, 216 on Linux
+cargo test                 # 257 on macOS, 221 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```

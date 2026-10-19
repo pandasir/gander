@@ -52,8 +52,7 @@ matching is enough. Separate terms with `|`.
 | `Shift+Left` / `Shift+Right` | Move the header meter cursor (htop layout) |
 | `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter; htop layout) |
 | `K` | Toggle kernel threads |
-| `H` | Toggle one row per thread (Linux) |
-| `H` | Hide kernel threads |
+| `H` | Toggle one row per thread |
 | `+` / `-` | Faster / slower sampling (100 ms … 10 s) |
 | `F2` | Setup screen: Header, Columns, Tabs, Display, Colors |
 | `F1` / `h` / `?` | Help |

@@ -42,7 +42,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
 完整参数见 `gander --help`。所有按键都与 htop 一致，无需重新学习：
-[docs/KEYS.md](docs/KEYS.md)。仅有的新增是 `L`（切换布局）和 `H`（每个线程一行，Linux）。
+[docs/KEYS.md](docs/KEYS.md)。仅有的新增是 `L`（切换布局）和 `H`（每个线程一行）。
 
 ## 相比 htop 的优势
 
@@ -112,7 +112,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 |---|---|---|
 | 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
 | 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` |
-| 线程按行显示 | 支持（`H`） | 尚未支持 |
+| 线程按行显示 | 支持（`H`） | 支持（`H`） |
 | CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 |
 | I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 |
 
@@ -124,7 +124,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 233 个，Linux 216 个
+cargo test                 # macOS 257 个，Linux 221 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```

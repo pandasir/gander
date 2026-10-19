@@ -12,6 +12,8 @@ pub struct Batch {
     pub filter: Option<String>,
     pub sort: Option<String>,
     pub limit: Option<usize>,
+    /// Emit one row per thread in addition to one per process.
+    pub threads: bool,
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +84,7 @@ impl Args {
                         out.batch.iterations = Some(1);
                     }
                 }
+                "--threads" => out.batch.threads = true,
                 "-F" | "--filter" => {
                     let v = take_value("--filter")?;
                     out.batch.filter = Some(v);
@@ -122,6 +125,7 @@ OPTIONS:
     -F, --filter <TERMS>     Filter command lines (fixed strings, '|'-separated)
         --sort <FIELD>       Sort column for batch output, e.g. PERCENT_CPU
         --limit <N>          Print at most N processes
+        --threads            Also emit one row per thread
     -v, --verbose            Extra diagnostics on stderr
     -h, --help               Show this help
     -V, --version            Show the version

@@ -104,7 +104,7 @@ pub mod capability {
     pub const PROC_IO: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
     /// Threads can be enumerated as rows.
-    pub const THREADS: bool = cfg!(target_os = "linux");
+    pub const THREADS: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
     /// Sampling is backed by a live OS source (not just fixtures).
     pub const LIVE: bool = crate::PLATFORM_SUPPORTED;

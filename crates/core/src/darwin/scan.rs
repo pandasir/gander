@@ -140,6 +140,161 @@ pub fn task_all_info(pid: u32) -> Option<TaskAllInfo> {
     })
 }
 
+/// One thread of a process, from `proc_pidinfo(PROC_PIDTHREADINFO)`.
+///
+/// `pth_user_time`/`pth_system_time` are **nanoseconds**, unlike
+/// `proc_taskinfo.pti_total_user`, which is in Mach absolute ticks. Verified by
+/// burning CPU for two seconds on Apple Silicon: the thread sums came to 1.141 s
+/// while `pti_total_user * 125/3` came to the same 1.141 s. Scaling these through
+/// [`super::units::mach_ticks_to_nanos`] would therefore inflate them 41x.
+#[derive(Copy, Clone, Debug)]
+pub struct ThreadInfo {
+    /// Opaque per-thread handle used as the `arg` of `PROC_PIDTHREADINFO`.
+    ///
+    /// **Not globally unique.** Every process reports the same handle for its
+    /// main thread (`8681251360` on this machine, for the shell, `fork` children
+    /// and this test binary alike), so it is only an identity *within* a pid.
+    pub handle: u64,
+    /// `pth_name`, empty for most threads (54% were named on a desktop).
+    pub name: [u8; 64],
+    pub user_ns: u64,
+    pub system_ns: u64,
+    /// `pth_run_state`: 1 running, 2 stopped, 3 waiting, 4 uninterruptible.
+    pub run_state: i32,
+}
+
+impl Default for ThreadInfo {
+    fn default() -> Self {
+        Self {
+            handle: 0,
+            name: [0; 64],
+            user_ns: 0,
+            system_ns: 0,
+            run_state: 0,
+        }
+    }
+}
+
+impl ThreadInfo {
+    /// Thread name as a lossy string, empty when the thread is unnamed.
+    pub fn name_str(&self) -> &str {
+        let len = self.name.iter().position(|b| *b == 0).unwrap_or(self.name.len());
+        // `pth_name` is a `char[64]`; it is not guaranteed UTF-8 but always is
+        // in practice (it comes from `pthread_setname_np`).
+        std::str::from_utf8(&self.name[..len]).unwrap_or("")
+    }
+}
+
+/// List the thread handles of one process (`proc_pidinfo(PROC_PIDLISTTHREADS)`).
+///
+/// Returns `None` when the process cannot be inspected at all — which is the
+/// normal case for other users' processes, since `proc_pidinfo` denies them. An
+/// empty `Some` means the process genuinely has no listable threads.
+///
+/// # Ordering and zeroes
+///
+/// Two properties of the kernel's reply matter to the caller and are preserved
+/// here rather than papered over:
+///
+/// * **The first entry is the main thread.** Verified against
+///   `pthread_mach_thread_np(pthread_self())` + `THREAD_IDENTIFIER_INFO` on a
+///   three-thread process: `raw[0]` was the main thread's handle every time. The
+///   caller skips it because it is already the process row.
+/// * **A slot can be `0` even in the middle of the list.** `pid 508`
+///   (`CarbonComponentScannerXPC`) reports `[0, 13046116576, 0]` with
+///   `pti_threadnum == 3`: its main thread has no readable handle at all. So the
+///   main thread is identified by *position*, never by being the first non-zero
+///   entry, and zeroes are only dropped from the tail.
+///
+/// The kernel returns the *buffer* size when the buffer is large enough, not the
+/// number of threads, and zero-fills the unused tail. A full buffer therefore has
+/// to be retried with more room rather than treated as exact.
+pub fn list_threads(pid: u32) -> Option<Vec<u64>> {
+    // No documented upper bound on the thread count, and the kernel does not
+    // report a size hint here (a null buffer returns 0), so grow on demand.
+    for capacity in [64usize, 512, 4096, 16384] {
+        let mut buf = vec![0u64; capacity];
+        let want = (capacity * std::mem::size_of::<u64>()) as c_int;
+        // SAFETY: `buf` has `want` writable bytes and `want` is that length; the
+        // kernel writes at most `want` bytes and returns the byte count.
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid as c_int,
+                PROC_PIDLISTTHREADS,
+                0,
+                buf.as_mut_ptr().cast::<c_void>(),
+                want,
+            )
+        };
+        if got < 0 {
+            return None;
+        }
+        if got == 0 {
+            // Either the process is not ours, or it has no threads. Distinguish
+            // by asking for the task info: a readable process always has >= 1.
+            return scan_task_thread_count(pid).map(|_| Vec::new());
+        }
+        let count = got as usize / std::mem::size_of::<u64>();
+        // A full buffer means the thread count may have been truncated.
+        if count < capacity {
+            buf.truncate(count);
+            // Drop only the zero-filled tail: a zero *before* a real handle is a
+            // thread whose handle the kernel would not give us, and removing it
+            // would shift every later thread's position, including the main
+            // thread's. Position is what identifies the main thread.
+            while buf.last() == Some(&0) {
+                buf.pop();
+            }
+            return Some(buf);
+        }
+    }
+    None
+}
+
+/// `PROC_PIDLISTTHREADS` flavor number, absent from `libc`'s constants.
+const PROC_PIDLISTTHREADS: c_int = 6;
+
+/// Thread count from `proc_taskinfo`, used only to tell "unreadable" from
+/// "empty" in [`list_threads`].
+fn scan_task_thread_count(pid: u32) -> Option<u32> {
+    task_all_info(pid).map(|info| info.task.threads)
+}
+
+/// Everything `proc_pidinfo` reports about one thread.
+pub fn thread_info(pid: u32, handle: u64) -> Option<ThreadInfo> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_threadinfo>::zeroed();
+    let want = std::mem::size_of::<libc::proc_threadinfo>() as c_int;
+    // SAFETY: the buffer is exactly `want` bytes and writable; the kernel writes
+    // that many and returns the byte count, or <= 0 on failure.
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as c_int,
+            libc::PROC_PIDTHREADINFO,
+            handle,
+            info.as_mut_ptr().cast::<c_void>(),
+            want,
+        )
+    };
+    if got != want {
+        return None;
+    }
+    // SAFETY: `got == want` means the whole struct was initialised.
+    let info = unsafe { info.assume_init() };
+
+    let mut name = [0u8; 64];
+    for (dst, src) in name.iter_mut().zip(info.pth_name.iter()) {
+        *dst = *src as u8;
+    }
+
+    Some(ThreadInfo {
+        handle,
+        name,
+        user_ns: info.pth_user_time,
+        system_ns: info.pth_system_time,
+        run_state: info.pth_run_state,
+    })
+}
+
 /// Per-process task info from `proc_pidinfo(PROC_PIDTASKINFO)`.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TaskInfo {

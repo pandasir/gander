@@ -218,7 +218,13 @@ Non-negotiables:
 - `EACCES` on other users' `smaps_rollup` / `exe` is normal — show `-`.
 - Kernel threads have empty `cmdline`; render `[comm]` in brackets.
 - Read threads from `/proc/<pid>/task/` only when the "userland threads" option
-  is enabled — it multiplies the scan cost.
+  is enabled — it multiplies the scan cost. On macOS the equivalent is
+  `PROC_PIDLISTTHREADS` + one `PROC_PIDTHREADINFO` per thread; a thread's
+  `pth_user_time` is nanoseconds while a process's `pti_total_user` is Mach ticks.
+- A thread row needs its own identity. On macOS a thread has no pid at all (its
+  row carries the leader's), and the 64-bit `pth` handle is not unique across
+  processes, so `Row::thread_id` holds the identity and `Row::identity()` is what
+  tags, selection and kill key on. Never key a row by `pid` alone.
 
 ### 3.5 Derived metrics
 

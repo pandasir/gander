@@ -398,6 +398,15 @@ pub struct Row {
     /// "is this a userland thread" for display purposes, while this answers a
     /// structural question the table has to get right.
     pub is_thread: bool,
+    /// Identity of a thread row, unique across the whole table.
+    ///
+    /// For a process row this is `None` and `pid` is the identity. For a thread it
+    /// is `Some`, because on macOS a thread has no pid of its own: `pth` handles
+    /// are 64-bit (95% exceed `u32`) and are *not* globally unique (every process
+    /// reports the same handle for its main thread). Linux threads do have a tid
+    /// that fits in `pid`, but it can coincide with an unrelated process's pid, so
+    /// thread rows use this on both platforms.
+    pub thread_id: Option<u64>,
 
     /// `ArrayString<64>`: no heap allocation per scanned process.
     pub comm: CommBuf,
@@ -456,6 +465,7 @@ impl Row {
             starttime: 0,
             tgid: pid,
             is_thread: false,
+            thread_id: None,
             comm: CommBuf::new(),
             state: b'R',
             uid: 0,
@@ -499,6 +509,18 @@ impl Row {
 
     pub fn is_kernel_thread(&self) -> bool {
         self.flags.contains(RowFlags::KERNEL_THREAD)
+    }
+
+    /// The value that identifies this row across samples.
+    ///
+    /// `pid` for a process, a thread-specific id for a thread. Used wherever a
+    /// row must be told apart from another row with the same `pid`, which on
+    /// macOS every thread of a process shares.
+    pub fn identity(&self) -> u64 {
+        match self.thread_id {
+            Some(id) => id,
+            None => self.pid as u64,
+        }
     }
 
     /// Text for the command column: `cmdline` if known, else `comm`, with

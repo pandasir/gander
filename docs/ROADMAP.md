@@ -5,7 +5,8 @@ design lives in [DESIGN.md](DESIGN.md).
 
 ## Done (M0 skeleton)
 
-The vertical slice compiles, is tested, and runs on Linux **and macOS**.
+M0 is complete on both platforms. The vertical slice compiles, is tested, and runs
+on Linux **and macOS**.
 
 | Area | State |
 |---|---|
@@ -28,7 +29,7 @@ The vertical slice compiles, is tested, and runs on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 230 tests on macOS, zero clippy warnings | done |
+| 257 tests on macOS, 221 on Linux, zero clippy warnings on both | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## The interface
@@ -95,12 +96,30 @@ Done:
       affinity and ioprio syscalls
 - [x] Thread enumeration as rows on Linux (`H` / the Display page), with threads
       nested under their process in tree view and their own per-thread CPU%
+- [x] Thread enumeration on macOS, via `PROC_PIDLISTTHREADS` +
+      `PROC_PIDTHREADINFO`. Both are `libproc` calls; there is no Mach port and no
+      `task_for_pid` involved, and one call per thread returns both the name and
+      the CPU time. Measured at 2–5 ms per sample for 2609 threads. See
+      [PORTABILITY.md](PORTABILITY.md) for the nanoseconds-vs-Mach-ticks trap.
 
 Remaining:
 
-- [ ] Thread enumeration on macOS. `proc_pidinfo(PROC_PIDLISTTHREADS)` exists but
-      returns thread *ids* only, so every thread needs a further Mach call for its
-      name and CPU time; that is a genuine cost/benefit call, not an oversight.
+- [ ] Nothing. M0 is complete on both platforms.
+
+Two pre-existing bugs were found and fixed while adding macOS threads, both of
+which also affected Linux:
+
+- `TaskStats` summed `nlwp` over *every row*, so with thread rows visible the
+  `Tasks` meter reported roughly twice the real process and thread counts.
+- `tree::build` keyed its parent map by `pid` across all rows. A thread's tid can
+  equal an unrelated process's pid, which silently re-parented that process; on
+  macOS, where a thread row shares its leader's pid outright, the collision was
+  guaranteed.
+
+Thread rows also gained `Row::thread_id`, because a macOS thread has no pid of its
+own: `pth` handles are 64-bit (95% exceed `u32`) and are *not* globally unique —
+every process reports the same handle for its main thread. Tags, selection and
+kill now key on `Row::identity()` rather than `pid`.
 
 
 ## Then: M1 / M2 / M3
@@ -133,8 +152,19 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not
   on bare metal with thousands of processes.
 - The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
-- Thread rows need `/proc/<pid>/task`, so they are Linux-only; macOS shows the
-  `NLWP` count but cannot expand it.
+- Thread rows are only listable for processes owned by the current user. On macOS
+  `proc_pidinfo` returns 0 for another user's process, so those rows show the
+  `NLWP` count but cannot be expanded; on Linux `/proc/<pid>/task` is readable and
+  the limit does not apply. Even for an inspectable process, macOS can withhold a
+  single thread's handle, so a process may show one fewer row than its `NLWP`.
+- macOS thread names are only present when the program set one with
+  `pthread_setname_np`; 46% of the threads on a desktop are unnamed and fall back
+  to the process name.
+- A macOS thread row reports its process's `RES`, because memory belongs to the
+  address space rather than to a thread. The same is true of Linux's
+  `task/<tid>/stat`, so the two agree.
+- macOS threads cannot be signalled or reniced individually: tagging a thread row
+  resolves to its process before the action is sent.
 - The function bar truncates its labels on terminals narrower than ~50 columns,
   though the key names stay intact.
 - Scrolling uses minimal movement rather than centring the selection, so the

@@ -165,6 +165,11 @@ impl Sampler {
             let starttime = fields.starttime;
             let mut row = Row::default_for_test(tid);
             row.pid = tid;
+            // The tid is already unique across the system on Linux, but it is
+            // stored through `thread_id` as well so that `Row::identity` means the
+            // same thing on both backends and a thread row can never be confused
+            // with a process that happens to have the same pid.
+            row.thread_id = Some(tid as u64);
             row.tgid = pid;
             row.is_thread = true;
             row.ppid = pid;
@@ -301,12 +306,22 @@ impl Sampler {
 }
 
 /// Summarise the process table for the `Tasks` meter.
+///
+/// Only process rows are counted. Thread rows are extra rows for the same
+/// process, so counting every row would report `total` and `threads` roughly
+/// twice over: the leader's `nlwp` already counts its threads, and each thread
+/// row contributes one more.
 fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
-    crate::system::TaskStats {
-        total: rows.len(),
-        running: rows.iter().filter(|r| r.state == b'R').count(),
-        threads: rows.iter().map(|r| r.nlwp.max(1) as usize).sum(),
+    let procs = rows.iter().filter(|r| !r.is_thread);
+    let mut stats = crate::system::TaskStats::default();
+    for row in procs {
+        stats.total += 1;
+        if row.state == b'R' {
+            stats.running += 1;
+        }
+        stats.threads += row.nlwp.max(1) as usize;
     }
+    stats
 }
 
 /// The unified sampler interface.
