@@ -189,6 +189,34 @@ the first item that had to wait for this milestone.
 | Multi-select bulk actions across the tagged set | not started |
 | Hide-containerised filter (htop's `O`) | not started |
 | Highlight base name / stale exe | config exists, rendering not wired |
+| Stable list: PID-ascending default, deterministic tie-break | done |
+
+### Why the default sort is PID, not CPU%
+
+htop opens sorted by CPU% descending. On a busy machine that reorders the list on
+every sample, so the row you are looking at moves out from under the cursor before
+you can act on it. Measured here on a 10-core Mac: of the 12 visible rows, **10
+changed position within 1.5 s**. A list that reshuffles that fast cannot be read as
+a list, and it makes tagging or killing the right process a race.
+
+PID order is stable: a process keeps its position for as long as it lives. It is
+ascending, so the long-lived system processes sit at the top and new ones appear at
+the bottom, where they are easy to spot. `F6` / `<` `>` still reaches CPU% in one
+keypress, and anyone who wants htop's behaviour can set `field = "PERCENT_CPU"`,
+`desc = true` in the config.
+
+Two bugs were in the way of this, both of which made *any* sort look unstable:
+
+- **`App::new` overwrote the configured direction.** Three lines set
+  `dir = Dir::Desc` unconditionally, to give CPU% its natural order. The effect was
+  that `desc = false` in the config was ignored for every field, so asking for
+  ascending PID order silently produced descending, with no fix short of editing
+  the source.
+- **Ties were reversed and unordered.** The sort built an ascending order and then
+  `reverse()`d the whole vector for a descending sort, which reversed every *tie*
+  too: on a quiet machine, "CPU% descending" listed pids as 10, 9, 8, … Separately,
+  `sort_unstable_by` leaves ties unordered, so equal rows could swap between
+  samples. Both now break ties by pid, ascending, in either direction.
 
 ### How container detection works
 

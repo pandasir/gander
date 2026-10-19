@@ -45,7 +45,7 @@ platforms.
 | `F4` / `\` | Incremental filter, applied while typing |
 | `Up` / `Down` | In the prompt: recall an earlier search or filter |
 | `Esc` | Leave search/filter; while on the list, clears the filter |
-| `F6` / `<` `>` / `.` | Cycle the sort column |
+| `F6` / `<` `>` / `.` | Cycle the sort column (the list opens sorted by PID, ascending) |
 | `F5` / `t` | Toggle tree view |
 
 Filter terms are **fixed strings** (no regex), case-insensitive, and any term
