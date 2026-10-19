@@ -278,7 +278,7 @@ impl Sampler {
             row.cgroup = stable.cgroup;
 
             row.elapsed = if self.clk_tck > 0 {
-                uptime.saturating_sub(starttime / self.clk_tck)
+                uptime.saturating_sub(starttime.checked_div(self.clk_tck).unwrap_or(0))
             } else {
                 0
             };
