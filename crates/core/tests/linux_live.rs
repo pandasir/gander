@@ -381,3 +381,116 @@ fn throughput_rates_are_meaningful_after_two_samples() {
     assert!(second.net.rx_bytes >= first.net.rx_bytes);
     assert!(second.disk.read_bytes >= first.disk.read_bytes);
 }
+
+/// `row.cgroup` must be the cgroup *path*, not the raw `/proc/<pid>/cgroup` line.
+///
+/// The raw line is `0::/user.slice/…`; storing it made the CGROUP column show the
+/// hierarchy id and an empty controller list for every process, which is noise.
+#[test]
+fn cgroup_column_carries_the_path() {
+    let mut sampler = gander_core::Sampler::default();
+    let (_snap, rows) = sampler.sample();
+    let me = rows
+        .iter()
+        .find(|r| r.pid == std::process::id())
+        .expect("own process must be in the table");
+
+    let cgroup = me.cgroup.as_deref().expect("own cgroup must be readable");
+    assert!(
+        cgroup.starts_with('/'),
+        "the path must be absolute, got {cgroup:?}"
+    );
+    // The raw form starts with the hierarchy id and a colon.
+    assert!(
+        !cgroup.contains("::"),
+        "the raw `/proc/<pid>/cgroup` line leaked through: {cgroup:?}"
+    );
+}
+
+/// The cgroup path must agree with the kernel's own answer.
+#[test]
+fn cgroup_matches_proc_cgroup() {
+    let me = std::process::id();
+    let text = std::fs::read_to_string(format!("/proc/{me}/cgroup")).expect("cgroup file");
+    // The unified entry is the one with an empty controller list.
+    let expected = text
+        .lines()
+        .filter_map(|l| {
+            let mut parts = l.splitn(3, ':');
+            let _hier = parts.next()?;
+            let ctrls = parts.next()?;
+            let path = parts.next()?;
+            if ctrls.is_empty() {
+                Some(path.trim())
+            } else {
+                None
+            }
+        })
+        .next()
+        .or_else(|| text.lines().next().and_then(|l| l.splitn(3, ':').nth(2)))
+        .expect("at least one cgroup line");
+
+    let mut sampler = gander_core::Sampler::default();
+    let (_snap, rows) = sampler.sample();
+    let mine = rows.iter().find(|r| r.pid == me).expect("own process");
+    assert_eq!(mine.cgroup.as_deref(), Some(expected));
+}
+
+/// A process in a nested PID namespace must be recognised as containerised even
+/// when its cgroup path says nothing.
+///
+/// This is the case the namespace check exists for: a container with its own
+/// cgroup namespace reports `/` in `/proc/<pid>/cgroup`, so the path-based
+/// detection alone reports "no container" for a process that is plainly inside
+/// one. The test creates a real nested namespace with `unshare`, so it is gated on
+/// that working (it needs privileges a default container may not have).
+#[test]
+fn a_nested_pid_namespace_is_detected_without_a_cgroup_path() {
+    use std::process::{Command, Stdio};
+
+    // `unshare --pid --fork` needs CAP_SYS_ADMIN or a privileged container. When
+    // it is unavailable the test is meaningless rather than failing.
+    let Ok(mut child) = Command::new("unshare")
+        .args(["--pid", "--fork", "--mount-proc", "sleep", "30"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    let mut sampler = gander_core::Sampler::default();
+    let (_snap, rows) = sampler.sample();
+
+    // Find any process the kernel puts in a different PID namespace than ours.
+    // That is exactly what the sampler is supposed to have flagged.
+    let nested: Vec<u32> = rows
+        .iter()
+        .filter(|r| {
+            gander_core::linux::fsops::in_different_pid_namespace(
+                std::path::Path::new("/proc"),
+                r.pid,
+            ) == Some(true)
+        })
+        .map(|r| r.pid)
+        .collect();
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    if nested.is_empty() {
+        // `unshare` may have failed to create a namespace despite spawning.
+        return;
+    }
+
+    for pid in nested {
+        let row = rows.iter().find(|r| r.pid == pid).expect("row");
+        assert!(
+            row.container.is_some(),
+            "pid {pid} is in a nested PID namespace but was not flagged as containerised \
+             (cgroup {:?})",
+            row.cgroup
+        );
+    }
+}

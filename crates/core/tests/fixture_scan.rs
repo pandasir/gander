@@ -62,11 +62,41 @@ fn cmdline_and_cgroup_are_loaded() {
 
     let init = rows.iter().find(|r| r.pid == 1).expect("pid 1");
     assert_eq!(init.display_command(), "/sbin/init splash");
-    assert_eq!(init.cgroup.as_deref(), Some("0::/init.scope"));
+    // The *path*, not the raw `0::/init.scope` line: the hierarchy id and the
+    // controller list are noise in a column.
+    assert_eq!(init.cgroup.as_deref(), Some("/init.scope"));
     assert!(!init.is_kernel_thread());
 
     let weird = rows.iter().find(|r| r.pid == 42).expect("pid 42");
     assert_eq!(weird.display_command(), "/usr/bin/weird --with=a b");
+    assert_eq!(
+        weird.cgroup.as_deref(),
+        Some("/user.slice/user-1000.slice/session-1.scope")
+    );
+
+    // The fixture has one containerised process: pid 1337 sits under
+    // `/docker/abc123` on two v1 hierarchies. It must be identified, not just
+    // flagged — every containerised process reporting the bare word "docker"
+    // made the column carry no information.
+    //
+    // Container detection is cgroup-based and therefore Linux-only; this whole
+    // file runs on any unix, so the assertions are gated rather than dropped.
+    #[cfg(target_os = "linux")]
+    {
+        let containerised = rows.iter().find(|r| r.pid == 1337).expect("pid 1337");
+        assert_eq!(
+            containerised.cgroup.as_deref(),
+            Some("/docker/abc123"),
+            "v1-only host: the first entry is the best answer"
+        );
+        assert_eq!(containerised.container.as_deref(), Some("abc123"));
+        assert_eq!(containerised.container_runtime.as_deref(), Some("docker"));
+
+        // A host process must not be classified as containerised.
+        assert_eq!(init.container, None);
+        assert_eq!(init.container_runtime, None);
+        assert_eq!(weird.container, None);
+    }
 }
 
 #[test]

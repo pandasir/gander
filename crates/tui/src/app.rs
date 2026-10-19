@@ -2241,6 +2241,15 @@ fn default_width(field: Field) -> u16 {
         Field::Nlwp => 5,
         Field::Processor => 4,
         Field::MinFlt | Field::MajFlt => 8,
+        // A cgroup path is long and mostly identical between processes; the
+        // container id is what distinguishes them, so CGROUP gets a readable
+        // slice rather than the whole path and CONTAINER fits `runtime:` plus a
+        // 12-character id. CGROUP is the narrower of the two: `CONTAINER` is the
+        // column that actually distinguishes rows, and the path is context.
+        #[cfg(target_os = "linux")]
+        Field::Cgroup => 20,
+        #[cfg(target_os = "linux")]
+        Field::Container => 22,
         _ => 8,
     }
 }
@@ -2275,6 +2284,25 @@ pub fn render_field(
         Field::Processor => row.processor.to_string(),
         Field::MinFlt => row.min_flt.to_string(),
         Field::MajFlt => row.maj_flt.to_string(),
+        // Linux-only fields. The `_` arm is still needed because `Field` is
+        // `#[non_exhaustive]`, but every variant that can be *selected* on this
+        // platform has an arm: a column that renders "-" for every row is a
+        // setup-screen entry that does nothing.
+        #[cfg(target_os = "linux")]
+        Field::Cgroup => row.cgroup.as_deref().unwrap_or("-").to_string(),
+        #[cfg(target_os = "linux")]
+        Field::Container => match (&row.container_runtime, &row.container) {
+            // An identified container: `docker:1f2e3d4c5b6a`.
+            (Some(runtime), Some(id)) if !id.is_empty() && id.as_ref() != "?" => {
+                let end = id.len().min(12);
+                format!("{runtime}:{}", &id[..end])
+            }
+            // Known to be in a child container, but cgroup could not name it
+            // (a container with its own cgroup namespace). Say so instead of
+            // inventing an id.
+            (Some(_), _) => "container:?".to_string(),
+            _ => "-".to_string(),
+        },
         _ => "-".to_string(),
     }
 }
@@ -3870,5 +3898,171 @@ mod m1_tests {
         app.layout = LayoutKind::Htop;
         let screen = render_to_string(&mut app, 120, 24);
         assert!(screen.contains("Net"), "got:\n{screen}");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod container_column_tests {
+    //! The `CGROUP` and `CONTAINER` columns, which M2 added.
+
+    use super::*;
+    use gander_config::Config;
+    use gander_core::row::Row;
+
+    fn row_with_container(pid: u32, runtime: &str, id: &str, cgroup: &str) -> Row {
+        let mut r = Row::default_for_test(pid);
+        r.comm.try_push_str("proc").unwrap();
+        r.cgroup = Some(cgroup.into());
+        r.container = Some(id.into());
+        r.container_runtime = Some(runtime.into());
+        r
+    }
+
+    fn render(r: &Row, field: Field) -> String {
+        let snap = SystemSnapshot::default();
+        let mut users = gander_core::users::Users::new();
+        render_field(r, field, &snap, &mut users)
+    }
+
+    #[test]
+    fn cgroup_renders_the_path() {
+        let r = row_with_container(1, "docker", "abc123", "/system.slice/docker-abc123.scope");
+        assert_eq!(
+            render(&r, Field::Cgroup),
+            "/system.slice/docker-abc123.scope"
+        );
+    }
+
+    #[test]
+    fn container_renders_runtime_and_a_short_id() {
+        let r = row_with_container(
+            1,
+            "docker",
+            "1f2e3d4c5b6a79880a1b2c3d4e5f6071",
+            "/system.slice/docker-1f2e.scope",
+        );
+        assert_eq!(render(&r, Field::Container), "docker:1f2e3d4c5b6a");
+    }
+
+    #[test]
+    fn a_host_process_renders_a_dash_not_an_empty_cell() {
+        let mut r = Row::default_for_test(1);
+        r.comm.try_push_str("init").unwrap();
+        assert_eq!(render(&r, Field::Cgroup), "-");
+        assert_eq!(render(&r, Field::Container), "-");
+    }
+
+    /// A container whose cgroup namespace hid the path has no id to show.
+    /// Printing an invented one would look like an identifier while telling the
+    /// reader nothing.
+    #[test]
+    fn an_unidentified_container_says_so() {
+        let r = row_with_container(1, "container", "?", "/");
+        assert_eq!(render(&r, Field::Container), "container:?");
+    }
+
+    /// Sorting by a text column must sort by that text, not fall through to pid.
+    ///
+    /// The `_` arm of `sort_order` is the pid comparator, so a new field with no
+    /// arm silently sorts by pid — which looks like a sort that does nothing on an
+    /// already pid-sorted list.
+    #[test]
+    fn sorting_by_container_groups_by_runtime_then_id() {
+        let rows = vec![
+            row_with_container(3, "kubepods", "pod-b", "/kubepods/x"),
+            row_with_container(1, "docker", "bbb", "/docker/bbb"),
+            row_with_container(2, "docker", "aaa", "/docker/aaa"),
+        ];
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        table::sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::Container,
+                dir: Dir::Asc,
+            },
+        );
+        let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+        assert_eq!(pids, vec![2, 1, 3], "docker aaa, docker bbb, then kubepods");
+    }
+
+    #[test]
+    fn sorting_by_cgroup_sorts_the_paths() {
+        let rows = vec![
+            row_with_container(1, "docker", "x", "/user.slice/z.scope"),
+            row_with_container(2, "docker", "y", "/system.slice/a.scope"),
+        ];
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        table::sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::Cgroup,
+                dir: Dir::Asc,
+            },
+        );
+        let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+        assert_eq!(pids, vec![2, 1], "/system.slice sorts before /user.slice");
+    }
+
+    /// Both columns must be offerable in the setup screen, or they cannot be
+    /// selected at all.
+    #[test]
+    fn both_columns_are_selectable() {
+        let names: Vec<&str> = Field::all().map(|f| f.name()).collect();
+        assert!(names.contains(&"CGROUP"), "got {names:?}");
+        assert!(names.contains(&"CONTAINER"), "got {names:?}");
+        assert_eq!(Field::from_name("CGROUP"), Some(Field::Cgroup));
+        assert_eq!(Field::from_name("CONTAINER"), Some(Field::Container));
+    }
+
+    /// A configured tab using the new columns must survive a round trip through
+    /// the config, which resolves names back to `Field`s.
+    #[test]
+    fn the_columns_round_trip_through_the_config() {
+        let mut config = Config::default();
+        config.tabs[0].columns = vec!["PID".into(), "CONTAINER".into(), "CGROUP".into()];
+        let fields = config.tabs[0].fields();
+        assert_eq!(
+            fields,
+            vec![Field::Pid, Field::Container, Field::Cgroup]
+        );
+    }
+
+    #[test]
+    fn the_columns_render_in_a_real_table() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut config = Config::default();
+        config.tabs[0].columns = vec!["PID".into(), "CONTAINER".into(), "COMM".into()];
+        let mut app = App::new(config);
+        app.layout = LayoutKind::Htop;
+        app.apply_sample(
+            SystemSnapshot::default(),
+            vec![row_with_container(
+                42,
+                "docker",
+                "1f2e3d4c5b6a7988",
+                "/system.slice/docker-1f2e.scope",
+            )],
+        );
+
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let mut screen = String::new();
+        for y in 0..20 {
+            for x in 0..100 {
+                screen.push_str(buf[(x, y)].symbol());
+            }
+            screen.push('\n');
+        }
+        assert!(screen.contains("CONTAINER"), "header missing:\n{screen}");
+        assert!(
+            screen.contains("docker:1f2e3d4c5b6a"),
+            "value missing:\n{screen}"
+        );
     }
 }
