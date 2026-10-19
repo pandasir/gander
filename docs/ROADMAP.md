@@ -29,7 +29,7 @@ on Linux **and macOS**.
 | macOS backend: `libproc` + `sysctl` + Mach | done, see [PORTABILITY.md](PORTABILITY.md) |
 | Correct memory accounting on both platforms (see PORTABILITY.md) | done |
 | Full process table on macOS via `KERN_PROC_ALL` | done |
-| 257 tests on macOS, 221 on Linux, zero clippy warnings on both | done |
+| 293 tests on macOS, 260 on Linux, zero clippy warnings on both | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
 ## The interface
@@ -122,7 +122,58 @@ every process reports the same handle for its main thread. Tags, selection and
 kill now key on `Row::identity()` rather than `pid`.
 
 
-## Then: M1 / M2 / M3
+## M1 — feature parity for daily use
+
+Complete. What was missing at the end of M0 was the two throughput meters and
+search/filter history; both are done, along with two bugs found on the way.
+
+| Area | State |
+|---|---|
+| Meter system: CPU (per-core variants), memory, swap, load avg, uptime, tasks, clock/date, hostname, blank | done (M0) |
+| Meter display modes: text / bar / graph, per-meter, persisted | done (M0) |
+| Full column set in a setup screen, with column reorder | done (M0) |
+| Themes + monochrome mode | done (M0) |
+| TOML config, `--import-htoprc` | done (M0) |
+| `NetworkIO` meter: host receive/transmit rate | done |
+| `DiskIO` meter: host read/write rate | done, Linux only (see below) |
+| Search/filter history in `$XDG_STATE_HOME`, with `Up`/`Down` recall | done |
+
+### How the throughput meters work
+
+Both are *rate* meters over cumulative kernel counters, not counters. A meter
+showing "1.9 GB" answers how much the machine has ever transferred, which nobody
+asks; the question is what it is doing now. So the sampler keeps the previous
+counters plus the `Instant` of the previous sample, and the snapshot carries the
+delta divided by the **measured** interval — not the configured delay, because a
+slow scan makes the real gap longer.
+
+The bar is scaled against the largest combined rate observed so far rather than
+against a fixed ceiling. A 1 Gbit and a 100 Mbit link differ by an order of
+magnitude; a bar pinned to 1 Gbit would be an invisible sliver on the slower one,
+and one pinned to 100 Mbit would sit saturated on the faster one.
+
+| | Source | Notes |
+|---|---|---|
+| Linux network | `/proc/net/dev` | Loopback excluded; sums every other interface |
+| Linux disk | `/proc/diskstats` | Whole disks only, via `/sys/block`, sectors × 512 |
+| macOS network | `sysctl(NET_RT_IFLIST2)` | `if_data64`, because `getifaddrs`'s counters are 32-bit |
+| macOS disk | — | No host-wide counter without IOKit; the meter says `n/a here` |
+
+`capability::HOST_DISK_IO` gates the disk meter, so macOS explains itself instead
+of drawing a permanent `0 B/s` that looks like a dead disk.
+
+### Bugs found while doing it
+
+- **`Esc` could never clear a filter.** `handle_input_key` reset `self.input` and
+  *then* asked `self.input.kind`, which by then was `None`. The only way out of a
+  filter was to erase it one character at a time.
+- **The search/filter prompt was never drawn.** `F3`, `F4` and every typed
+  character went into `App::input`, the filter applied live, and the screen showed
+  nothing — so a filter that hid every row looked like a sampler bug, and there
+  was no way to see that a filter was active. It now occupies the table's header
+  row in both layouts, which is where htop puts it.
+
+## Then: M2 / M3
 
 See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
 
@@ -151,7 +202,13 @@ See [DESIGN.md § Scope gates](DESIGN.md#1-scope-gates). The short version:
   path is sequential by design.
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not
   on bare metal with thousands of processes.
-- The macOS disk I/O columns are parsed (`proc_pid_rusage`) but not displayed yet.
+- macOS has no host-wide disk throughput counter without IOKit, so the `DiskIO`
+  meter reports `n/a here` there. The per-process figures are parsed
+  (`proc_pid_rusage`) but not displayed yet.
+- The `DiskIO` meter reads `/proc/diskstats`, which counts I/O to real block
+  devices. Filesystem-level I/O through a page-cache hit is not disk I/O and is
+  correctly absent; `dm-*` and `loop*` are skipped so a device-mapper setup is not
+  counted twice.
 - Thread rows are only listable for processes owned by the current user. On macOS
   `proc_pidinfo` returns 0 for another user's process, so those rows show the
   `NLWP` count but cannot be expanded; on Linux `/proc/<pid>/task` is readable and

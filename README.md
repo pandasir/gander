@@ -131,6 +131,28 @@ An existing htop setup can be imported:
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
+Search and filter history lives separately, at
+`$XDG_STATE_HOME/gander/{search,filter}_history` — the config is a decision you
+copy between machines, history is a byproduct of using this one. `Up` / `Down` in
+the `F3` / `F4` prompt walks it, so re-running yesterday's filter is one key.
+
+### Header meters
+
+`F2` → Header adds and reorders them; `I` cycles the selected meter's mode
+(text, bar, graph) and the choice is saved per meter. Beyond the htop set (CPU,
+memory, swap, load, uptime, tasks, clock, date, hostname, blank) there are two
+throughput meters:
+
+- **`NetworkIO`** — host receive/transmit rate, loopback excluded.
+- **`DiskIO`** — host read/write rate from `/proc/diskstats`, whole disks only
+  (partitions and `dm-*` are skipped so nothing is counted twice). macOS has no
+  host-wide equivalent without IOKit, so the meter says so there instead of
+  showing a permanent `0 B/s`.
+
+Both are rates over cumulative counters, scaled against the largest rate seen so
+far rather than a fixed ceiling — a bar pinned to 1 Gbit is an invisible sliver on
+a 100 Mbit link.
+
 ## Platform support
 
 | | Linux | macOS |
@@ -149,7 +171,7 @@ rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md)
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 257 on macOS, 221 on Linux
+cargo test                 # 293 on macOS, 260 on Linux
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```

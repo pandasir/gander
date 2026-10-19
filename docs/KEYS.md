@@ -22,12 +22,17 @@ anything. Column/key semantics are taken from htop's `htop.1` and `Action.c`.
 |---|---|
 | `F3` / `/` | Incremental search; wraps around |
 | `F4` / `\` | Incremental filter, applied while typing |
+| `Up` / `Down` | In the prompt: recall an earlier search or filter |
 | `Esc` | Leave search/filter; while on the list, clears the filter |
 | `F6` / `<` `>` / `.` | Cycle the sort column |
 | `F5` / `t` | Toggle tree view |
 
 Filter terms are **fixed strings** (no regex), case-insensitive, and any term
 matching is enough. Separate terms with `|`.
+
+Search and filter history is kept apart and persists across runs
+(`$XDG_STATE_HOME/gander/`). A filter is applied as you type, so `Up` recalling one
+takes effect immediately; `Esc` clears the filter and closes the prompt.
 
 ## Acting on processes
 

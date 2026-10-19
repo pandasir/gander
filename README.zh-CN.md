@@ -119,6 +119,24 @@ TOML 格式，位于 `$XDG_CONFIG_HOME/gander/config.toml`（可用 `$GANDER_CON
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
+搜索与过滤历史单独存放于 `$XDG_STATE_HOME/gander/{search,filter}_history`——
+配置是你会复制到另一台机器的*决定*，历史只是使用这台机器的*副产品*。在
+`F3` / `F4` 提示符里按 `Up` / `Down` 即可翻阅，重跑昨天的过滤只需要一个键。
+
+### 表头 meter
+
+`F2` → Header 可增删与排序；`I` 切换选中 meter 的显示模式（text / bar /
+graph），每个 meter 的选择单独保存。除 htop 的整套（CPU、内存、swap、负载、
+uptime、任务、时钟、日期、主机名、空白）之外，还有两个吞吐量 meter：
+
+- **`NetworkIO`** —— 主机收发速率，已排除回环。
+- **`DiskIO`** —— 来自 `/proc/diskstats` 的主机读写速率，只统计整块磁盘
+  （分区与 `dm-*` 会被跳过，避免重复计数）。macOS 在没有 IOKit 的情况下没有
+  主机级对应计数器，因此该 meter 会直接说明，而不是长期显示 `0 B/s`。
+
+两者都是对累计计数器的*速率*，并以迄今见过的最大速率（而非固定上限）为标尺
+——固定在 1 Gbit 的进度条在 100 Mbit 链路上会细得看不见。
+
 ## 平台支持
 
 | | Linux | macOS |
@@ -137,7 +155,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # macOS 257 个，Linux 221 个
+cargo test                 # macOS 293 个，Linux 260 个
 cargo clippy --all-targets # 零警告
 cargo bench -p gander-core # 扫描耗时
 ```

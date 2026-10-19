@@ -20,7 +20,9 @@ design.
 | exe | `readlink /proc/<pid>/exe` | `proc_pidpath` |
 | uid | `/proc/<pid>/status` | `proc_bsdinfo.pbi_uid` |
 | threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` |
-| disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
+| per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
+| host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` |
+| host disk throughput | `/proc/diskstats` + `/sys/block` | none without IOKit |
 | Test coverage | fixtures + live | live only (no fixture format to replay) |
 
 Both backends implement `PlatformSampler`, and `gander_core::Sampler` resolves to
@@ -252,6 +254,71 @@ also why `htop` runs `sudo htop` when you want full detail.
 | `a` affinity panel | `thread_policy_set` exists but is per-thread, not per-process; deferred. |
 | `i` I/O priority | No `ioprio_set` equivalent. |
 | GPU columns | Needs `IOKit`/`IOAccelerator`; different mechanism from Linux `drm-usage-stats`. |
+| `DiskIO` meter (host-wide) | No host-wide disk byte counter without IOKit. Per-process `rusage` figures exist but summing them double-counts shared I/O. The meter reports `n/a here`. |
+
+## Network and disk counters
+
+Both backends report host-wide throughput, but not from the same kind of source,
+and one obvious choice is wrong on each platform.
+
+### macOS network: `NET_RT_IFLIST2`, not `getifaddrs`
+
+`getifaddrs` works and is what most code uses. On 64-bit Darwin it hands back
+`struct if_data`, whose `ifi_ibytes` / `ifi_obytes` are **32-bit**. A machine that
+has moved more than 4 GiB wraps those counters constantly, and a wrap is
+indistinguishable from a genuine reset — so on any active link the meter would
+drop to zero every few seconds. It also cannot be corrected for after the fact:
+the true value is gone.
+
+`sysctl(NET_RT_IFLIST2)` returns `if_msghdr2` carrying `struct if_data64` with
+64-bit counters. Two traps in that reply:
+
+- It is a **routing-socket dump**, a sequence of variable-length messages, not an
+  array. The walk has to advance by `ifm_msglen`, and a zero length must be
+  treated as the end or the loop never terminates.
+- The messages are **unaligned**: `if_msghdr2` is `repr(packed(4))` and successive
+  messages are not 8-byte aligned. Casting a `&buf[offset..]` to a reference is
+  UB on a strict-alignment target, so the header is copied out with
+  `copy_nonoverlapping` before being read.
+
+Verified against `netstat -ib` on this machine: summing every non-`lo0` interface
+gives the same byte counts.
+
+### Linux network: `/proc/net/dev` has no space after the colon
+
+The interface name and the first counter share one colon-separated field:
+
+```text
+  eth0:1234 12 0 0 ...
+```
+
+Splitting on whitespace first therefore puts `eth0:1234` in the name slot and
+*shifts every counter by one*, so the receive byte count silently becomes the
+packet count. Split on `:` first, then whitespace. Loopback is excluded: it never
+reaches a wire, and counting it would double every local byte (once received, once
+transmitted) — a container running a local database would otherwise report
+hundreds of MB/s on an idle NIC.
+
+### Linux disk: `/proc/diskstats` mixes disks and partitions
+
+Fields 6 and 10 (1-based) are sectors read and written, always 512 bytes per
+sector regardless of the device's physical sector size. The trap is scope: the
+file lists partitions next to their parent disks, and a partition's counters are
+*already included* in the disk's. Summing everything doubles every byte.
+
+The authoritative test is whether `/sys/block/<name>` exists. `dm-*` and `loop*`
+are skipped too: a device-mapper device wraps the same I/O as the disk beneath it,
+and `zram` would double-count swap. Where `/sys` is unavailable (a fixture tree, a
+container with a masked `/sys`), a name heuristic covers it — `nvme0n1` is a disk
+while `nvme0n1p1` and `sda1` are partitions.
+
+### Counters can go backwards
+
+An interface destroyed and recreated, or a 32-bit counter wrapping, makes the
+"delta" negative. A negative rate — or a 4 GiB spike from an unsigned underflow —
+for one tick is worse than zero, so `delta` saturates. A zero or negative interval
+(first sample, or a clock jump) also yields zero rather than NaN, so no meter has
+to special-case its first frame.
 
 ## What is verified, and where
 
@@ -262,7 +329,7 @@ tests that call `proc_pidinfo`, `host_statistics64`, `KERN_PROCARGS2`,
 `host_processor_info` and `KERN_PROC_ALL`.
 
 **Linux (arm64, via `rust:1-slim-bookworm` in Docker)** —
-`crates/core/tests/linux_live.rs`, ten tests that read the real `/proc` and
+`crates/core/tests/linux_live.rs`, thirteen tests that read the real `/proc` and
 compare gander's figures against the same files parsed independently:
 
 | check | result |
@@ -275,6 +342,9 @@ compare gander's figures against the same files parsed independently:
 | sort/filter/tree | permutations, no duplicates, tree keeps every row |
 | CPU% over two samples | finite, non-negative |
 | `kill(2)` availability | not `Unsupported` on unix |
+| network counters vs `/proc/net/dev` | matches a direct sum of non-`lo` interfaces |
+| disk counters vs `/proc/diskstats` | matches a direct sum over `/sys/block` disks |
+| throughput after two samples | finite, non-negative, counters monotonic |
 
 The Linux run found a bug the macOS run could not: a container process whose
 `cmdline` contained newlines made `ratatui` panic with *"control character passed

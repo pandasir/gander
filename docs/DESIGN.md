@@ -54,12 +54,13 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
 ### M1 — feature parity for daily use
 
 - Meter system: CPU (per-core variants), memory, swap, load avg, uptime, tasks,
-  clock/date, network IO, disk IO, hostname, blank
+  clock/date, network IO, disk IO, hostname, blank — **done**
 - Meter display modes: text / bar / graph; graph history ring buffer
 - Full column set available in a setup screen; column reorder
 - Themes (color schemes) + monochrome mode
 - TOML config, `--import-htoprc`
-- Search/filter history in `$XDG_STATE_HOME`
+- Search/filter history in `$XDG_STATE_HOME` — done, with `Up`/`Down` recall in
+  the prompt
 
 ### M2 — power features
 
@@ -472,8 +473,13 @@ for a user trying gander should be zero.
   and a `$GANDER_CONFIG` override.
 - `--import-htoprc <path>` parses `key=value` lines into the TOML model. htoprc is
   trivially parseable; supporting it is cheap and is a real adoption lever.
-- Search/filter history in `$XDG_STATE_HOME/gander/history`, **not** next to the
-  config (match htop's newer behavior).
+- Search/filter history in `$XDG_STATE_HOME/gander/{search,filter}_history`,
+  **not** next to the config. The split is deliberate: the config is a decision
+  you copy between machines, history is a byproduct of using this one. Search and
+  filter are separate files because mixing them would put a filter term in the
+  search history, where recalling it with `Up` would hide rows instead of jumping
+  to one. Written on every submission rather than only on exit — a few hundred
+  bytes, and a crash would otherwise lose the session.
 - **Write on clean exit only.** htop documents this deliberately; a signal
   losing config changes is the expected behavior, not a bug.
 - Every config field needs a sane hardcoded default, because a first run must work
