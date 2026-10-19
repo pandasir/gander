@@ -67,7 +67,7 @@ fn turning_threads_on_adds_thread_rows_with_a_leader() {
     let leader = child.as_ref().map(|c| c.id());
 
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, rows) = s.sample();
 
     if let Some(mut c) = child.take() {
@@ -104,7 +104,7 @@ fn turning_threads_on_adds_thread_rows_with_a_leader() {
 #[test]
 fn thread_rows_carry_their_own_cpu_and_inherit_their_process_identity() {
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, rows) = s.sample();
     assert!(!rows.is_empty());
 
@@ -131,9 +131,9 @@ fn thread_rows_carry_their_own_cpu_and_inherit_their_process_identity() {
 #[test]
 fn hiding_threads_restores_the_process_only_view() {
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, with_threads) = s.sample();
-    PlatformSampler::set_show_threads(&mut s, false);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(false));
     let (_snap, without) = s.sample();
 
     assert!(!without.iter().any(|r| r.is_thread));

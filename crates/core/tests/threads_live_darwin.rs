@@ -87,7 +87,7 @@ fn turning_threads_on_adds_thread_rows_with_a_leader() {
     let leader = child.as_ref().map(|c| c.id());
 
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, rows) = s.sample();
 
     if let Some(mut c) = child.take() {
@@ -140,7 +140,7 @@ fn turning_threads_on_adds_thread_rows_with_a_leader() {
 #[test]
 fn thread_rows_carry_their_own_cpu_and_inherit_their_process_identity() {
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     // Two samples: CPU% needs a delta, and the first has nothing to compare to.
     s.sample();
     std::thread::sleep(std::time::Duration::from_millis(120));
@@ -172,9 +172,9 @@ fn thread_rows_carry_their_own_cpu_and_inherit_their_process_identity() {
 #[test]
 fn hiding_threads_restores_the_process_only_view() {
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, with_threads) = s.sample();
-    PlatformSampler::set_show_threads(&mut s, false);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(false));
     let (_snap, without) = s.sample();
 
     assert!(!without.iter().any(|r| r.is_thread));
@@ -215,7 +215,7 @@ fn no_process_reports_more_thread_rows_than_it_has_threads() {
     // thread counted twice produces rows *above* `nlwp` for a settled process,
     // not one or two above.
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (_snap, rows) = s.sample();
 
     let mut thread_rows: std::collections::HashMap<u32, usize> = Default::default();
@@ -255,7 +255,7 @@ fn thread_cpu_never_exceeds_the_process_total() {
     // process total *plus* what it could have burned in the interval, not a
     // single equality.
     let mut s = gander_core::Sampler::default();
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     s.sample();
     let interval = std::time::Duration::from_millis(200);
     std::thread::sleep(interval);
@@ -293,7 +293,7 @@ fn task_stats_ignore_thread_rows() {
     let mut s = gander_core::Sampler::default();
     let (snap_off, _rows) = s.sample();
 
-    PlatformSampler::set_show_threads(&mut s, true);
+    PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (snap_on, rows) = s.sample();
 
     let process_rows = rows.iter().filter(|r| !r.is_thread).count();

@@ -313,6 +313,40 @@ impl App {
         configured
     }
 
+    /// Whether any currently displayed column needs `/proc/<pid>/smaps_rollup`.
+    ///
+    /// The sampler thread reads this before every sample, so it decides whether
+    /// the kernel walks every VMA of every process on the machine. It is asked of
+    /// the *active tab's visible columns*, not of the config as a whole: a PSS
+    /// column on a tab that is not on screen costs nothing.
+    ///
+    /// The check is by field, not by name, so it cannot drift from the column
+    /// list. A field that derives from `smaps_rollup` without being listed in
+    /// `Field::needs_smaps_rollup` would be silently blank, which is why that
+    /// method lives next to the enum.
+    pub fn wants_smaps_rollup(&self) -> bool {
+        self.columns().iter().any(|f| f.needs_smaps_rollup())
+    }
+
+    /// Whether any currently displayed column needs `/proc/<pid>/fdinfo`.
+    ///
+    /// Gated for the same reason `smaps_rollup` is: one directory walk and a read
+    /// per descriptor, per process, per tick.
+    pub fn wants_gpu_fdinfo(&self) -> bool {
+        self.columns().iter().any(|f| f.needs_gpu_fdinfo())
+    }
+
+    /// The whole set of expensive reads the current screen needs.
+    ///
+    /// One call, so the sampler thread cannot be told about one of the three and
+    /// left stale on the others.
+    pub fn scan_options(&self) -> gander_core::ScanOptions {
+        gander_core::ScanOptions::none()
+            .with_threads(self.table.show_userland_threads)
+            .with_smaps(self.wants_smaps_rollup())
+            .with_gpu(self.wants_gpu_fdinfo())
+    }
+
     /// Whether the active tab's columns differ from the shipped default.
     fn columns_customized(&self, current: &[Field]) -> bool {
         let default = Config::default();
@@ -2427,6 +2461,14 @@ fn default_width(field: Field) -> u16 {
         Field::Cgroup => 20,
         #[cfg(target_os = "linux")]
         Field::Container => 22,
+        // Same width as RES/VIRT: these are byte counts formatted by
+        // `bytes_human`, which tops out at 6 cells (`1023.9G`).
+        #[cfg(target_os = "linux")]
+        Field::Pss | Field::Epss | Field::Private | Field::Swap => 6,
+        #[cfg(target_os = "linux")]
+        Field::GpuPercent => 6,
+        #[cfg(target_os = "linux")]
+        Field::GpuTime => 9,
         _ => 8,
     }
 }
@@ -2480,8 +2522,47 @@ pub fn render_field(
             (Some(_), _) => "container:?".to_string(),
             _ => "-".to_string(),
         },
+        // The PSS family. A `None` is "not read" or "not readable" (another
+        // user's process without CAP_SYS_PTRACE), and both are `-`: a zero would
+        // claim the process uses no memory, which is a different and wrong
+        // statement. `Some(0)` does render `0B`, because that is a real answer.
+        #[cfg(target_os = "linux")]
+        Field::Pss => bytes_or_dash(row.pss),
+        #[cfg(target_os = "linux")]
+        Field::Epss => bytes_or_dash(row.epss),
+        #[cfg(target_os = "linux")]
+        Field::Private => bytes_or_dash(row.private),
+        #[cfg(target_os = "linux")]
+        Field::Swap => bytes_or_dash(row.swap_bytes),
+        // GPU. A process with no DRM descriptor renders `-`, not `0.0`: it is not
+        // using no GPU, it is not using the GPU at all, and those read differently
+        // in a sorted list.
+        #[cfg(target_os = "linux")]
+        Field::GpuPercent => row
+            .gpu_percent
+            .map(|p| format::percent_human(p).to_string())
+            .unwrap_or_else(|| "-".into()),
+        #[cfg(target_os = "linux")]
+        Field::GpuTime => row
+            .gpu_ns
+            .map(|ns| format::duration_human(ns / 1_000_000_000).to_string())
+            .unwrap_or_else(|| "-".into()),
         _ => "-".to_string(),
     }
+}
+
+/// Render an optional byte count, with `-` for "not read".
+///
+/// The distinction is the whole reason these columns carry `Option<u64>` rather
+/// than `u64`: `Some(0)` is a measurement and renders `0B`, while `None` means the
+/// figure was never obtained — another user's process without `CAP_SYS_PTRACE`, or
+/// a column the sampler was not asked to fill. Rendering both as `0B` would turn
+/// "we did not look" into a false claim about the process.
+#[cfg(target_os = "linux")]
+fn bytes_or_dash(value: Option<u64>) -> String {
+    value
+        .map(|v| format::bytes_human(v).to_string())
+        .unwrap_or_else(|| "-".into())
 }
 
 fn fit(text: &str, width: usize) -> String {
@@ -4453,5 +4534,186 @@ mod m2_tests {
             !app.table.show_containerised,
             "a config that hides containers must be honoured at startup"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod m3_column_tests {
+    //! The M3 columns: the PSS family and the GPU pair.
+    //!
+    //! What is being pinned here is not the formatting but the *gating*: the two
+    //! expensive reads (`smaps_rollup`, `fdinfo`) are only paid for when a column
+    //! that needs them is on screen, and a column that was never read renders a
+    //! dash rather than a zero.
+
+    use super::*;
+    use gander_config::Config;
+    use gander_core::row::Row;
+    use gander_core::system::SystemSnapshot;
+
+    fn render(r: &Row, field: Field) -> String {
+        let snap = SystemSnapshot::default();
+        let mut users = gander_core::users::Users::new();
+        render_field(r, field, &snap, &mut users)
+    }
+
+    fn row_with_memory(pss: u64, epss: u64, private: u64, swap: u64) -> Row {
+        let mut r = Row::default_for_test(1);
+        r.comm.try_push_str("proc").unwrap();
+        r.pss = Some(pss);
+        r.epss = Some(epss);
+        r.private = Some(private);
+        r.swap_bytes = Some(swap);
+        r
+    }
+
+    #[test]
+    fn the_pss_family_renders_human_bytes() {
+        let r = row_with_memory(1536 * 1024, 2048 * 1024, 1024 * 1024, 512 * 1024);
+        assert_eq!(render(&r, Field::Pss), "1.5M");
+        assert_eq!(render(&r, Field::Epss), "2.0M");
+        assert_eq!(render(&r, Field::Private), "1.0M");
+        assert_eq!(render(&r, Field::Swap), "512K");
+    }
+
+    /// An unread column is a dash, never `0B`: "we did not look" and "this
+    /// process uses no memory" are different statements and only one is true.
+    #[test]
+    fn unread_memory_figures_render_a_dash() {
+        let mut r = Row::default_for_test(1);
+        r.comm.try_push_str("proc").unwrap();
+        for field in [Field::Pss, Field::Epss, Field::Private, Field::Swap] {
+            assert_eq!(render(&r, field), "-", "{}", field.name());
+        }
+    }
+
+    /// A real zero is a measurement and must not be confused with an absent one.
+    #[test]
+    fn a_measured_zero_is_not_a_dash() {
+        let r = row_with_memory(0, 0, 0, 0);
+        assert_eq!(render(&r, Field::Pss), "0B");
+        assert_eq!(render(&r, Field::Swap), "0B");
+    }
+
+    #[test]
+    fn gpu_renders_a_percentage_and_a_duration() {
+        let mut r = Row::default_for_test(1);
+        r.comm.try_push_str("game").unwrap();
+        r.gpu_percent = Some(42.5);
+        r.gpu_ns = Some(3_600 * 1_000_000_000);
+        assert_eq!(render(&r, Field::GpuPercent), "42.5");
+        assert_eq!(render(&r, Field::GpuTime), "1:00:00");
+    }
+
+    #[test]
+    fn a_process_with_no_drm_descriptor_renders_a_dash() {
+        let mut r = Row::default_for_test(1);
+        r.comm.try_push_str("ls").unwrap();
+        assert_eq!(render(&r, Field::GpuPercent), "-");
+        assert_eq!(render(&r, Field::GpuTime), "-");
+    }
+
+    /// The gate itself: a default column set must not ask for either expensive
+    /// read, and selecting one column must switch on exactly its own read.
+    #[test]
+    fn expensive_reads_are_only_requested_when_a_column_needs_them() {
+        let mut app = App::new(Config::default());
+        let opts = app.scan_options();
+        assert!(!opts.smaps, "the default columns need no smaps_rollup");
+        assert!(!opts.gpu, "the default columns need no fdinfo");
+
+        app.config.tabs[0].columns = vec!["PID".into(), "M_PSS".into(), "COMM".into()];
+        let opts = app.scan_options();
+        assert!(opts.smaps, "M_PSS needs smaps_rollup");
+        assert!(!opts.gpu, "and nothing else");
+
+        app.config.tabs[0].columns = vec!["PID".into(), "GPU%".into(), "COMM".into()];
+        let opts = app.scan_options();
+        assert!(opts.gpu, "GPU% needs fdinfo");
+        assert!(!opts.smaps, "and nothing else");
+
+        // Threads are independent of both.
+        app.table.show_userland_threads = true;
+        let opts = app.scan_options();
+        assert!(opts.threads);
+        assert!(opts.gpu);
+        assert!(!opts.smaps);
+    }
+
+    /// A tab that is not active must not pay for its columns.
+    #[test]
+    fn an_inactive_tabs_expensive_column_costs_nothing() {
+        let mut config = Config::default();
+        config.tabs[0].columns = vec!["PID".into(), "COMM".into()];
+        config.tabs.push(gander_config::TabConfig {
+            name: "Mem".into(),
+            columns: vec!["PID".into(), "M_EPSS".into(), "COMM".into()],
+            ..config.tabs[0].clone()
+        });
+        config.active_tab = 0;
+
+        let app = App::new(config);
+        assert!(
+            !app.scan_options().smaps,
+            "the PSS column lives on a tab that is not displayed"
+        );
+    }
+
+    #[test]
+    fn the_columns_round_trip_through_the_config() {
+        let mut config = Config::default();
+        config.tabs[0].columns = vec![
+            "PID".into(),
+            "M_PSS".into(),
+            "M_EPSS".into(),
+            "M_PRIVATE".into(),
+            "M_SWAP".into(),
+            "GPU%".into(),
+            "GPU_TIME".into(),
+            "COMM".into(),
+        ];
+        let fields = config.tabs[0].fields();
+        assert_eq!(
+            fields,
+            vec![
+                Field::Pid,
+                Field::Pss,
+                Field::Epss,
+                Field::Private,
+                Field::Swap,
+                Field::GpuPercent,
+                Field::GpuTime,
+                Field::Comm,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_columns_render_in_a_real_table() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut config = Config::default();
+        config.tabs[0].columns = vec!["PID".into(), "M_PSS".into(), "GPU%".into(), "COMM".into()];
+        let mut app = App::new(config);
+        app.layout = LayoutKind::Htop;
+
+        let mut r = Row::default_for_test(42);
+        r.comm.try_push_str("proc").unwrap();
+        r.pss = Some(2 * 1024 * 1024);
+        r.gpu_percent = Some(12.5);
+
+        app.apply_sample(SystemSnapshot::default(), vec![r]);
+
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("PSS"), "column header missing:\n{text}");
+        assert!(text.contains("GPU%"), "column header missing:\n{text}");
+        assert!(text.contains("2.0M"), "pss value missing:\n{text}");
+        assert!(text.contains("12.5"), "gpu value missing:\n{text}");
     }
 }

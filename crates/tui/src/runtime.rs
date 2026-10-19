@@ -68,6 +68,16 @@ mod platform {
     /// is the coarsest cadence that still feels immediate.
     type ThreadsFlag = Arc<AtomicBool>;
 
+    /// Shared "which expensive per-process reads are needed" slot.
+    ///
+    /// `smaps_rollup` makes the kernel walk every VMA of the process and `fdinfo`
+    /// costs a directory walk per process; together they dwarf the rest of a scan.
+    /// The columns that need them are chosen in the setup screen, on the UI thread,
+    /// so the decision has to cross the thread boundary. It is stored behind a
+    /// mutex-free `AtomicU8`-style encoding: the three flags are packed into one
+    /// `AtomicU64` so the sampler can never observe a half-updated combination.
+    type OptionsSlot = Arc<AtomicU64>;
+
     /// Run the application until the user quits.
     ///
     /// Returns the app's final configuration so the caller can persist it.
@@ -89,12 +99,23 @@ mod platform {
         app.apply_sample(snapshot, rows);
 
         let threads = Arc::new(AtomicBool::new(app.table.show_userland_threads));
+        let options = Arc::new(AtomicU64::new(encode_options(app.scan_options())));
         let delay_ms = Arc::new(AtomicU64::new(clamp_delay_ms(app.config.delay_ms)));
-        let (handle, stop) =
-            spawn_sampler(slot.clone(), delay_ms.clone(), threads.clone());
+        let (handle, stop) = spawn_sampler(
+            slot.clone(),
+            delay_ms.clone(),
+            threads.clone(),
+            options.clone(),
+        );
 
         let mut terminal = init_terminal()?;
-        let result = event_loop(&mut terminal, &mut app, &slot, &threads, &delay_ms);
+        let result = event_loop(
+            &mut terminal,
+            &mut app,
+            &slot,
+            &options,
+            &delay_ms,
+        );
 
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
@@ -111,10 +132,31 @@ mod platform {
         result.map(|()| app.config)
     }
 
+    /// Pack `ScanOptions` into one integer, so a sampler never sees a torn update.
+    ///
+    /// Three `AtomicBool`s would let the sampler read a mix of old and new values
+    /// — a sample taken with `smaps` on but `gpu` off, say, costing a VMA walk for
+    /// a column that is no longer displayed. One atomic write cannot tear.
+    fn encode_options(opts: gander_core::ScanOptions) -> u64 {
+        (opts.threads as u64) | ((opts.smaps as u64) << 1) | ((opts.gpu as u64) << 2)
+    }
+
+    fn decode_options(bits: u64) -> gander_core::ScanOptions {
+        gander_core::ScanOptions {
+            threads: bits & 1 != 0,
+            smaps: bits & 2 != 0,
+            gpu: bits & 4 != 0,
+        }
+    }
+
     fn spawn_sampler(
         slot: Slot,
         delay_ms: DelayMs,
+        // The thread list is carried inside `ScanOptions` as well, but the `H` key
+        // is the one toggle that also has to be visible to `App`, so it keeps its
+        // own slot and is folded in at sample time.
         threads: ThreadsFlag,
+        options: OptionsSlot,
     ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
@@ -125,9 +167,10 @@ mod platform {
                 let mut sampler = gander_core::Sampler::default();
                 while !stop_flag.load(Ordering::Relaxed) {
                     let started = Instant::now();
-                    gander_core::PlatformSampler::set_show_threads(
+                    gander_core::PlatformSampler::set_scan_options(
                         &mut sampler,
-                        threads.load(Ordering::Relaxed),
+                        decode_options(options.load(Ordering::Relaxed))
+                            .with_threads(threads.load(Ordering::Relaxed)),
                     );
                     let (snapshot, rows) = sampler.sample();
                     slot.store(Arc::new(Some(Sample { snapshot, rows })));
@@ -154,7 +197,7 @@ mod platform {
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         app: &mut App,
         slot: &Slot,
-        threads: &ThreadsFlag,
+        options: &OptionsSlot,
         delay_ms: &DelayMs,
     ) -> std::io::Result<()> {
         let mut last_draw = Instant::now() - TICK;
@@ -186,7 +229,10 @@ mod platform {
                             // every key. It used to publish only the thread flag;
                             // the delay was passed by value at startup, so `+`/`-`
                             // changed nothing until the next run.
-                            threads.store(app.table.show_userland_threads, Ordering::Relaxed);
+                            options.store(
+                                encode_options(app.scan_options()),
+                                Ordering::Relaxed,
+                            );
                             delay_ms.store(clamp_delay_ms(app.config.delay_ms), Ordering::Relaxed);
                         }
                     }

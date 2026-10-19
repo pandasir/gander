@@ -50,16 +50,69 @@ pub trait PlatformSampler: Default {
     /// A user-facing name for the backend.
     fn backend_name() -> &'static str;
 
-    /// Whether the next sample should include one row per thread.
+    /// Tell the sampler what the front end currently needs.
     ///
-    /// Part of the trait, not an inherent field, so a front end can set it on
-    /// whichever backend it was compiled against. Backends that cannot enumerate
-    /// threads accept the setting and ignore it.
-    fn set_show_threads(&mut self, _on: bool) {}
+    /// Call this before every `sample()`. The default implementation ignores it,
+    /// which is the right behaviour for a backend with no expensive reads.
+    fn set_scan_options(&mut self, _opts: ScanOptions) {}
 
     /// Whether this backend can actually enumerate threads.
     fn supports_threads() -> bool {
         false
+    }
+}
+
+/// What the front end is currently showing, and therefore what the sampler has to
+/// pay for.
+///
+/// # Why this is one struct rather than three setters
+///
+/// The per-process reads named here are not free:
+///
+/// * `threads` — an extra `stat` read per thread (~1700 per tick on a desktop).
+/// * `smaps` — a kernel walk over every VMA of every process (tens of ms).
+/// * `gpu` — a `readdir` of `fdinfo` plus a read per open DRM fd, per process.
+///
+/// Each one used to be its own `set_*` method on the trait. That worked until the
+/// third, at which point a front end had to remember to call every setter on every
+/// change, and a forgotten one meant either a wasted scan or a column of dashes.
+/// Passing the whole decision as one value makes both failures impossible: there
+/// is one call, it carries everything, and a new gated read can only be added by
+/// extending this struct — which breaks every call site until it is answered.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScanOptions {
+    /// Emit one row per thread as well as one per process.
+    pub threads: bool,
+    /// Read `/proc/<pid>/smaps_rollup` (PSS, EPSS, private, per-process swap).
+    pub smaps: bool,
+    /// Read `/proc/<pid>/fdinfo` for `drm-*` keys (GPU time and percentage).
+    pub gpu: bool,
+}
+
+impl ScanOptions {
+    /// Everything off: the cheap scan, which is what the shipped default column
+    /// set and the default header need.
+    pub const fn none() -> Self {
+        Self {
+            threads: false,
+            smaps: false,
+            gpu: false,
+        }
+    }
+
+    pub const fn with_threads(mut self, on: bool) -> Self {
+        self.threads = on;
+        self
+    }
+
+    pub const fn with_smaps(mut self, on: bool) -> Self {
+        self.smaps = on;
+        self
+    }
+
+    pub const fn with_gpu(mut self, on: bool) -> Self {
+        self.gpu = on;
+        self
     }
 }
 

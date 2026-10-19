@@ -39,9 +39,21 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     // One sampler for the whole run: per-process CPU% needs two consecutive
     // samples, so a fresh sampler per iteration would always report 0.
     let mut sampler = gander_core::Sampler::default();
-    // Set before the first sample: the sampler only enumerates threads when it is
-    // told to, and a flag applied after `sample()` would cost one wasted pass.
-    gander_core::PlatformSampler::set_show_threads(&mut sampler, batch.threads);
+    // Set before the first sample: the sampler only enumerates threads, reads
+    // `smaps_rollup` or walks `fdinfo` when it is told to, and an option applied
+    // after `sample()` would cost one wasted pass.
+    //
+    // Batch mode has no columns to consult, so the expensive reads are driven by
+    // what the output actually contains: `--threads` selects thread rows, and the
+    // sort field selects the rest. Asking for `--sort M_PSS` is exactly a request
+    // to pay for `smaps_rollup`.
+    gander_core::PlatformSampler::set_scan_options(
+        &mut sampler,
+        gander_core::ScanOptions::none()
+            .with_threads(batch.threads)
+            .with_smaps(sort.field.needs_smaps_rollup())
+            .with_gpu(sort.field.needs_gpu_fdinfo()),
+    );
 
     for iteration in 0..iterations {
         let rows = match sample_once(&mut sampler, sort, filter.as_ref()) {
@@ -159,12 +171,20 @@ fn write_json(
     writeln!(out, "[")?;
     for (i, row) in rows.iter().take(take).enumerate() {
         let comma = if i + 1 == take { "" } else { "," };
+        // The M3 memory figures are emitted as a nested object rather than as
+        // four more top-level keys: they are one concept (the `smaps_rollup`
+        // breakdown), they are all `null` together when the read was skipped, and
+        // a consumer should be able to test one thing to know whether it has them.
+        //
+        // `null` rather than `0` throughout: zero is a measurement, and these are
+        // an absence. A monitoring script that averages `pss` over the table must
+        // not silently include processes whose PSS was never read.
         writeln!(
             out,
             "  {{\"pid\":{},\"ppid\":{},\"uid\":{},\"comm\":{},\"state\":\"{}\",\
              \"cpu_percent\":{:.2},\"mem_percent\":{:.2},\"rss\":{},\"vsize\":{},\
              \"nice\":{},\"priority\":{},\"threads\":{},\"elapsed\":{},\"is_thread\":{},\
-             \"identity\":{},\"cmdline\":{}}}{}",
+             \"identity\":{},\"cmdline\":{},\"memory\":{}}}{}",
             row.pid,
             row.ppid,
             row.uid,
@@ -181,11 +201,48 @@ fn write_json(
             row.is_thread,
             row.identity(),
             json_string(row.display_command()),
+            memory_json(row),
             comma
         )?;
     }
     writeln!(out, "]")?;
     Ok(())
+}
+
+/// The `smaps_rollup` and GPU figures for one row, as a JSON object.
+///
+/// Every value is an unquoted number or `null`; nothing here needs escaping, so
+/// this is assembled with `format!` rather than going through a serializer.
+#[cfg(target_os = "linux")]
+fn memory_json(row: &Row) -> String {
+    let opt = |v: Option<u64>| match v {
+        Some(n) => n.to_string(),
+        None => "null".to_string(),
+    };
+    let pct = match row.gpu_percent {
+        Some(p) => format!("{p:.2}"),
+        None => "null".to_string(),
+    };
+    format!(
+        "{{\"pss\":{},\"epss\":{},\"private\":{},\"swap\":{},\"gpu_percent\":{},\"gpu_ns\":{}}}",
+        opt(row.pss),
+        opt(row.epss),
+        opt(row.private),
+        opt(row.swap_bytes),
+        pct,
+        opt(row.gpu_ns)
+    )
+}
+
+/// macOS has no `smaps_rollup`, no `drm-usage-stats`, and no per-process
+/// equivalent that maps onto the same fields.
+///
+/// Emitted as `null` rather than as an absent key so the schema is the same on
+/// both platforms: a consumer can read `row.memory.pss` unconditionally and get
+/// `null`, instead of having to test whether the key exists.
+#[cfg(not(target_os = "linux"))]
+fn memory_json(_row: &Row) -> String {
+    "null".to_string()
 }
 
 /// Minimal JSON string escaping: quotes, backslashes and control characters.

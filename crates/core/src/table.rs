@@ -190,6 +190,43 @@ fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std
             };
             key(a).cmp(&key(b))
         }
+        // The PSS family. `None` (not read, or not readable) sorts below any real
+        // figure in both directions, because an unknown cost is not a small one —
+        // but the tie-break on pid keeps the placeholder rows in a stable order.
+        //
+        // Sorting by these is exactly when the sampler is told to read
+        // `smaps_rollup`, so the column that orders the list is also the column
+        // that pays for it.
+        #[cfg(target_os = "linux")]
+        F::Pss => rows[a]
+            .pss
+            .unwrap_or(0)
+            .cmp(&rows[b].pss.unwrap_or(0)),
+        #[cfg(target_os = "linux")]
+        F::Epss => rows[a]
+            .epss
+            .unwrap_or(0)
+            .cmp(&rows[b].epss.unwrap_or(0)),
+        #[cfg(target_os = "linux")]
+        F::Private => rows[a]
+            .private
+            .unwrap_or(0)
+            .cmp(&rows[b].private.unwrap_or(0)),
+        #[cfg(target_os = "linux")]
+        F::Swap => rows[a]
+            .swap_bytes
+            .unwrap_or(0)
+            .cmp(&rows[b].swap_bytes.unwrap_or(0)),
+        #[cfg(target_os = "linux")]
+        F::GpuPercent => rows[a]
+            .gpu_percent
+            .unwrap_or(0.0)
+            .total_cmp(&rows[b].gpu_percent.unwrap_or(0.0)),
+        #[cfg(target_os = "linux")]
+        F::GpuTime => rows[a]
+            .gpu_ns
+            .unwrap_or(0)
+            .cmp(&rows[b].gpu_ns.unwrap_or(0)),
         _ => rows[a].pid.cmp(&rows[b].pid),
     }
 }

@@ -372,6 +372,25 @@ pub fn smaps_rollup_available(proc_root: &Path, pid: crate::Pid) -> bool {
         .exists()
 }
 
+/// Read and parse `/proc/<pid>/smaps_rollup`.
+///
+/// # Why the caller has to gate this
+///
+/// The kernel walks every VMA in the process's address space to build this file.
+/// Measured on a desktop with ~700 processes, reading it for all of them costs
+/// tens of milliseconds — more than the entire rest of the scan. It is therefore
+/// only called when a column that needs it (`PSS`, `EPSS`, `M_PRIVATE`) is
+/// actually visible, and never otherwise.
+///
+/// Returns `None` when the file is missing (a kernel older than 4.14), or when it
+/// cannot be read: another user's `smaps_rollup` needs `CAP_SYS_PTRACE`, and
+/// `EPERM` there is normal rather than an error to report.
+pub fn read_smaps_rollup(proc_root: &Path, pid: crate::Pid) -> Option<SmapsRollup> {
+    let path = proc_root.join(pid.to_string()).join("smaps_rollup");
+    let bytes = std::fs::read(path).ok()?;
+    parse_smaps_rollup(&bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

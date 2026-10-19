@@ -65,6 +65,42 @@ pub enum Field {
     IoWriteRate,
 }
 
+impl Field {
+    /// Whether reading this column requires `/proc/<pid>/smaps_rollup`.
+    ///
+    /// The sampler consults this before spending tens of milliseconds per tick on
+    /// a kernel VMA walk: a column that is not on screen must not cost anything.
+    /// Kept next to the `Field` definition so a future PSS-derived column cannot
+    /// be added without answering the question.
+    pub const fn needs_smaps_rollup(self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, Field::Pss | Field::Epss | Field::Private | Field::Swap)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = self;
+            false
+        }
+    }
+
+    /// Whether reading this column requires scanning `/proc/<pid>/fdinfo`.
+    ///
+    /// Same contract as [`Self::needs_smaps_rollup`]: a column that is not on
+    /// screen must not cost a directory walk per process per tick.
+    pub const fn needs_gpu_fdinfo(self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, Field::GpuPercent | Field::GpuTime)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = self;
+            false
+        }
+    }
+}
+
 /// Horizontal alignment of a column.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Align {
@@ -305,6 +341,66 @@ const FIELD_META: &[FieldMeta] = &[
         false,
         Align::Left,
     ),
+    // The PSS family. All four come from `/proc/<pid>/smaps_rollup`, which is why
+    // they share `Field::needs_smaps_rollup` — the sampler reads it only when one
+    // of these is on screen.
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Pss,
+        "M_PSS",
+        "  PSS ",
+        "Proportional set size: shared pages divided between sharers",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Epss,
+        "M_EPSS",
+        " EPSS ",
+        "Effective PSS: PSS plus the swapped-out equivalent",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Private,
+        "M_PRIVATE",
+        " PRIV ",
+        "Private memory: what would be freed if this process exited",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::Swap,
+        "M_SWAP",
+        "  SWP ",
+        "Memory this process has pushed to swap",
+        true,
+        Align::Right,
+    ),
+    // GPU, from `drm-usage-stats` keys in `fdinfo`. No vendor SDK is involved:
+    // the kernel exports these for every driver that opts in, which today means
+    // amdgpu, i915/xe, nouveau and (partially) nvidia.
+    #[cfg(target_os = "linux")]
+    m(
+        Field::GpuPercent,
+        "GPU%",
+        " GPU% ",
+        "Share of GPU time this process used, from drm-usage-stats",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::GpuTime,
+        "GPU_TIME",
+        "  GPUT ",
+        "Cumulative GPU time, across every engine class",
+        true,
+        Align::Right,
+    ),
 ];
 
 /// Names of the fields shown in the default M0 layout.
@@ -462,6 +558,42 @@ pub struct Row {
     /// Lazily loaded, cached until the process exits.
     pub cmdline: Option<Box<str>>,
     pub exe: Option<Box<str>>,
+    /// Proportional set size, from `/proc/<pid>/smaps_rollup`, in bytes.
+    ///
+    /// `None` means "not read", not "zero": the file is expensive enough that
+    /// it is only opened when a column needing it is visible, and another user's
+    /// process may refuse to be read at all. The renderer shows `-` for `None`
+    /// and a real figure for `Some(0)`.
+    ///
+    /// RSS counts a shared page once per process, so two processes sharing 100 MB
+    /// of libraries report 100 MB each and the machine appears to use 200 MB.
+    /// PSS splits that page between them, which is the only figure that adds up
+    /// across the table.
+    #[cfg(target_os = "linux")]
+    pub pss: Option<u64>,
+    /// `Pss` + `SwapPss`: what the process costs including what it pushed to swap.
+    #[cfg(target_os = "linux")]
+    pub epss: Option<u64>,
+    /// Memory exclusively this process's (`Private_Clean + Private_Dirty`).
+    ///
+    /// The complement of the shared part: PSS minus this is what would be freed
+    /// if the process exited and nothing else changed.
+    #[cfg(target_os = "linux")]
+    pub private: Option<u64>,
+    /// Bytes of this process's memory currently in swap (`Swap` from rollup).
+    #[cfg(target_os = "linux")]
+    pub swap_bytes: Option<u64>,
+    /// GPU utilisation in percent, from `drm-usage-stats` keys in `fdinfo`.
+    ///
+    /// `None` when the process holds no DRM descriptor, or holds one whose driver
+    /// reports no `drm-busy`, or the `fdinfo` files are unreadable. Those are
+    /// three different reasons for the same thing — "no percentage is available"
+    /// — and none of them is zero.
+    #[cfg(target_os = "linux")]
+    pub gpu_percent: Option<f32>,
+    /// Cumulative GPU nanoseconds, across every engine class the driver reports.
+    #[cfg(target_os = "linux")]
+    pub gpu_ns: Option<u64>,
     /// The process's cgroup path, e.g. `/system.slice/docker-1f2e….scope`.
     ///
     /// The *path*, not the raw `/proc/<pid>/cgroup` line: the raw line is
@@ -523,6 +655,18 @@ impl Row {
             elapsed: 0,
             cmdline: None,
             exe: None,
+            #[cfg(target_os = "linux")]
+            pss: None,
+            #[cfg(target_os = "linux")]
+            epss: None,
+            #[cfg(target_os = "linux")]
+            private: None,
+            #[cfg(target_os = "linux")]
+            swap_bytes: None,
+            #[cfg(target_os = "linux")]
+            gpu_percent: None,
+            #[cfg(target_os = "linux")]
+            gpu_ns: None,
             cgroup: None,
             #[cfg(target_os = "linux")]
             container: None,
