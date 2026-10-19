@@ -63,6 +63,12 @@ pub enum Field {
     IoReadRate,
     #[cfg(target_os = "linux")]
     IoWriteRate,
+    #[cfg(target_os = "linux")]
+    CpuDelayPercent,
+    #[cfg(target_os = "linux")]
+    IoDelayPercent,
+    #[cfg(target_os = "linux")]
+    SwapDelayPercent,
 }
 
 impl Field {
@@ -76,6 +82,25 @@ impl Field {
         #[cfg(target_os = "linux")]
         {
             matches!(self, Field::Pss | Field::Epss | Field::Private | Field::Swap)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = self;
+            false
+        }
+    }
+
+    /// Whether reading this column requires a `TASKSTATS` netlink query.
+    ///
+    /// Same contract as [`Self::needs_smaps_rollup`], with a higher price: every
+    /// query is a syscall pair and a kernel task lookup, per process, per tick.
+    pub const fn needs_delayacct(self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(
+                self,
+                Field::CpuDelayPercent | Field::IoDelayPercent | Field::SwapDelayPercent
+            )
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -401,6 +426,40 @@ const FIELD_META: &[FieldMeta] = &[
         true,
         Align::Right,
     ),
+    // Delay accounting, from `TASKSTATS` over generic netlink. The figures are
+    // shares of the task's lifetime spent *waiting*: runnable but not on a CPU;
+    // blocked on synchronous I/O; waiting for a page to be swapped back in.
+    //
+    // htop names these `PERCENT_CPU_DELAY`, `PERCENT_IO_DELAY` and
+    // `PERCENT_SWAP_DELAY`; the ids match htop's `ProcessField.h` so an htoprc
+    // imports.
+    #[cfg(target_os = "linux")]
+    m(
+        Field::CpuDelayPercent,
+        "CPUD%",
+        "CPUD% ",
+        "Share of this task's life spent runnable but waiting for a CPU",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::IoDelayPercent,
+        "IOD%",
+        " IOD% ",
+        "Share of this task's life spent waiting for synchronous block I/O",
+        true,
+        Align::Right,
+    ),
+    #[cfg(target_os = "linux")]
+    m(
+        Field::SwapDelayPercent,
+        "SWPD%",
+        "SWPD% ",
+        "Share of this task's life spent waiting for a page to be swapped in",
+        true,
+        Align::Right,
+    ),
 ];
 
 /// Names of the fields shown in the default M0 layout.
@@ -594,6 +653,16 @@ pub struct Row {
     /// Cumulative GPU nanoseconds, across every engine class the driver reports.
     #[cfg(target_os = "linux")]
     pub gpu_ns: Option<u64>,
+    /// Share of this task's life spent runnable but waiting for a CPU.
+    ///
+    /// From `TASKSTATS`; see `linux::delayacct`. `None` means unread — no
+    /// `CAP_NET_ADMIN`, no `CONFIG_TASKSTATS`, or no delay column visible — and
+    /// renders `-`, never `0.0`.
+    pub cpu_delay_percent: Option<f32>,
+    /// Share of this task's life spent waiting for synchronous block I/O.
+    pub io_delay_percent: Option<f32>,
+    /// Share of this task's life spent waiting for a page to be swapped in.
+    pub swap_delay_percent: Option<f32>,
     /// The process's cgroup path, e.g. `/system.slice/docker-1f2e….scope`.
     ///
     /// The *path*, not the raw `/proc/<pid>/cgroup` line: the raw line is
@@ -667,6 +736,9 @@ impl Row {
             gpu_percent: None,
             #[cfg(target_os = "linux")]
             gpu_ns: None,
+            cpu_delay_percent: None,
+            io_delay_percent: None,
+            swap_delay_percent: None,
             cgroup: None,
             #[cfg(target_os = "linux")]
             container: None,

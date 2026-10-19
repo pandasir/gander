@@ -7,6 +7,7 @@
 //! Both are configured by a `root` path so tests can point at a fixture tree
 //! instead of the live `/proc`.
 
+pub mod delayacct;
 pub mod fsops;
 pub mod parse;
 pub mod scan;

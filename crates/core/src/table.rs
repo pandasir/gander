@@ -227,6 +227,24 @@ fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std
             .gpu_ns
             .unwrap_or(0)
             .cmp(&rows[b].gpu_ns.unwrap_or(0)),
+        // Delay percentages. Unread (`None`) sorts as zero, which puts it with
+        // processes that measured zero delay rather than above them: a row that
+        // was never read must not outrank one that was.
+        #[cfg(target_os = "linux")]
+        F::CpuDelayPercent => rows[a]
+            .cpu_delay_percent
+            .unwrap_or(0.0)
+            .total_cmp(&rows[b].cpu_delay_percent.unwrap_or(0.0)),
+        #[cfg(target_os = "linux")]
+        F::IoDelayPercent => rows[a]
+            .io_delay_percent
+            .unwrap_or(0.0)
+            .total_cmp(&rows[b].io_delay_percent.unwrap_or(0.0)),
+        #[cfg(target_os = "linux")]
+        F::SwapDelayPercent => rows[a]
+            .swap_delay_percent
+            .unwrap_or(0.0)
+            .total_cmp(&rows[b].swap_delay_percent.unwrap_or(0.0)),
         _ => rows[a].pid.cmp(&rows[b].pid),
     }
 }

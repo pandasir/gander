@@ -87,6 +87,8 @@ pub struct ScanOptions {
     pub smaps: bool,
     /// Read `/proc/<pid>/fdinfo` for `drm-*` keys (GPU time and percentage).
     pub gpu: bool,
+    /// Read per-task delay counters over `TASKSTATS` generic netlink.
+    pub delayacct: bool,
 }
 
 impl ScanOptions {
@@ -97,6 +99,7 @@ impl ScanOptions {
             threads: false,
             smaps: false,
             gpu: false,
+            delayacct: false,
         }
     }
 
@@ -112,6 +115,11 @@ impl ScanOptions {
 
     pub const fn with_gpu(mut self, on: bool) -> Self {
         self.gpu = on;
+        self
+    }
+
+    pub const fn with_delayacct(mut self, on: bool) -> Self {
+        self.delayacct = on;
         self
     }
 }
@@ -152,6 +160,14 @@ pub mod capability {
 
     /// Pressure stall information is readable (`/proc/pressure`).
     pub const PSI: bool = cfg!(target_os = "linux");
+
+    /// Per-task delay accounting is available over `TASKSTATS` netlink.
+    ///
+    /// `true` only says the *mechanism* exists on this platform. Whether it
+    /// actually answers depends on `CONFIG_TASKSTATS` at build time and
+    /// `CAP_NET_ADMIN` at run time; both are discovered at the first read, and
+    /// both make the columns render `-` rather than fail.
+    pub const DELAYACCT: bool = cfg!(target_os = "linux");
 
     /// Per-process disk I/O counters are available.
     pub const PROC_IO: bool = cfg!(any(target_os = "linux", target_os = "macos"));

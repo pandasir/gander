@@ -8,6 +8,8 @@ use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo, Syst
 use crate::table::Cache;
 use crate::Pid;
 
+#[cfg(target_os = "linux")]
+use super::delayacct::{DelayAcct, DelayStats};
 use super::scan;
 use super::LinuxPlatform;
 
@@ -56,6 +58,28 @@ pub struct Sampler {
     read_smaps: bool,
     /// Whether a GPU column is on screen (reads each process's `fdinfo`).
     read_gpu: bool,
+    /// Whether a delay-accounting column is on screen.
+    ///
+    /// Costs one generic-netlink round trip per process per tick, which is more
+    /// expensive than a `/proc` read: every request is a syscall pair plus a
+    /// kernel lookup. Off unless a `CPUD%`/`IOD%`/`SWPD%` column is visible.
+    #[cfg(target_os = "linux")]
+    read_delayacct: bool,
+    /// The `TASKSTATS` socket, opened on first use.
+    ///
+    /// `Option` because opening it can fail in two ordinary ways (no
+    /// `CONFIG_TASKSTATS`, or the socket cannot be created), and the sampler must
+    /// keep working when it does. Opened lazily rather than in `new` so a run
+    /// that never shows a delay column never creates a socket.
+    #[cfg(target_os = "linux")]
+    delayacct: Option<DelayAcct>,
+    /// Previous per-task delay counters, for the percentage delta.
+    ///
+    /// Keyed by pid and holding `starttime` alongside: a recycled pid must not
+    /// inherit its predecessor's counters, the same hazard the CPU% path solves
+    /// with `PrevRow`.
+    #[cfg(target_os = "linux")]
+    prev_delay: HashMap<Pid, (u64, DelayStats)>,
 }
 
 impl Default for Sampler {
@@ -79,7 +103,41 @@ impl Sampler {
             show_threads: false,
             read_smaps: false,
             read_gpu: false,
+            #[cfg(target_os = "linux")]
+            read_delayacct: false,
+            #[cfg(target_os = "linux")]
+            delayacct: None,
+            #[cfg(target_os = "linux")]
+            prev_delay: HashMap::new(),
         }
+    }
+
+    /// Read delay counters for `pid`, opening the netlink socket on first use.
+    ///
+    /// Returns `None` when the data cannot be read: no `CAP_NET_ADMIN`, no
+    /// `CONFIG_TASKSTATS`, or the process exited between `readdir` and now. All
+    /// three are ordinary, and all three must render as `-` rather than `0.0%`.
+    ///
+    /// `starttime` is not used to compute anything; it is recorded so a recycled
+    /// pid can be detected. The lifetime percentage needs no delta, but a pid
+    /// reused by a new process must not keep the old one's numbers, and the
+    /// stored `starttime` is what makes that distinguishable.
+    #[cfg(target_os = "linux")]
+    fn delay_for(&mut self, pid: Pid, starttime: u64) -> Option<DelayStats> {
+        let acct = match self.delayacct {
+            Some(ref mut a) => a,
+            None => self.delayacct.insert(DelayAcct::open()?),
+        };
+        let stats = acct.read(pid)?;
+        // Forget counters for pids that have been reused, so the map cannot grow
+        // without bound and a recycled pid cannot inherit stale values.
+        if let Some(&(prev_start, _)) = self.prev_delay.get(&pid) {
+            if prev_start != starttime {
+                self.prev_delay.remove(&pid);
+            }
+        }
+        self.prev_delay.insert(pid, (starttime, stats));
+        Some(stats)
     }
 
     pub fn clk_tck(&self) -> u64 {
@@ -346,6 +404,19 @@ impl Sampler {
                     row.gpu_ns = Some(gpu.gpu_ns);
                 }
             }
+            // Delay accounting, over generic netlink. Also gated: a netlink round
+            // trip per process per tick is the most expensive read in the scan.
+            //
+            // The percentage is a lifetime average (the kernel keeps no interval
+            // counter), so it needs no delta: the first sample already has one.
+            #[cfg(target_os = "linux")]
+            if self.read_delayacct {
+                if let Some(stats) = self.delay_for(pid, starttime) {
+                    row.cpu_delay_percent = stats.cpu_percent();
+                    row.io_delay_percent = stats.blkio_percent();
+                    row.swap_delay_percent = stats.swapin_percent();
+                }
+            }
 
             let d_proc = fields.cpu_ticks().saturating_sub(prev_proc_ticks) as f32;
             row.percent_cpu = if total_delta > 0.0 {
@@ -399,6 +470,15 @@ impl Sampler {
         }
 
         self.prev_rows = next_prev;
+        // Drop delay counters for processes that have exited. Without this the map
+        // grows with every process the machine has ever run, which on a desktop
+        // is thousands of entries in a few minutes.
+        #[cfg(target_os = "linux")]
+        {
+            let live: std::collections::HashSet<Pid> =
+                out.iter().filter(|r| !r.is_thread).map(|r| r.pid).collect();
+            self.prev_delay.retain(|pid, _| live.contains(pid));
+        }
         out
     }
 }
@@ -448,6 +528,17 @@ impl crate::PlatformSampler for Sampler {
         self.show_threads = opts.threads;
         self.read_smaps = opts.smaps;
         self.read_gpu = opts.gpu;
+        #[cfg(target_os = "linux")]
+        {
+            self.read_delayacct = opts.delayacct;
+            // Drop the socket when the last delay column goes away, so a session
+            // that showed one briefly does not hold a netlink socket open for the
+            // rest of the run.
+            if !opts.delayacct {
+                self.delayacct = None;
+                self.prev_delay.clear();
+            }
+        }
     }
 
     fn supports_threads() -> bool {
