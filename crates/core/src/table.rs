@@ -108,60 +108,71 @@ pub struct View {
 
 /// Sort `order` in place using `field`, without touching `rows`.
 pub fn sort_order(rows: &[Row], order: &mut [usize], sort: Sort) {
+    // One comparison pass, so direction and tie-breaking are decided in one place.
+    //
+    // This used to be a `match` that sorted each field its own way, then a
+    // `reverse()` of the whole vector for descending. Two problems came from that:
+    //
+    // 1. `reverse()` reversed every *tie* as well. On a quiet machine where dozens
+    //    of processes sit at 0.0% CPU, "sort by CPU%, descending" produced
+    //    10, 9, 8, … — a pid list running backwards, which reads as a bug rather
+    //    than as "all of these are equal".
+    //
+    // 2. `sort_unstable_by` gives ties no guaranteed order, so equal rows could
+    //    swap places between samples even without the reversal.
+    //
+    // Reversing the *comparison* rather than the vector, and keeping the pid
+    // tie-break outside the reversal, fixes both: an equal group reads in
+    // ascending pid order in either direction, and never shuffles.
+    let descending = sort.dir == Dir::Desc;
+    order.sort_unstable_by(|a, b| {
+        let primary = compare_by(rows, sort.field, *a, *b);
+        let primary = if descending { primary.reverse() } else { primary };
+        primary.then_with(|| rows[*a].pid.cmp(&rows[*b].pid))
+    });
+}
+
+/// Compare two rows by `field`, ascending. Used by the descending sort so the
+/// reversal can be applied to the comparison instead of to the finished vector.
+fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std::cmp::Ordering {
     use crate::row::Field as F;
-
-    // Numeric comparators only. Sorting on formatted text is a bug;
-    // docs/DESIGN.md §9.4.
-    let cmp_cpu = |a: &usize, b: &usize| rows[*a].percent_cpu.total_cmp(&rows[*b].percent_cpu);
-    let cmp_mem = |a: &usize, b: &usize| rows[*a].percent_mem.total_cmp(&rows[*b].percent_mem);
-
-    match sort.field {
-        F::Pid => order.sort_unstable_by_key(|&i| rows[i].pid),
-        F::Ppid => order.sort_unstable_by_key(|&i| rows[i].ppid),
-        F::Pgrp => order.sort_unstable_by_key(|&i| rows[i].pgrp),
-        F::Comm => order.sort_unstable_by(|a, b| rows[*a].comm.cmp(&rows[*b].comm)),
-        F::User => order.sort_unstable_by_key(|&i| rows[i].uid),
-        F::Priority => order.sort_unstable_by_key(|&i| rows[i].priority),
-        F::Nice => order.sort_unstable_by_key(|&i| rows[i].nice),
-        F::PercentCpu | F::PercentNormCpu => order.sort_unstable_by(cmp_cpu),
-        F::PercentMem => order.sort_unstable_by(cmp_mem),
-        F::ResMem => order.sort_unstable_by_key(|&i| rows[i].res),
-        F::VirtMem => order.sort_unstable_by_key(|&i| rows[i].virt),
-        F::Time => order.sort_unstable_by_key(|&i| rows[i].time_ticks),
-        F::Elapsed => order.sort_unstable_by_key(|&i| rows[i].elapsed),
-        F::Nlwp => order.sort_unstable_by_key(|&i| rows[i].nlwp),
-        F::MinFlt => order.sort_unstable_by_key(|&i| rows[i].min_flt),
-        F::MajFlt => order.sort_unstable_by_key(|&i| rows[i].maj_flt),
-        F::Processor => order.sort_unstable_by_key(|&i| rows[i].processor),
-        // Text columns sort by their text, not by pid: falling through to the
-        // pid comparator made "sort by CGROUP" silently reorder by pid, which
-        // looks like a sort that does nothing on an already pid-sorted list.
+    match field {
+        F::Pid => rows[a].pid.cmp(&rows[b].pid),
+        F::Ppid => rows[a].ppid.cmp(&rows[b].ppid),
+        F::Pgrp => rows[a].pgrp.cmp(&rows[b].pgrp),
+        F::Comm => rows[a].comm.cmp(&rows[b].comm),
+        F::User => rows[a].uid.cmp(&rows[b].uid),
+        F::Priority => rows[a].priority.cmp(&rows[b].priority),
+        F::Nice => rows[a].nice.cmp(&rows[b].nice),
+        F::PercentCpu | F::PercentNormCpu => {
+            rows[a].percent_cpu.total_cmp(&rows[b].percent_cpu)
+        }
+        F::PercentMem => rows[a].percent_mem.total_cmp(&rows[b].percent_mem),
+        F::ResMem => rows[a].res.cmp(&rows[b].res),
+        F::VirtMem => rows[a].virt.cmp(&rows[b].virt),
+        F::Time => rows[a].time_ticks.cmp(&rows[b].time_ticks),
+        F::Elapsed => rows[a].elapsed.cmp(&rows[b].elapsed),
+        F::Nlwp => rows[a].nlwp.cmp(&rows[b].nlwp),
+        F::MinFlt => rows[a].min_flt.cmp(&rows[b].min_flt),
+        F::MajFlt => rows[a].maj_flt.cmp(&rows[b].maj_flt),
+        F::Processor => rows[a].processor.cmp(&rows[b].processor),
         #[cfg(target_os = "linux")]
-        F::Cgroup => order.sort_unstable_by(|a, b| {
-            rows[*a]
-                .cgroup
-                .as_deref()
-                .unwrap_or("")
-                .cmp(rows[*b].cgroup.as_deref().unwrap_or(""))
-        }),
-        // Group by runtime first, then by id: sorting containers by id alone
-        // interleaves docker and kubernetes ids, which is not what a reader
-        // scanning the column is looking for.
+        F::Cgroup => rows[a]
+            .cgroup
+            .as_deref()
+            .unwrap_or("")
+            .cmp(rows[b].cgroup.as_deref().unwrap_or("")),
         #[cfg(target_os = "linux")]
-        F::Container => order.sort_unstable_by(|a, b| {
+        F::Container => {
             let key = |i: usize| {
                 (
                     rows[i].container_runtime.as_deref().unwrap_or(""),
                     rows[i].container.as_deref().unwrap_or(""),
                 )
             };
-            key(*a).cmp(&key(*b))
-        }),
-        _ => order.sort_unstable_by_key(|&i| rows[i].pid),
-    }
-
-    if sort.dir == Dir::Desc {
-        order.reverse();
+            key(a).cmp(&key(b))
+        }
+        _ => rows[a].pid.cmp(&rows[b].pid),
     }
 }
 
@@ -396,5 +407,80 @@ mod tests {
         let order = vec![0, 1];
         // searching from the last position wraps to the first match
         assert_eq!(find_next(&rows, &order, 1, "alpha"), Some(0));
+    }
+
+    /// Rows with equal keys must keep a fixed, ascending-pid order in *both*
+    /// directions.
+    ///
+    /// Two bugs hid here. `reverse()` applied to the finished vector also reversed
+    /// every tie, so descending CPU% on a quiet machine listed pids backwards
+    /// (10, 9, 8, …) — which reads as a broken sort. And `sort_unstable_by` leaves
+    /// ties unordered, so equal rows could swap between samples even without the
+    /// reversal. Both show up as "the list jumps around", which is what made this
+    /// worth fixing rather than tolerating.
+    #[test]
+    fn ties_are_broken_by_pid_in_both_directions() {
+        let rows: Vec<Row> = (1..=10u32)
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.percent_cpu = 0.0;
+                r
+            })
+            .collect();
+
+        for dir in [Dir::Asc, Dir::Desc] {
+            for _ in 0..5 {
+                // Repeated so an unstable sort has a chance to show itself.
+                let mut order: Vec<usize> = (0..rows.len()).collect();
+                sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir });
+                let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+                assert_eq!(
+                    pids,
+                    vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                    "all-equal rows must read as ascending pid even when sorting {dir:?}"
+                );
+            }
+        }
+    }
+
+    /// Direction must still apply to the primary key when it is not tied.
+    #[test]
+    fn direction_applies_to_the_primary_key() {
+        let rows: Vec<Row> = (1..=10u32)
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.percent_cpu = if pid == 3 || pid == 7 { 5.0 } else { 0.0 };
+                r
+            })
+            .collect();
+
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir: Dir::Desc });
+        let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+        assert_eq!(&pids[..2], &[3, 7], "highest CPU first, pid-ascending among ties");
+        assert_eq!(&pids[2..], &[1, 2, 4, 5, 6, 8, 9, 10], "then the zeroes");
+
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir: Dir::Asc });
+        let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+        assert_eq!(&pids[..8], &[1, 2, 4, 5, 6, 8, 9, 10], "zeroes first");
+        assert_eq!(&pids[8..], &[3, 7], "then the busy ones");
+    }
+
+    /// PID ascending must be exactly that: the default the app now ships.
+    #[test]
+    fn pid_ascending_is_a_stable_identity() {
+        let rows: Vec<Row> = (1..=20u32)
+            .rev()
+            .map(|pid| {
+                let mut r = Row::default_for_test(pid);
+                r.percent_cpu = (pid % 7) as f32;
+                r
+            })
+            .collect();
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        sort_order(&rows, &mut order, Sort { field: Field::Pid, dir: Dir::Asc });
+        let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
+        assert_eq!(pids, (1..=20u32).collect::<Vec<_>>());
     }
 }
