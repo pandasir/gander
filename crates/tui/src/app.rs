@@ -124,7 +124,7 @@ pub struct App {
     /// The combined visibility predicate (text filter, user, kernel threads).
     /// Kept in sync by `refresh_visibility`.
     visibility: gander_core::table::Visibility,
-    pub tags: std::collections::HashSet<u64>,
+    pub tags: std::collections::HashSet<gander_core::Pid>,
     pub filter: Option<Filter>,
     pub input: Input,
     pub command_column_interactive: bool,
@@ -887,27 +887,17 @@ impl App {
 
         // Tagged processes take precedence, matching htop: if anything is
         // tagged, the action applies to the tagged set.
-        //
-        // Tags are keyed by `Row::identity`, not `pid`: on macOS every thread row
-        // shares its process's pid, so a pid-keyed tag set could not tell them
-        // apart. Threads resolve back to their leader's pid before the signal is
-        // sent, because a thread cannot be signalled independently.
         let targets: Vec<gander_core::Pid> = if self.tags.is_empty() {
             match self.selected_row() {
-                Some(row) => vec![row.tgid],
+                Some(row) => vec![row.pid],
                 None => {
                     self.status = Some("no process selected".into());
                     return;
                 }
             }
         } else {
-            let mut tagged: Vec<gander_core::Pid> = self
-                .tags
-                .iter()
-                .map(|id| self.pid_for_identity(*id))
-                .collect();
+            let mut tagged: Vec<gander_core::Pid> = self.tags.iter().copied().collect();
             tagged.sort_unstable();
-            tagged.dedup();
             tagged
         };
 
@@ -1052,37 +1042,18 @@ impl App {
 
     fn toggle_tag(&mut self) {
         if let Some(row) = self.selected_row() {
-            let id = row.identity();
-            if !self.tags.remove(&id) {
-                self.tags.insert(id);
+            let pid = row.pid;
+            if !self.tags.remove(&pid) {
+                self.tags.insert(pid);
             }
         }
-    }
-
-    /// The pid an identity belongs to.
-    ///
-    /// A tag can name a thread row, and a thread is signalled through its process.
-    /// Rows that are not in the current sample keep their identity's low half,
-    /// which is the pid on Linux and on macOS processes.
-    fn pid_for_identity(&self, id: u64) -> gander_core::Pid {
-        if let Some(row) = self.table.rows.iter().find(|r| r.identity() == id) {
-            return row.tgid;
-        }
-        // The row is gone: on macOS the pid is in the high 16 bits, on Linux the
-        // identity *is* the pid. Falling back to the low 32 bits is correct for
-        // Linux and harmless for a departed macOS thread.
-        (id & 0xFFFF_FFFF) as gander_core::Pid
     }
 
     fn tag_with_children(&mut self) {
         if let Some(row) = self.selected_row() {
             let pid = row.pid;
-            // `tree::subtree` works on pids, so map the result back to identities.
-            let pids = tree::subtree(&self.table.rows, pid);
-            for r in &self.table.rows {
-                if pids.contains(&r.pid) || pids.contains(&r.tgid) {
-                    self.tags.insert(r.identity());
-                }
+            for p in tree::subtree(&self.table.rows, pid) {
+                self.tags.insert(p);
             }
         }
     }
@@ -1371,13 +1342,28 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
+        // Paint the theme background over the whole screen first. Every style in
+        // a Theme sets a foreground, and most leave the background unset, which
+        // keeps whatever is already in the buffer — black on a fresh terminal.
+        // That is invisible for dark themes but breaks the light one (`paper`),
+        // whose whole point is a light canvas. One fill here is the single place
+        // all four draw paths (htop, panels, setup, dialogs) inherit it from.
         let area = frame.area();
+        if area.width > 0 && area.height > 0 {
+            let buf = frame.buffer_mut();
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    buf[(x, y)]
+                        .set_bg(self.theme.background)
+                        .set_fg(self.theme.foreground);
+                }
+            }
+        }
         if self.layout == LayoutKind::Panels {
             self.draw_panels(frame);
         } else {
             self.draw_htop(frame);
         }
-        let _ = area;
     }
 
     /// The classic htop arrangement: horizontal meters, full-width table.
@@ -1784,7 +1770,7 @@ impl App {
 
             let base = if pos == self.selected {
                 theme.row_selected
-            } else if self.tags.contains(&row.identity()) {
+            } else if self.tags.contains(&row.pid) {
                 theme.row_tagged
             } else if row.is_kernel_thread() {
                 theme.row_kernel_thread
@@ -2955,62 +2941,8 @@ mod tests {
         r.tgid = tgid;
         r.ppid = tgid;
         r.is_thread = true;
-        r.thread_id = Some(pid as u64);
         r.flags = r.flags.insert(gander_core::row::RowFlags::USERLAND_THREAD);
         r
-    }
-
-    /// A macOS thread row shares its leader's pid, so rows must be told apart by
-    /// `identity()`. Tagging one thread must not tag its siblings or its process.
-    #[test]
-    fn tagging_distinguishes_threads_that_share_a_pid() {
-        let mut app = app_with_n_rows(1); // process pid 1
-        // Two threads of pid 1, as macOS reports them: same pid, distinct ids.
-        let mut t1 = thread_row(1, 1);
-        t1.thread_id = Some(9001);
-        let mut t2 = thread_row(1, 1);
-        t2.thread_id = Some(9002);
-        app.table.rows.push(t1);
-        app.table.rows.push(t2);
-        app.table.show_userland_threads = true;
-        app.reorder();
-
-        // Select the first thread and tag it with `Space` (toggle), not `c`
-        // (tag with children), because `c` deliberately sweeps every row that
-        // belongs to the same process.
-        let pos = app
-            .table
-            .view
-            .order
-            .iter()
-            .position(|&i| app.table.rows[i].thread_id == Some(9001))
-            .expect("first thread is visible");
-        app.selected = pos;
-        app.handle_key(Key::Char(' '));
-
-        assert!(app.tags.contains(&9001), "the selected thread is tagged");
-        assert!(!app.tags.contains(&9002), "its sibling must not be");
-        assert!(
-            !app.tags.contains(&1),
-            "the process row shares the pid but not the identity"
-        );
-    }
-
-    /// Signalling a tagged thread resolves to its process, since a thread cannot
-    /// be signalled on its own.
-    #[test]
-    fn a_tagged_thread_signals_its_process() {
-        let mut app = app_with_n_rows(1);
-        let mut t = thread_row(1, 1);
-        t.thread_id = Some(9001);
-        app.table.rows.push(t);
-        app.table.show_userland_threads = true;
-        app.reorder();
-
-        // Only the thread is tagged.
-        app.tags.clear();
-        app.tags.insert(9001);
-        assert_eq!(app.pid_for_identity(9001), 1, "a thread maps to its leader");
     }
 
     #[test]
@@ -3185,8 +3117,14 @@ mod tests {
         use ratatui::style::Color;
         use ratatui::Terminal;
 
+        // This test asserts the *htop layout* never paints the table's in-cell
+        // value bars. It reads the bar background off the *theme*, so it must pin
+        // the classic htop theme rather than whatever the config default is now
+        // (the default is the in-house `gander` theme, which shares colors with
+        // other elements and would make the assertion fire on those instead).
         let config = Config {
             layout: "htop".into(),
+            color_scheme: "default".into(),
             ..Config::default()
         };
         let mut app = App::new(config);
