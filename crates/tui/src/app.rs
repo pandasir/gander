@@ -6,7 +6,7 @@
 use gander_config::Config;
 use gander_core::row::{Field, Row};
 use gander_core::system::SystemSnapshot;
-use gander_core::table::{self, Dir, Filter, ProcTable, Sort};
+use gander_core::table::{self, Dir, Filter, ProcTable};
 use gander_core::{format, tree};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -170,16 +170,12 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         let theme = Theme::named(&config.color_scheme).unwrap_or_default();
-        let mut table = ProcTable {
+        let table = ProcTable {
             sort: config.active_tab().sort(),
             tree_mode: config.tree_mode,
             show_kernel_threads: config.show_kernel_threads,
             show_userland_threads: config.show_userland_threads,
             ..Default::default()
-        };
-        table.sort = Sort {
-            dir: Dir::Desc,
-            ..table.sort
         };
         let layout = LayoutKind::from_config(&config.layout);
 
@@ -2884,7 +2880,12 @@ mod tests {
         app.viewport = 5;
         app.apply_sample(SystemSnapshot::default(), Vec::new());
 
-        assert_eq!(app.table.sort.field, Field::PercentCpu, "tab 0 starts here");
+        // Assert against the config rather than a hardcoded field: this test is
+        // about tabs keeping their own sort, so it must not break every time the
+        // shipped default changes.
+        let tab0_sort = app.config.tabs[0].sort();
+        assert_eq!(app.table.sort.field, tab0_sort.field, "tab 0 starts here");
+        assert_eq!(app.table.sort.dir, tab0_sort.dir);
         assert_eq!(app.columns().len(), 8, "tab 0 keeps its own columns");
 
         app.handle_key(Key::Tab);
@@ -2902,8 +2903,7 @@ mod tests {
         app.handle_key(Key::BackTab);
         assert_eq!(app.config.active_tab, 0);
         assert_eq!(
-            app.table.sort.field,
-            Field::PercentCpu,
+            app.table.sort.field, tab0_sort.field,
             "tab 0's sort survived the round trip"
         );
 
@@ -3908,6 +3908,7 @@ mod container_column_tests {
     use super::*;
     use gander_config::Config;
     use gander_core::row::Row;
+    use gander_core::table::Sort;
 
     fn row_with_container(pid: u32, runtime: &str, id: &str, cgroup: &str) -> Row {
         let mut r = Row::default_for_test(pid);

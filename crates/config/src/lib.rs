@@ -92,9 +92,21 @@ impl Default for Config {
             tabs: vec![TabConfig {
                 name: "Main".into(),
                 columns: default_fields,
+                // Sort by PID, ascending.
+                //
+                // htop opens sorted by CPU% descending, which reorders the list on
+                // every sample: on a busy machine most rows change position every
+                // 1.5 s, so the row you were looking at moves out from under the
+                // cursor before you can act on it. PID order is stable — a process
+                // keeps its position for as long as it lives — which is what makes
+                // the list readable as a list.
+                //
+                // Ascending, so the low, long-lived, system-owned PIDs (1, 2, …)
+                // are at the top and new processes appear at the bottom, where they
+                // are easy to find. `F6` / `<` `>` still reach CPU% in one key.
                 sort: SortConfig {
-                    field: "PERCENT_CPU".into(),
-                    desc: true,
+                    field: "PID".into(),
+                    desc: false,
                 },
             }],
             active_tab: 0,
@@ -231,7 +243,28 @@ mod tests {
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.delay_ms, c.delay_ms);
         assert_eq!(back.tabs.len(), 1);
-        assert_eq!(back.active_tab().sort().field, Field::PercentCpu);
+        // PID, ascending: a stable order, so rows do not move between samples.
+        assert_eq!(back.active_tab().sort().field, Field::Pid);
+        assert_eq!(back.active_tab().sort().dir, Dir::Asc);
+    }
+
+    /// An explicitly configured sort direction must survive startup.
+    ///
+    /// `App::new` used to overwrite `dir` with `Desc` unconditionally, to give
+    /// CPU% its natural descending order. The effect was that `desc = false` in
+    /// the config was ignored for every field: asking for ascending PID order
+    /// and getting descending, with no way to fix it short of editing the source.
+    #[test]
+    fn configured_direction_is_not_overwritten() {
+        let mut c = Config::default();
+        c.tabs[0].sort = SortConfig {
+            field: "PID".into(),
+            desc: false,
+        };
+        assert_eq!(c.active_tab().sort().dir, Dir::Asc);
+
+        c.tabs[0].sort.desc = true;
+        assert_eq!(c.active_tab().sort().dir, Dir::Desc);
     }
 
     #[test]
