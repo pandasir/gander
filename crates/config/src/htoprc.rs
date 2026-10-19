@@ -322,8 +322,11 @@ fn htop_field_name(id: &str) -> Option<&'static str> {
         124 => Field::ProcComm,
         125 => Field::ProcExe,
         126 => Field::Cwd,
-        // htop's PSS block, from `linux/ProcessField.h` on htop `main`:
+        // htop's PSS block and delay columns, from `linux/ProcessField.h` on
+        // htop `main`:
         //
+        //   PERCENT_CPU_DELAY = 116, PERCENT_IO_DELAY = 117,
+        //   PERCENT_SWAP_DELAY = 118,
         //   M_PSS = 119, M_SWAP = 120, M_PSSWP = 121,
         //   M_PRIV = 131, GPU_TIME = 132, GPU_PERCENT = 133, M_EPSS = 135
         //
@@ -338,6 +341,12 @@ fn htop_field_name(id: &str) -> Option<&'static str> {
         //
         // Gated on Linux because the fields are: importing an htoprc on macOS must
         // drop them rather than name a `Field` this build does not have.
+        #[cfg(target_os = "linux")]
+        116 => Field::CpuDelayPercent,
+        #[cfg(target_os = "linux")]
+        117 => Field::IoDelayPercent,
+        #[cfg(target_os = "linux")]
+        118 => Field::SwapDelayPercent,
         #[cfg(target_os = "linux")]
         119 => Field::Pss,
         #[cfg(target_os = "linux")]
@@ -415,6 +424,10 @@ header_layout=two_50_50
         assert_eq!(htop_field_name("130"), Some("M_PRIVATE"), "htop's M_PRIV");
         assert_eq!(htop_field_name("131"), Some("GPU_TIME"));
         assert_eq!(htop_field_name("132"), Some("GPU%"));
+        // Delay accounting: htop ids 116/117/118, so the file stores 115/116/117.
+        assert_eq!(htop_field_name("115"), Some("CPUD%"));
+        assert_eq!(htop_field_name("116"), Some("IOD%"));
+        assert_eq!(htop_field_name("117"), Some("SWPD%"));
 
         let c = parse("fields=0 118 119 120 130\n");
         let fields = c.active_tab().fields();
@@ -422,6 +435,18 @@ header_layout=two_50_50
         assert!(fields.contains(&Field::Swap), "{fields:?}");
         assert!(fields.contains(&Field::Epss), "{fields:?}");
         assert!(fields.contains(&Field::Private), "{fields:?}");
+    }
+
+    /// Delay accounting is a separate htop subsystem (`HAVE_DELAYACCT`) but the
+    /// columns import like any other.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn imports_the_delay_columns() {
+        let c = parse("fields=0 115 116 117\n");
+        let fields = c.active_tab().fields();
+        assert!(fields.contains(&Field::CpuDelayPercent), "{fields:?}");
+        assert!(fields.contains(&Field::IoDelayPercent), "{fields:?}");
+        assert!(fields.contains(&Field::SwapDelayPercent), "{fields:?}");
     }
 
     /// An htoprc written on macOS must not name a `Field` the macOS build does

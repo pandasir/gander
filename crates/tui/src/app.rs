@@ -336,6 +336,17 @@ impl App {
         self.columns().iter().any(|f| f.needs_gpu_fdinfo())
     }
 
+    /// Whether any currently displayed column needs a `TASKSTATS` query.
+    ///
+    /// The most expensive of the three: a netlink round trip per process per tick,
+    /// and on an unprivileged process every one of them fails with `EPERM`. The
+    /// sampler stops asking after the first refusal, so the cost is one syscall
+    /// rather than one per process — but there is still no reason to pay it for a
+    /// column nobody can see.
+    pub fn wants_delayacct(&self) -> bool {
+        self.columns().iter().any(|f| f.needs_delayacct())
+    }
+
     /// The whole set of expensive reads the current screen needs.
     ///
     /// One call, so the sampler thread cannot be told about one of the three and
@@ -345,6 +356,7 @@ impl App {
             .with_threads(self.table.show_userland_threads)
             .with_smaps(self.wants_smaps_rollup())
             .with_gpu(self.wants_gpu_fdinfo())
+            .with_delayacct(self.wants_delayacct())
     }
 
     /// Whether the active tab's columns differ from the shipped default.
@@ -2469,6 +2481,10 @@ fn default_width(field: Field) -> u16 {
         Field::GpuPercent => 6,
         #[cfg(target_os = "linux")]
         Field::GpuTime => 9,
+        // `100.0` at worst, which is 5 cells plus the `%` that
+        // `percent_human` appends.
+        #[cfg(target_os = "linux")]
+        Field::CpuDelayPercent | Field::IoDelayPercent | Field::SwapDelayPercent => 6,
         _ => 8,
     }
 }
@@ -2547,8 +2563,31 @@ pub fn render_field(
             .gpu_ns
             .map(|ns| format::duration_human(ns / 1_000_000_000).to_string())
             .unwrap_or_else(|| "-".into()),
+        // Delay accounting. `-` for unread, and it is the common case: reading
+        // these needs `CAP_NET_ADMIN`, which an ordinary `gander` does not have.
+        #[cfg(target_os = "linux")]
+        Field::CpuDelayPercent => opt_percent(row.cpu_delay_percent),
+        #[cfg(target_os = "linux")]
+        Field::IoDelayPercent => opt_percent(row.io_delay_percent),
+        #[cfg(target_os = "linux")]
+        Field::SwapDelayPercent => opt_percent(row.swap_delay_percent),
         _ => "-".to_string(),
     }
+}
+
+/// Render an optional percentage, with `-` for "not measured".
+///
+/// The same distinction `bytes_or_dash` makes, for the same reason: a delay of
+/// `0.0%` is a measurement of a process that never waited, while `-` means the
+/// figure was never obtained — usually because the kernel refused
+/// `TASKSTATS` without `CAP_NET_ADMIN`. Showing `0.0%` there would claim every
+/// process is waiting on nothing, which is exactly the condition the column
+/// exists to detect.
+#[cfg(target_os = "linux")]
+fn opt_percent(value: Option<f32>) -> String {
+    value
+        .map(|p| format::percent_human(p).to_string())
+        .unwrap_or_else(|| "-".into())
 }
 
 /// Render an optional byte count, with `-` for "not read".
@@ -4281,6 +4320,66 @@ mod container_column_tests {
 
     /// A configured tab using the new columns must survive a round trip through
     /// the config, which resolves names back to `Field`s.
+    /// A delay column that was not read renders `-`, never `0.0%`.
+    ///
+    /// This is the common case in practice: `TASKSTATS` needs `CAP_NET_ADMIN`, so
+    /// an ordinary user's `gander` gets `EPERM` and every row is unread. `0.0%`
+    /// there would claim the whole table never waits on I/O, which is the exact
+    /// condition the column exists to reveal.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unread_delay_columns_render_a_dash() {
+        let row = Row::default_for_test(1);
+        for field in [
+            Field::CpuDelayPercent,
+            Field::IoDelayPercent,
+            Field::SwapDelayPercent,
+        ] {
+            assert_eq!(render(&row, field), "-", "{field:?}");
+        }
+    }
+
+    /// A measured zero is a measurement and renders as a number.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn measured_zero_delay_renders_as_zero() {
+        let mut row = Row::default_for_test(1);
+        row.cpu_delay_percent = Some(0.0);
+        row.io_delay_percent = Some(12.5);
+        row.swap_delay_percent = Some(100.0);
+        assert_eq!(render(&row, Field::CpuDelayPercent), "0.0");
+        assert_eq!(render(&row, Field::IoDelayPercent), "12.5");
+        assert_eq!(render(&row, Field::SwapDelayPercent), "100.0");
+    }
+
+    /// Sorting by a delay column must put unread rows with the zeros rather than
+    /// above them: a row nobody measured must not outrank one that was.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unread_delay_rows_sort_with_zero_not_above() {
+        use gander_core::table::{sort_order, Dir, Sort};
+
+        let mut measured = Row::default_for_test(1);
+        measured.io_delay_percent = Some(5.0);
+        let unread = Row::default_for_test(2);
+        let rows = vec![unread, measured];
+
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::IoDelayPercent,
+                dir: Dir::Desc,
+            },
+        );
+        assert_eq!(
+            rows[order[0]].pid, 1,
+            "the measured row sorts above the unread one"
+        );
+        assert_eq!(rows[order[1]].pid, 2);
+    }
+
     #[test]
     fn the_columns_round_trip_through_the_config() {
         let mut config = Config::default();
@@ -4638,6 +4737,25 @@ mod m3_column_tests {
         assert!(opts.threads);
         assert!(opts.gpu);
         assert!(!opts.smaps);
+    }
+
+    /// Delay accounting is the third expensive read, gated the same way.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scan_options_gate_delayacct() {
+        let mut app = App::new(Config::default());
+        assert!(
+            !app.scan_options().delayacct,
+            "the default columns need no TASKSTATS query"
+        );
+
+        for column in ["CPUD%", "IOD%", "SWPD%"] {
+            app.config.tabs[0].columns = vec!["PID".into(), column.into(), "COMM".into()];
+            let opts = app.scan_options();
+            assert!(opts.delayacct, "{column} needs a TASKSTATS query");
+            assert!(!opts.smaps, "{column} needs nothing else");
+            assert!(!opts.gpu);
+        }
     }
 
     /// A tab that is not active must not pay for its columns.

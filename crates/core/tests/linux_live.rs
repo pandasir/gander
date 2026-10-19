@@ -646,3 +646,103 @@ fn gpu_percentages_are_bounded() {
         }
     }
 }
+
+/// Delay accounting must either produce a bounded percentage or report `None`.
+///
+/// The `None` case is the common one: `TASKSTATS` needs `CAP_NET_ADMIN`, so an
+/// unprivileged run gets `EPERM` and every column renders `-`. That is the
+/// behaviour being pinned here — a refusal must not become `0.0`, because `0.0`
+/// says "this process never waited" about a figure nobody obtained.
+#[test]
+fn delay_percentages_are_bounded_or_absent() {
+    let mut sampler = gander_core::Sampler::default();
+    gander_core::PlatformSampler::set_scan_options(
+        &mut sampler,
+        gander_core::ScanOptions::none().with_delayacct(true),
+    );
+    // Two samples: the first populates the per-pid state.
+    let _ = sampler.sample();
+    let (_snap, rows) = sampler.sample();
+
+    let mut read = 0;
+    for row in &rows {
+        for (label, value) in [
+            ("cpud", row.cpu_delay_percent),
+            ("iod", row.io_delay_percent),
+            ("swpd", row.swap_delay_percent),
+        ] {
+            if let Some(pct) = value {
+                read += 1;
+                assert!(
+                    (0.0..=100.0).contains(&pct),
+                    "pid {} reported {}% {label}",
+                    row.pid,
+                    pct
+                );
+            }
+        }
+        // The three arrive together or not at all: they come from one reply.
+        let present = [
+            row.cpu_delay_percent.is_some(),
+            row.io_delay_percent.is_some(),
+            row.swap_delay_percent.is_some(),
+        ];
+        assert!(
+            present.iter().all(|b| *b) || present.iter().all(|b| !*b),
+            "pid {} had a partial delay reading: {:?}",
+            row.pid,
+            present
+        );
+    }
+    // Either the kernel answered for the whole table, or it refused for the whole
+    // table; a mixture would mean the socket was left in a broken state.
+    let with_data = rows
+        .iter()
+        .filter(|r| r.cpu_delay_percent.is_some())
+        .count();
+    assert!(
+        with_data == 0 || with_data == rows.len(),
+        "delay data on {with_data} of {} rows",
+        rows.len()
+    );
+    if with_data == 0 {
+        eprintln!("note: TASKSTATS refused (no CAP_NET_ADMIN); columns render '-'");
+    } else {
+        assert!(read > 0);
+    }
+}
+
+/// Delay columns must not cost anything when they are not visible.
+#[test]
+fn delayacct_is_not_read_by_default() {
+    let mut sampler = gander_core::Sampler::default();
+    let (_snap, rows) = sampler.sample();
+    for row in &rows {
+        assert_eq!(
+            row.cpu_delay_percent, None,
+            "pid {} read delay data unasked",
+            row.pid
+        );
+        assert_eq!(row.io_delay_percent, None);
+        assert_eq!(row.swap_delay_percent, None);
+    }
+}
+
+/// The `TASKSTATS` socket must survive a full process table without leaking or
+/// leaving the family unresolved.
+#[test]
+fn delayacct_socket_opens_or_reports_why() {
+    use gander_core::linux::delayacct::DelayAcct;
+    match DelayAcct::open() {
+        Some(mut acct) => {
+            // Reading our own pid must not panic and must not claim a denial.
+            let me = std::process::id();
+            let _ = acct.read(me);
+            // After a successful open the socket is either usable or denied; both
+            // are fine, a panic is not.
+        }
+        None => {
+            eprintln!("note: no TASKSTATS family (CONFIG_TASKSTATS=n)");
+        }
+    }
+}

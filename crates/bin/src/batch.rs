@@ -79,7 +79,8 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
         gander_core::ScanOptions::none()
             .with_threads(batch.threads)
             .with_smaps(sort.field.needs_smaps_rollup())
-            .with_gpu(sort.field.needs_gpu_fdinfo()),
+            .with_gpu(sort.field.needs_gpu_fdinfo())
+            .with_delayacct(sort.field.needs_delayacct()),
     );
 
     for iteration in 0..iterations {
@@ -272,18 +273,28 @@ fn memory_json(row: &Row) -> String {
         Some(n) => n.to_string(),
         None => "null".to_string(),
     };
-    let pct = match row.gpu_percent {
+    // Percentages carry two decimals, and `null` rather than `0.00` for unread:
+    // a JSON consumer has the same need to distinguish "not measured" from
+    // "measured as nothing" as the TUI does.
+    let fopt = |v: Option<f32>| match v {
         Some(p) => format!("{p:.2}"),
         None => "null".to_string(),
     };
     format!(
-        "{{\"pss\":{},\"epss\":{},\"private\":{},\"swap\":{},\"gpu_percent\":{},\"gpu_ns\":{}}}",
+        concat!(
+            "{{\"pss\":{},\"epss\":{},\"private\":{},\"swap\":{},\"gpu_percent\":{},",
+            "\"gpu_ns\":{},\"cpu_delay_percent\":{},\"io_delay_percent\":{},",
+            "\"swap_delay_percent\":{}}}"
+        ),
         opt(row.pss),
         opt(row.epss),
         opt(row.private),
         opt(row.swap_bytes),
-        pct,
-        opt(row.gpu_ns)
+        fopt(row.gpu_percent),
+        opt(row.gpu_ns),
+        fopt(row.cpu_delay_percent),
+        fopt(row.io_delay_percent),
+        fopt(row.swap_delay_percent)
     )
 }
 

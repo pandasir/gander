@@ -134,11 +134,14 @@ mod platform {
 
     /// Pack `ScanOptions` into one integer, so a sampler never sees a torn update.
     ///
-    /// Three `AtomicBool`s would let the sampler read a mix of old and new values
-    /// — a sample taken with `smaps` on but `gpu` off, say, costing a VMA walk for
-    /// a column that is no longer displayed. One atomic write cannot tear.
+    /// One `AtomicBool` per flag would let the sampler read a mix of old and new
+    /// values — a sample taken with `smaps` on but `gpu` off, say, costing a VMA
+    /// walk for a column that is no longer displayed. One atomic write cannot tear.
     fn encode_options(opts: gander_core::ScanOptions) -> u64 {
-        (opts.threads as u64) | ((opts.smaps as u64) << 1) | ((opts.gpu as u64) << 2)
+        (opts.threads as u64)
+            | ((opts.smaps as u64) << 1)
+            | ((opts.gpu as u64) << 2)
+            | ((opts.delayacct as u64) << 3)
     }
 
     fn decode_options(bits: u64) -> gander_core::ScanOptions {
@@ -146,6 +149,7 @@ mod platform {
             threads: bits & 1 != 0,
             smaps: bits & 2 != 0,
             gpu: bits & 4 != 0,
+            delayacct: bits & 8 != 0,
         }
     }
 
