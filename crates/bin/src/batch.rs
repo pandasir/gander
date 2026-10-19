@@ -127,7 +127,17 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
 fn is_linux_only_field(name: &str) -> bool {
     matches!(
         name,
-        "M_PSS" | "M_EPSS" | "M_PRIVATE" | "M_SWAP" | "GPU%" | "GPU_TIME" | "CGROUP" | "CONTAINER"
+        "M_PSS"
+            | "M_EPSS"
+            | "M_PRIVATE"
+            | "M_SWAP"
+            | "GPU%"
+            | "GPU_TIME"
+            | "CPUD%"
+            | "IOD%"
+            | "SWPD%"
+            | "CGROUP"
+            | "CONTAINER"
     )
 }
 
@@ -348,7 +358,17 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn linux_only_fields_are_recognised_as_such() {
-        for name in ["M_PSS", "M_EPSS", "M_PRIVATE", "M_SWAP", "GPU%", "GPU_TIME"] {
+        for name in [
+            "M_PSS",
+            "M_EPSS",
+            "M_PRIVATE",
+            "M_SWAP",
+            "GPU%",
+            "GPU_TIME",
+            "CPUD%",
+            "IOD%",
+            "SWPD%",
+        ] {
             assert!(is_linux_only_field(name), "{name} should be Linux-only");
             assert_eq!(
                 Field::from_name(name),
@@ -366,7 +386,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn no_field_is_linux_only_on_linux() {
-        for name in ["M_PSS", "M_EPSS", "M_PRIVATE", "M_SWAP", "GPU%", "GPU_TIME"] {
+        for name in [
+            "M_PSS",
+            "M_EPSS",
+            "M_PRIVATE",
+            "M_SWAP",
+            "GPU%",
+            "GPU_TIME",
+            "CPUD%",
+            "IOD%",
+            "SWPD%",
+        ] {
             assert!(!is_linux_only_field(name));
             assert!(
                 Field::from_name(name).is_some(),
