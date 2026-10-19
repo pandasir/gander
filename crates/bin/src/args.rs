@@ -43,13 +43,14 @@ impl Args {
             i += 1;
 
             let mut take_value = |name: &str| -> Result<String, String> {
+                // `inspect` rather than `map` because the closure is here for the
+                // side effect (consuming the value) and returns its input
+                // unchanged. clippy's manual_inspect lint is right about the
+                // intent, and the borrow of `i` is the same either way.
                 args_vec
                     .get(i)
                     .cloned()
-                    .map(|v| {
-                        i += 1;
-                        v
-                    })
+                    .inspect(|_| i += 1)
                     .ok_or_else(|| format!("option {name} requires a value"))
             };
 
@@ -139,6 +140,9 @@ KEYS (in the TUI):
     a        affinity    i      I/O priority
     e        env         w      command line l      open files
     x        locks       I      meter mode   + -    speed
+
+    Note: htop's I inverts the sort order; here it cycles the meter mode.
+    Use F6 / < > / . to change the sort. See docs/KEYS.md.
 
 CONFIG:
     $GANDER_CONFIG, otherwise $XDG_CONFIG_HOME/gander/config.toml
