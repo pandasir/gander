@@ -239,7 +239,10 @@ impl Sampler {
                 row.container = stable.container.clone();
                 row.container_runtime = stable.container_runtime.clone();
             }
-            row.flags = row.flags.insert(RowFlags::USERLAND_THREAD);
+            row.flags = row
+                .flags
+                .insert(RowFlags::USERLAND_THREAD)
+                .set(RowFlags::STALE_EXE, stable.exe_deleted);
             row.nlwp = 1;
 
             out.push(row);
@@ -313,6 +316,12 @@ impl Sampler {
             row.cmdline = stable.cmdline;
             row.exe = stable.exe;
             row.cgroup = stable.cgroup;
+            // A deleted or replaced executable is highlighted, matching htop's EXE
+            // column behaviour. Threads inherit the process's exe, so they inherit
+            // the flag below too.
+            row.flags = row
+                .flags
+                .set(RowFlags::STALE_EXE, stable.exe_deleted);
             #[cfg(target_os = "linux")]
             {
                 row.container = stable.container;

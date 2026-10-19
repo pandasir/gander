@@ -571,4 +571,159 @@ impl Row {
             _ => self.comm.as_str(),
         }
     }
+
+    /// The executable's base name, and where it sits in [`Self::display_command`].
+    ///
+    /// Returns `(start, end)` byte offsets into `display_command()` so the renderer
+    /// can emphasise those cells without re-deriving the text or allocating.
+    ///
+    /// # Why this is not just "the last path component"
+    ///
+    /// The command line is `argv` joined by spaces, so a naive split on `/` finds
+    /// a path in an *argument* too (`grep /usr/lib/foo`). The base name is taken
+    /// from `exe` when the sampler has it, and located in the command text as a
+    /// prefix match on that path; when `exe` is unavailable (another user's
+    /// process) it falls back to the first word of the command, which is what
+    /// argv[0] is.
+    ///
+    /// Returns `None` when there is nothing worth highlighting — a kernel thread
+    /// in brackets, or a command whose base name is the whole string.
+    pub fn base_name_span(&self) -> Option<(usize, usize)> {
+        self.base_name_span_in(self.display_command())
+    }
+
+    /// [`Self::base_name_span`] against `text` instead of the command column text.
+    ///
+    /// The renderer prepends the tree branch prefix to the command column, so the
+    /// span it needs is offset by that prefix's length. Searching the *finished*
+    /// text is simpler and more robust than adding an offset to the span: the
+    /// prefix can only appear before the command, and the exe path search below
+    /// does not match it.
+    pub fn base_name_span_in(&self, text: &str) -> Option<(usize, usize)> {
+        if text.is_empty() {
+            return None;
+        }
+
+        // Prefer the real exe path: a prefix of the command line, when we have it.
+        if let Some(exe) = self.exe.as_deref() {
+            if !exe.is_empty() {
+                if let Some(pos) = text.find(exe) {
+                    let start = pos + exe.rfind('/').map_or(0, |i| i + 1);
+                    let end = pos + exe.len();
+                    if end > start {
+                        return Some((start, end));
+                    }
+                }
+            }
+        }
+
+        // Fall back to argv[0]: everything up to the first space.
+        let end = text.find(' ').unwrap_or(text.len());
+        let word = &text[..end];
+        // A bracketed name is a kernel thread, and htop does not highlight those.
+        if word.starts_with('[') {
+            return None;
+        }
+        let start = word.rfind('/').map_or(0, |i| i + 1);
+        // Nothing to gain from highlighting the entire string.
+        if start == 0 && end == text.len() {
+            return None;
+        }
+        if end > start {
+            Some((start, end))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod base_name_tests {
+    use super::*;
+
+    fn row_with(cmdline: &str, exe: Option<&str>) -> Row {
+        let mut r = Row::default_for_test(1);
+        r.cmdline = Some(cmdline.into());
+        r.exe = exe.map(Into::into);
+        r
+    }
+
+    #[test]
+    fn finds_the_basename_inside_a_full_path() {
+        let r = row_with(
+            "/Applications/iTerm.app/Contents/MacOS/iTerm2 --server",
+            Some("/Applications/iTerm.app/Contents/MacOS/iTerm2"),
+        );
+        let text = r.display_command();
+        let (s, e) = r.base_name_span().expect("span");
+        assert_eq!(&text[s..e], "iTerm2");
+    }
+
+    /// The exe path is authoritative, so an argument that looks like a path must
+    /// not win. `grep /usr/lib/foo` should highlight `grep`.
+    #[test]
+    fn an_argument_path_does_not_win_over_the_exe() {
+        let r = row_with("grep /usr/lib/foo", Some("/usr/bin/grep"));
+        let text = r.display_command();
+        let (s, e) = r.base_name_span().expect("span");
+        assert_eq!(&text[s..e], "grep");
+    }
+
+    /// Without `exe` (another user's process) fall back to argv[0].
+    #[test]
+    fn falls_back_to_argv0_without_an_exe() {
+        let r = row_with("/usr/bin/python3 script.py", None);
+        let text = r.display_command();
+        let (s, e) = r.base_name_span().expect("span");
+        assert_eq!(&text[s..e], "python3");
+    }
+
+    #[test]
+    fn a_bare_command_name_gets_no_span() {
+        // Nothing to emphasise: the name is the whole string already.
+        let r = row_with("launchd", None);
+        assert_eq!(r.base_name_span(), None);
+    }
+
+    #[test]
+    fn a_kernel_thread_gets_no_span() {
+        let r = row_with("[kworker/0:1]", None);
+        assert_eq!(r.base_name_span(), None);
+    }
+
+    #[test]
+    fn an_empty_command_gets_no_span() {
+        let mut r = Row::default_for_test(1);
+        r.cmdline = None;
+        r.comm.try_push_str("").unwrap();
+        assert_eq!(r.base_name_span(), None);
+    }
+
+    /// The renderer passes the *finished* column text, which in tree mode carries
+    /// a branch prefix. The span has to move with it.
+    #[test]
+    fn the_span_tracks_a_prepended_tree_prefix() {
+        let r = row_with("/usr/bin/nginx -g daemon", Some("/usr/bin/nginx"));
+        let plain = r.display_command();
+        let (s, e) = r.base_name_span().expect("span");
+        assert_eq!(&plain[s..e], "nginx");
+
+        let prefixed = format!("├─ {plain}");
+        let (ps, pe) = r.base_name_span_in(&prefixed).expect("span");
+        assert_eq!(&prefixed[ps..pe], "nginx");
+        assert_eq!(ps, s + "├─ ".len(), "offset by the prefix");
+    }
+
+    /// A base name containing a space would make the argv[0] fallback wrong, but
+    /// the exe path still locates it correctly.
+    #[test]
+    fn an_exe_with_spaces_is_located_by_path_not_by_word() {
+        let r = row_with(
+            "/Users/x/My App.app/Contents/MacOS/My App --flag",
+            Some("/Users/x/My App.app/Contents/MacOS/My App"),
+        );
+        let text = r.display_command();
+        let (s, e) = r.base_name_span().expect("span");
+        assert_eq!(&text[s..e], "My App");
+    }
 }

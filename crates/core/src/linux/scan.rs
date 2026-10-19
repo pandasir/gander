@@ -184,12 +184,21 @@ pub fn read_identity(root: &Path, pid: Pid, starttime: u64, cache: &mut Cache) -
     stable.cmdline = cmdline.map(String::into_boxed_str);
 
     let mut exe = None;
+    let mut exe_deleted = false;
     proc_path(root, pid, "exe", |p| {
-        exe = fs::read_link(std::ffi::OsStr::from_bytes(p))
-            .ok()
-            .map(|t| t.to_string_lossy().into_owned().into_boxed_str());
+        if let Ok(target) = fs::read_link(std::ffi::OsStr::from_bytes(p)) {
+            let text = target.to_string_lossy();
+            // The kernel appends " (deleted)" to the link target once the file
+            // backing a running process is unlinked or replaced. This is the only
+            // available signal: an mtime comparison needs the path to still
+            // exist, which is precisely what deleting it removes.
+            exe_deleted = text.ends_with(" (deleted)");
+            let path = text.strip_suffix(" (deleted)").unwrap_or(&text);
+            exe = Some(path.to_string().into_boxed_str());
+        }
     });
     stable.exe = exe;
+    stable.exe_deleted = exe_deleted;
 
     let mut cgroup = None;
     #[cfg(target_os = "linux")]
