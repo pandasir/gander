@@ -23,3 +23,26 @@ jobs:
       # plain process table is exercised anyway. Install nothing extra.
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
+
+  # The `rust-version` in Cargo.toml is a promise to users, and nothing enforced
+  # it. It had drifted two minor versions behind reality (declared 1.75 while
+  # ratatui 0.30 needs 1.88), so `cargo install` on a machine that satisfied the
+  # stated MSRV failed to build. This job builds against the declared version, so
+  # a dependency bump that raises the floor breaks CI instead of a user's install.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the declared MSRV
+        id: msrv
+        run: |
+          v=$(grep -m1 '^rust-version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "building against $v"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ steps.msrv.outputs.version }}
+      - run: cargo build --workspace
