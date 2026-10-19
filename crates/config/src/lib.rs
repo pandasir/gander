@@ -6,6 +6,7 @@ use gander_core::row::Field;
 use gander_core::table::{Dir, Sort};
 use serde::{Deserialize, Serialize};
 
+pub mod history;
 pub mod htoprc;
 
 /// The user's persisted settings.
