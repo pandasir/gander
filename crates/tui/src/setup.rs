@@ -117,7 +117,7 @@ impl Setup {
             // Left column meters, a separator, the right column meters, then
             // the "add" row.
             SetupPage::Header => self.header_rows().len(),
-            SetupPage::Display => 5,
+            SetupPage::Display => 6,
             SetupPage::Colors => Theme::available().len(),
             SetupPage::About => 0,
         }
@@ -189,6 +189,9 @@ impl Setup {
                         self.draft.show_userland_threads = !self.draft.show_userland_threads;
                     }
                     3 => {
+                        self.draft.show_containerised = !self.draft.show_containerised;
+                    }
+                    4 => {
                         self.draft.highlight_base_name = !self.draft.highlight_base_name;
                     }
                     _ => {
@@ -669,6 +672,17 @@ impl Setup {
             ("Tree view", self.draft.tree_mode),
             ("Show kernel threads", self.draft.show_kernel_threads),
             ("Show userland threads", self.draft.show_userland_threads),
+            // Meaningful only where container detection exists; on macOS this
+            // stays listed so the config is one file across machines, but the
+            // label says so rather than letting the toggle look broken.
+            (
+                if gander_core::capability::CGROUP {
+                    "Show containerised processes"
+                } else {
+                    "Show containerised processes (Linux only)"
+                },
+                self.draft.show_containerised,
+            ),
             (
                 "Highlight program base name",
                 self.draft.highlight_base_name,

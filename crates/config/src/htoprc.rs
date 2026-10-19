@@ -23,6 +23,8 @@ pub fn parse(text: &str) -> Config {
     let mut header_layout: Option<String> = None;
     let mut tree_view = false;
     let mut hide_kernel_threads = false;
+    let mut hide_userland_threads = false;
+    let mut hide_running_in_container = false;
     // `column_meters_N` and `column_meter_modes_N` are parallel lists, one entry
     // per meter, per header column.
     let mut meters: [Vec<String>; 2] = [Vec::new(), Vec::new()];
@@ -67,6 +69,14 @@ pub fn parse(text: &str) -> Config {
         }
         if let Some(rest) = line.strip_prefix("hide_kernel_threads=") {
             hide_kernel_threads = rest.trim() == "1";
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("hide_userland_threads=") {
+            hide_userland_threads = rest.trim() == "1";
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("hide_running_in_container=") {
+            hide_running_in_container = rest.trim() == "1";
             continue;
         }
         if let Some(rest) = line.strip_prefix("color_scheme=") {
@@ -172,6 +182,9 @@ pub fn parse(text: &str) -> Config {
     config.active_tab = 0;
     config.tree_mode = tree_view;
     config.show_kernel_threads = !hide_kernel_threads;
+    config.show_userland_threads = !hide_userland_threads;
+    // htop stores the hide_ form; the config stores the show_ form.
+    config.show_containerised = !hide_running_in_container;
 
     // Header meters, when the file has them. The mode lists are parallel to the
     // name lists and may be shorter; a missing mode stays whatever the default

@@ -27,6 +27,11 @@ pub struct Config {
     pub show_kernel_threads: bool,
     /// Whether to list one row per thread inside each process (`H`).
     pub show_userland_threads: bool,
+    /// Whether to list processes running inside a container (htop's `O`).
+    ///
+    /// On by default; `O` hides them, which is what makes a Docker host's process
+    /// list readable.
+    pub show_containerised: bool,
     /// Screen layout: `panels` (system column, table, inspector) or `htop`
     /// (horizontal meters, full-width table). See `docs/LAYOUT.md`.
     pub layout: String,
@@ -127,6 +132,7 @@ impl Default for Config {
             tree_mode: false,
             show_kernel_threads: true,
             show_userland_threads: false,
+            show_containerised: true,
             // The panels layout is the default because it is the one that is
             // actually different from htop; the htop arrangement is available
             // for anyone who came here wanting htop.
