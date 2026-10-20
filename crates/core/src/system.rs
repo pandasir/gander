@@ -384,8 +384,6 @@ impl MemInfo {
     /// is what made the macOS bar claim 7.8 GB free on a machine with 0.3 GB.
     pub fn finish_freebsd(&mut self) {
         let wired = self.wired.min(self.total);
-        let compressed = 0; // no compressor on FreeBSD
-        let _ = compressed;
         let active = self.active.min(self.total - wired);
         let laundry = self.laundry.min(self.total - wired - active);
         let used = wired + active + laundry;

@@ -73,8 +73,10 @@ Explicitly **not** in M0: meters beyond two, tabs, setup screen, colors.
   for why membership needs the PID namespace and not just the cgroup path
 - Open files (`l`), env (`e`), command line wrapped (`w`), file locks (`x`)
 - strace attach (`s`) — **not implemented**; the key opens a panel that explains why
-  it is a terminal handover rather than a pane, and prints the command to run
-  instead. (It was listed here as done while having no handler at all.)
+  it is a terminal handover rather than a pane, prints the command to run instead,
+  and reports the platform's actual permission obstacle (`ptrace_scope` on Linux,
+  SIP on macOS, `truss` on FreeBSD). It was listed here as done while having no
+  handler at all.
 - Display options: hide kernel threads, hide userland threads, highlight
   base name, highlight stale exe
 
@@ -132,25 +134,35 @@ would erase the case for fixing it properly.
 
 ## 2. Workspace layout
 
+The tree below is the *shape*, not an inventory: a file added tomorrow does not
+make this section wrong, and a file renamed does. Everything that changes often —
+which modules exist, what lives in `table.rs` — is answered by `ls` and `Cargo.toml`.
+An earlier version of this tree listed a `sort.rs` and a `filter.rs` that were never
+created (sorting and filtering live in `table.rs`) and a `criterion` benchmark
+dependency that does not exist, so a reader looking for the sort comparators was
+sent to a file that is not there.
+
 ```
 gander/
-├── Cargo.toml                  # [workspace]
+├── Cargo.toml                  # [workspace] — the authority on members
 ├── crates/
 │   ├── core/                   # NO UI dependency. Hard requirement.
 │   │   ├── src/row.rs          Row, Field, FieldMeta, raw values
 │   │   ├── src/system.rs       SystemSnapshot (cpu/mem/net/disk)
-│   │   ├── src/table.rs        ProcTable: scan, cache, delta compute
-│   │   ├── src/sort.rs         sort comparators (numeric, never formatted)
-│   │   ├── src/filter.rs       filter predicate
+│   │   ├── src/table.rs        ProcTable, cache, delta compute, sort, filter
 │   │   ├── src/tree.rs         tree build + flatten
-│   │   ├── src/action.rs       Action requests (kill/renice/affinity)
+│   │   ├── src/users.rs        uid → name, read once
+│   │   ├── src/action.rs       Action requests (kill/renice/ioprio)
+│   │   ├── src/affinity.rs     CPU masks (`sched_*`, `cpuset_*`, or none)
 │   │   ├── src/format.rs       humanization at render time only
-│   │   └── src/linux/          proc parsing, cgroup, gpu, psi
+│   │   ├── src/linux/          /proc parsing, cgroup, gpu, psi, delayacct, fdinfo
+│   │   ├── src/darwin/         libproc, sysctl, Mach
+│   │   └── src/freebsd/        sysctl, libkvm, devstat
 │   ├── tui/                    ratatui widgets, meters, theme, screens
-│   ├── config/                 TOML model, htoprc importer
-│   └── bin/                    main, arg parsing
-├── tests/fixtures/proc/        real /proc snapshots
-└── benches/                    criterion
+│   ├── config/                 TOML model, htoprc importer, history
+│   └── bin/                    main, arg parsing, batch mode
+├── crates/core/tests/          fixtures + live tests (linux, darwin, freebsd)
+└── crates/core/benches/        scan.rs — hand-timed, no criterion dependency
 ```
 
 **Why `core` must not depend on ratatui:** it makes /proc parsing testable with
@@ -273,8 +285,10 @@ percent = d_cpu as f64 * 100.0 / d_total as f64;    // > 100% on multicore: fine
 - Divide by `nproc` only if the user chooses "normalized CPU%" (htop has this as
   a separate `PERCENT_NORM_CPU` column).
 
-**Memory** — replicate htop's definition, do not invent one. The two platforms
-genuinely disagree, and both backends copy the matching htop platform file:
+**Memory** — replicate htop's definition, do not invent one. The three platforms
+genuinely disagree — each was written against the matching htop platform file, and
+FreeBSD's is gander's own because htop's FreeBSD backend partitions memory
+differently:
 
 ```text
 # Linux, matching htop 3.4.1 linux/LinuxMachine.c (and GNU free)
@@ -284,12 +298,26 @@ available = MemAvailable                       # they are NOT complementary
 # macOS, matching htop 3.4.1 darwin/Platform.c
 used      = (internal - purgeable) + wired + compressed
 available = total - used
+
+# FreeBSD, from the five page queues (see PORTABILITY.md)
+used      = active + wired + laundry
+cache     = inactive + page cache
+available = free + cache
+#   The queues partition physical memory, so the segments can be checked
+#   against `v_page_count` — that check is what makes this formula testable,
+#   and `laundry` counts as used for the same reason macOS's compressor does:
+#   those pages cannot be reused until the write completes.
 ```
 
 `MemFree` alone is the wrong "used" on Linux and everyone gets this wrong once.
 On macOS the compressor is by far the largest term on a machine that has been up
 for a while; leaving it out (htop 3.3's formula) is how the meter came to report
 5 GB where htop reported 13 GB. See [PORTABILITY.md](PORTABILITY.md#memory-accounting-this-was-wrong-twice).
+
+Each formula is also documented at the function that implements it
+(`finish_linux`/`finish_darwin`/`finish_freebsd` in `src/system.rs`), with the
+reasoning for every term. The copy here is for readers deciding *what* the number
+means, not for implementers — the implementation is where a change has to land.
 
 **RSS pages → bytes**: `rss * page_size`.
 
@@ -299,25 +327,18 @@ for a while; leaving it out (htop 3.3's formula) is how the meter came to report
 
 ### 4.1 `Field`
 
-```rust
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-#[non_exhaustive]
-pub enum Field {
-    Pid, Comm, State, Ppid, Pgrp, Session, Tty, Tpgid,
-    MinFlt, MajFlt, Priority, Nice, StartTime, Processor,
-    VirtMem, ResMem, User, PercentCpu, PercentMem, Time,
-    Nlwp, Tgid, PercentNormCpu, Elapsed, SchedPolicy,
-    ProcComm, ProcExe, Cwd,
-    #[cfg(target_os = "linux")]
-    Pss, Swap, Private, Epss, Cgroup, Container,
-    #[cfg(target_os = "linux")]
-    GpuPercent, GpuTime, IoReadRate, IoWriteRate,
-    // ...
-}
-```
+The enum itself is in `crates/core/src/row.rs` and is the authority — it is
+`#[non_exhaustive]` and grows a variant whenever a column ships, which is more
+often than this document is read. What does not belong in the source file is the
+*reason* for its shape, and that is what follows.
 
-Two of those groups cost real time per process, so they are declared alongside the
-question the sampler needs answered:
+Three groups, in the order they were added: the portable columns (`Pid` through
+`Cwd`, including the nine identity columns the post-M3 audit found unreachable),
+the Linux-only memory/GPU/delay block, and nothing else — a column that cannot work
+on a platform is `#[cfg]`-ed out rather than shipped as a row of dashes.
+
+Three of those groups cost real time per process, so each is declared alongside the
+question the sampler needs answered (`row.rs`, `impl Field`):
 
 ```rust
 impl Field {
@@ -325,12 +346,16 @@ impl Field {
     pub const fn needs_smaps_rollup(self) -> bool { /* Pss | Epss | Private | Swap */ }
     /// Does filling this column require `/proc/<pid>/fdinfo`?
     pub const fn needs_gpu_fdinfo(self) -> bool { /* GpuPercent | GpuTime */ }
+    /// Does filling this column require `TASKSTATS` over netlink?
+    pub const fn needs_delayacct(self) -> bool { /* CpuDelay | IoDelay | SwapDelay */ }
 }
 ```
 
 Putting them on `Field` rather than in the renderer is what keeps the cost switch
 from drifting: a new derived column cannot be added without deciding whether it
-needs the expensive read.
+needs the expensive read. The three answers are combined in one place into
+`ScanOptions` — one value, not three setters, because a forgotten setter is either
+a wasted scan or a column of dashes and neither is visible from outside.
 
 Rules:
 

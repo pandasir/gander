@@ -78,14 +78,23 @@ These each open a scrollable panel; `Esc` closes it.
 | `l` | Open file descriptors |
 | `x` | File locks |
 | `Z` | SELinux security context (Linux; explains itself elsewhere) |
-| `s` | Trace — **not implemented**, the panel says what it would need |
-| `b` | Backtrace — **not implemented**, same |
+| `s` | Trace — **not implemented**; the panel gives the command and the actual `ptrace_scope` |
+| `b` | Backtrace — **not implemented**, the panel names the obstacle |
 
-`s` and `b` have no implementation. They are bound on purpose: a key that silently
-does nothing is indistinguishable from a broken program, so both open a screen that
-names the obstacle and the workaround (`strace -p <pid>`, `lldb -p <pid>`) instead.
-`s` in particular used to be documented here and in `DESIGN.md` with **no handler
-at all**, so pressing it produced nothing whatsoever.
+`s` and `b` have no in-app implementation. They are bound on purpose: a key that
+silently does nothing is indistinguishable from a broken program, so both open a
+screen that names the obstacle and the workaround instead. `s` in particular used
+to be documented here and in `DESIGN.md` with **no handler at all**, so pressing it
+produced nothing whatsoever.
+
+`s` does more than explain. Attaching a tracer is a terminal handover — `strace`
+writes a live stream the alternate screen would swallow — so the panel prints the
+command to run (`strace -p <pid>`, `sudo strace -f -p <pid>`) **and the reason the
+attach would fail**: on Linux it reads `/sys/kernel/yama/ptrace_scope` and prints
+the value, because the common `1` forbids tracing anything that is not a child, so
+the attach fails for every pid on the machine. A generic "ptrace permission may be
+needed" is what makes people conclude the tool is broken. macOS names SIP, FreeBSD
+names `truss`.
 
 ## Display
 

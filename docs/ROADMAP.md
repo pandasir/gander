@@ -641,18 +641,41 @@ last milestone's audit (see [Post-M3 fixes](#post-m3-fixes)) found four of those
 | Per-process I/O: `RCHAR` / `WCHAR` / `SYSCR` / `SYSCW` / `RBYTES` / `WBYTES` / `CNCLWB` | not started |
 | Per-process I/O rates: `IO_READ_RATE` / `IO_WRITE_RATE` / `IO_RATE` | not started |
 | `s` attaches a real tracer instead of explaining itself | not started |
-| `DESIGN.md` and `PORTABILITY.md` match the code that exists | not started |
+| `DESIGN.md` and `PORTABILITY.md` match the code that exists | **done in v0.6.x** |
 | Per-release `CHANGELOG.md`, and release notes that say what changed | **done in v0.6.0** |
+| Dead `capability` constants and the `#[allow(dead_code)]` I/O fields | **done in v0.6.x** |
+
+This milestone is **wanted, not required**. Nothing in `README.md` or `KEYS.md`
+names an I/O column, so its absence breaks no promise; `s` currently opens a panel
+that explains the obstacle and prints the command to run instead. It is listed here
+because htop has the columns and this project's stated goal is feature parity for
+daily use — not because the tool is incomplete without it. The two items already
+done were the ones that were actively misleading.
 
 ### Per-process I/O, and why it is not just three more columns
 
-`capability::PROC_IO` has been declared since M0 and **read by nothing**. The
-Darwin sampler still carries `disk_read` / `disk_written` in `PrevRow` behind
-`#[allow(dead_code)]`, with the comment "kept for the IO columns (milestone M1)" —
-a promise from three milestones ago, kept alive by an attribute that suppresses the
-warning that would have noticed it. `docs/PORTABILITY.md` is honest about the
-state ("*not yet*", "*parsed, not shown*"), which is the only reason this has not
-looked like a bug.
+**The dangling promise is already cleaned up.** This section used to open by
+pointing at `capability::PROC_IO` (declared since M0, read by nothing) and at
+`disk_read`/`disk_written` in Darwin's `PrevRow` sitting behind
+`#[allow(dead_code)]` with the comment "kept for the IO columns (milestone M1)" —
+a promise from three milestones ago, kept alive by an attribute that suppressed the
+warning that would have noticed it.
+
+Both are now gone. The two fields were removed **along with the
+`proc_pid_rusage` call that filled them**, which was one syscall per process per
+tick on the development platform with its result dropped on the floor. The
+`PROC_IO` constant went with them, as did four other `capability` constants that
+nothing consulted (`IOPRIO`, `SMAPS`, `PSI`, `DELAYACCT`, `THREADS`, `LIVE`): a
+capability nothing asks about is not a capability, and `PROC_IO == true` actively
+lied, since no I/O column existed to be gated by it. The module doc now carries the
+rule — *a constant here must be read by something*.
+
+`darwin::scan::rusage()` is deliberately kept and still tested, because it is
+verified against a live kernel and a future `IO_READ_RATE` column would otherwise
+be rewritten from a man page by someone who cannot run macOS. Its doc comment says
+it is unwired.
+
+What remains below is the design work for when the columns are wanted.
 
 | | Linux | macOS | FreeBSD |
 |---|---|---|---|
@@ -813,17 +836,22 @@ changed, at the moment they know it, and reviewers already read it through
       measured interval, `None` on the first sample and after a failed read
 - [ ] The I/O family absent rather than dashed on FreeBSD, and PORTABILITY.md says
       why (`ru_inblock` counts I/O operations)
-- [ ] `capability::PROC_IO` read by something, or deleted; the `#[allow(dead_code)]`
-      fields in `darwin::system::PrevRow` either used or gone
+- [x] `capability::PROC_IO` deleted, along with five other unreferenced
+      `capability` constants; the `#[allow(dead_code)]` fields in
+      `darwin::system::PrevRow` removed together with the `proc_pid_rusage` call
+      that fed them (v0.6.x cleanup)
 - [ ] `ScanOptions` carries `proc_io`, derived from the visible columns, exercised
       by a fixture test that asserts an I/O column does *not* open
       `/proc/<pid>/io` when it is off screen
 - [ ] `--json` emits the I/O figures on every platform that reads them
 - [ ] `s` runs a tracer in a pane, kills it on `Esc`, and prints the actual
       `ptrace_scope` value; `truss` on FreeBSD, `dtruss`-with-SIP on macOS
-- [ ] `DESIGN.md`'s tree and §4.1 enum example match the repository; §3's memory
-      snippet covers all three models; README says three platforms in both
-      languages; the M0 checklist says three backends
+- [x] `DESIGN.md`'s tree no longer lists files that do not exist (`sort.rs`,
+      `filter.rs`, `criterion`) and now shows all three backends; §4.1 points at
+      `row.rs` as the authority instead of restating a drifted enum, and lists all
+      three `needs_*` gates rather than two; §3 covers the FreeBSD memory model.
+      README says three platforms in both languages; the M0 checklist says three
+      backends. (v0.6.x)
 - [ ] `CHANGELOG.md` regenerated at release time (the mechanism exists; the item is
       the habit, not the script)
 - [ ] Tests on all three platforms, zero clippy warnings, and the Linux container

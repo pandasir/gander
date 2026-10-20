@@ -401,6 +401,18 @@ pub fn cwd_path(pid: u32) -> Option<String> {
 }
 
 /// Disk I/O counters from `proc_pid_rusage`.
+///
+/// **Not wired into the sampler.** No column displays these yet; the call site that
+/// used to read them existed only to fill two `#[allow(dead_code)]` fields and was
+/// removed. What is kept is the mechanism, because it is verified against a live
+/// kernel and a future `IO_READ_RATE` column would otherwise be rewritten from the
+/// man page by someone who cannot run macOS. `crates/core/tests/` exercises it
+/// through `rusage_is_readable_for_self`.
+///
+/// `ri_diskio_bytesread`/`written` are bytes actually hitting the block layer, not
+/// bytes returned by `read(2)` — a page-cache hit increments neither. That is the
+/// distinction htop's `RBYTES` makes on Linux and the one a column would have to
+/// state in its description. See `docs/ROADMAP.md` § M5.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Rusage {
     pub disk_read: u64,
@@ -930,9 +942,24 @@ mod tests {
 
     #[test]
     fn rusage_is_readable_for_self() {
+        // The only caller of `rusage` is this test, by design: the figures have no
+        // column yet. Asserting it *reads* is the whole point — it proves the
+        // `RUSAGE_INFO_V2` struct layout and the flavour constant still match the
+        // running kernel, which is exactly what an OS update breaks.
+        //
+        // Deliberately not asserted: that the counters are non-zero. A test binary
+        // served from the page cache has done no block I/O at all, so
+        // `disk_read == disk_written == 0` is the *correct* answer here — an
+        // earlier version of this test asserted otherwise and failed, which is the
+        // same "asserting the machine instead of the contract" mistake that broke
+        // CI on v0.6.0. The contract is "the syscall succeeds and the struct is
+        // readable", and that is what is checked.
         let me = std::process::id();
-        let io = rusage(me);
-        assert!(io.is_some(), "own rusage is readable");
+        let io = rusage(me).expect("own rusage is readable");
+        // Values are cumulative and only ever grow; negative is impossible in the
+        // type, so the only meaningful check left is that nothing panicked while
+        // reading them, which reaching this line proves.
+        println!("rusage: read={} written={}", io.disk_read, io.disk_written);
     }
 
     #[test]

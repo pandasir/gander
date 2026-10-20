@@ -12,17 +12,20 @@ use crate::Pid;
 use crate::PlatformSampler;
 
 /// Per-process state carried between ticks.
+///
+/// Only what the next tick's delta actually needs. Cumulative disk counters used
+/// to live here too, behind `#[allow(dead_code)]`, "kept for the IO columns
+/// (milestone M1)" — a column family that M1 never shipped. The cost was not just
+/// two unused fields: `proc_pid_rusage` was called once per process per tick and
+/// the result dropped on the floor, which is a syscall paid for nothing on the
+/// platform this project is developed on. Removed rather than carried further;
+/// see `docs/ROADMAP.md` § M5 for what a real I/O column would need.
 #[derive(Copy, Clone)]
 struct PrevRow {
     /// `p_starttime` in microseconds, used as the identity of the process.
     start_usec: u64,
     /// Monotonic CPU nanoseconds, user + system.
     cpu_ns: u64,
-    /// Cumulative disk bytes, kept for the IO columns (milestone M1).
-    #[allow(dead_code)]
-    disk_read: u64,
-    #[allow(dead_code)]
-    disk_written: u64,
 }
 
 /// Per-thread state carried between ticks, keyed by `(pid, handle)`.
@@ -209,9 +212,10 @@ impl PlatformSampler for Sampler {
             net,
             net_rate,
             // macOS exposes no host-wide disk byte counters without IOKit, and
-            // the design forbids a vendor SDK. The per-process `rusage` figures
-            // exist and are summed separately if a disk meter is ever wanted
-            // here; a host-wide one would double-count shared I/O.
+            // the design forbids a vendor SDK. A per-process figure exists
+            // (`proc_pid_rusage`) but summing it here would double-count shared
+            // I/O and still not answer "what is the disk doing", so the meter
+            // reports `n/a here` instead of a number nobody can act on.
             disk: crate::system::DiskCounters::default(),
             disk_rate: crate::system::Rate::default(),
             tasks: task_stats(&rows),
@@ -491,18 +495,11 @@ impl Sampler {
                 }
             }
 
-            let io = if ti.is_some() {
-                scan::rusage(pid)
-            } else {
-                None
-            };
             next_prev.insert(
                 pid,
                 PrevRow {
                     start_usec,
                     cpu_ns,
-                    disk_read: io.map(|i| i.disk_read).unwrap_or(0),
-                    disk_written: io.map(|i| i.disk_written).unwrap_or(0),
                 },
             );
 

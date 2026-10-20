@@ -24,7 +24,7 @@ design.
 | tty / tpgid | fields 5 and 8 of `stat` | `e_tdev` / `e_tpgid` from `proc_bsdinfo` | `ki_tdev` / `ki_tpgid` |
 | threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` | `sysctl(KERN_PROC_PID\|KERN_PROC_INC_THREAD)` |
 | priority | field 18 of `stat` | `pbi_nice` | `ki_pri.pri_level` |
-| per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* | `ki_rusage` *(not shown)* |
+| per-process disk I/O | `/proc/<pid>/io` — *read by nothing; no column exists* | `proc_pid_rusage` — *readable, not shown* | `ki_rusage` — counts I/O operations, not bytes |
 | host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` | `sysctl(NET_RT_IFLIST)` → `if_data` |
 | host disk throughput | `/proc/diskstats` + `/sys/block` | none without IOKit | `devstat_getdevs(3)` |
 | cgroup path | `/proc/<pid>/cgroup` | no cgroup concept | no cgroup concept |
@@ -444,7 +444,7 @@ The same rule: a *column* that can only render `-` is `#[cfg]`-gated out, while 
 | Delay accounting | `TASKSTATS` is a Linux generic-netlink family with no FreeBSD equivalent. Gated out. |
 | `i` I/O priority | No `ioprio_set`. FreeBSD has `idprio`/`rtprio` for realtime scheduling, which is a different question. The panel says so instead of pretending. |
 | `DiskIO` meter (host-wide) | **Supported**, via `devstat_getdevs(3)`. This is the one platform where the per-process and host-wide figures both exist; only the host-wide one is shown, for the same double-counting reason as macOS. |
-| Per-process disk I/O columns | `ki_rusage` carries block counts rather than bytes, and there is no column that would display them yet. `capability::PROC_IO` is `false` here so nothing promises otherwise. |
+| Per-process disk I/O columns | `ki_rusage.ru_inblock`/`ru_oublock` are I/O **operation counts**, per `getrusage(2)`: "the number of times the file system had to perform input". Not bytes and not blocks. There is no column for them, and none is planned here — see `docs/ROADMAP.md` § M5 for why the family would have to be absent rather than dashed. |
 | `a` affinity panel | **Supported**, via `cpuset_getaffinity`/`cpuset_setaffinity`. |
 | `e` environment panel | **Supported.** `sysctl(KERN_PROC_ENV)` is the same NUL-separated payload as `/proc/<pid>/environ`. |
 | `l` open files panel | **Supported**, via `sysctl(KERN_PROC_FILEDESC)` — see the truncation trap below. |

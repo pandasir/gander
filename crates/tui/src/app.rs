@@ -1484,22 +1484,29 @@ impl App {
         };
         let pid = row.pid;
 
+        let mut lines = vec![
+            "Attaching a tracer from inside the UI is not implemented yet.".to_string(),
+            String::new(),
+            "It is a terminal handover, not a panel: strace writes a live stream".to_string(),
+            "that would be swallowed by the alternate screen, so the TUI has to".to_string(),
+            "release the terminal, run the tracer, and take it back on exit.".to_string(),
+            String::new(),
+            "Run it alongside gander instead:".to_string(),
+            format!("  strace -p {pid}"),
+            format!("  sudo strace -f -p {pid}"),
+            String::new(),
+        ];
+
+        // The generic warning is not the useful part. On most distributions
+        // `yama/ptrace_scope` is 1, which forbids attaching to anything that is not
+        // a child — so `strace -p` fails for *every* process on the machine, for a
+        // reason the user cannot see, and the obvious conclusion is that gander (or
+        // strace) is broken. Printing the number turns a mystery into a setting.
+        lines.extend(ptrace_scope_note());
+
         self.screen = Screen::Info {
             title: format!("Trace of {pid}"),
-            lines: vec![
-                "Attaching a tracer from inside the UI is not implemented yet.".to_string(),
-                String::new(),
-                "It is a terminal handover, not a panel: strace writes a live stream".to_string(),
-                "that would be swallowed by the alternate screen, so the TUI has to".to_string(),
-                "release the terminal, run the tracer, and take it back on exit.".to_string(),
-                String::new(),
-                "Run it alongside gander instead:".to_string(),
-                format!("  strace -p {pid}"),
-                format!("  sudo strace -f -p {pid}"),
-                String::new(),
-                "Tracing needs ptrace permission: the same owner or CAP_SYS_PTRACE,".to_string(),
-                "and yama's ptrace_scope may forbid attaching to a non-child.".to_string(),
-            ],
+            lines,
             scroll: 0,
         };
         Reaction::Continue
@@ -2895,6 +2902,78 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// `sched_policy` decoded to the name `ps -o policy` prints.
+/// What `s` should say about ptrace permission, on this platform.
+///
+/// Linux keeps the answer in `/proc/sys/kernel/yama/ptrace_scope`, and the value
+/// matters enough to be worth reading rather than describing in the abstract:
+///
+/// * `0` — unrestricted; `strace -p` works on any process of yours.
+/// * `1` — the default on most distributions: only children may be traced, so
+///   attaching to an existing process fails with `EPERM` for every pid on the
+///   machine, including your own.
+/// * `2` — admin-only.
+/// * `3` — no tracing at all.
+///
+/// The file is absent on kernels built without `CONFIG_SECURITY_YAMA`, which is a
+/// different answer from any of the numbers and is said in words.
+///
+/// macOS and FreeBSD get a one-line note instead: macOS needs SIP disabled (a
+/// reboot, not a setting) and FreeBSD's `truss` needs the same privileges as
+/// `strace` without the yama layer on top.
+fn ptrace_scope_note() -> Vec<String> {
+    let mut out = vec![
+        "Tracing needs ptrace permission: the process must be yours, or you need".to_string(),
+        "CAP_SYS_PTRACE (root).".to_string(),
+    ];
+
+    #[cfg(target_os = "linux")]
+    {
+        out.push(String::new());
+        match std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope") {
+            Ok(text) => {
+                let value = text.trim();
+                out.push(format!("yama/ptrace_scope = {value}"));
+                match value {
+                    "0" => out.push("  Unrestricted: attaching to your own processes works.".into()),
+                    "1" => {
+                        out.push("  Restricted: only *child* processes may be traced, so".into());
+                        out.push("  attaching to an existing pid fails with EPERM even when".into());
+                        out.push("  it is your own. Either run the program under strace".into());
+                        out.push("    strace -f <command>".into());
+                        out.push("  or raise the limit for this boot:".into());
+                        out.push("    sudo sysctl -w kernel.yama.ptrace_scope=0".into());
+                    }
+                    "2" => out.push("  Admin-only: needs CAP_SYS_PTRACE for any attach.".into()),
+                    "3" => out.push("  Tracing is disabled entirely on this kernel.".into()),
+                    other => out.push(format!("  (unrecognised value {other})")),
+                }
+            }
+            Err(_) => {
+                out.push(
+                    "yama/ptrace_scope is absent, so the kernel has no yama restriction".into(),
+                );
+                out.push("  and only the usual ownership/CAP_SYS_PTRACE rules apply.".into());
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        out.push(String::new());
+        out.push("On macOS, `dtruss` needs SIP disabled (csrutil disable, then reboot).".into());
+        out.push("That is a system-wide security setting, not something gander can ask for.".into());
+    }
+
+    #[cfg(target_os = "freebsd")]
+    {
+        out.push(String::new());
+        out.push("truss(1) is in the base system; it needs the same privileges as strace".into());
+        out.push("and has no additional restriction layer to configure.".into());
+    }
+
+    out
+}
+
 ///
 /// The numbers are the kernel's `SCHED_*` constants and are the same on both
 /// platforms in the range that matters; the fallback prints the raw value rather
@@ -5457,6 +5536,49 @@ mod no_silent_key_tests {
                 other => panic!("{key:?} opened {other:?}, expected an info screen"),
             }
         }
+    }
+
+    /// `s` must name the obstacle *and* the fix. "Not implemented yet" alone
+    /// teaches a reader nothing, and a generic "ptrace permission may be needed"
+    /// is the reason people conclude the tool is broken: on the common
+    /// `ptrace_scope=1` the attach fails for every pid on the machine.
+    #[test]
+    fn the_trace_panel_names_the_obstacle_and_the_command() {
+        let mut app = app_with_n_rows(1);
+        app.handle_key(Key::Char('s'));
+        let Screen::Info { lines, .. } = &app.screen else {
+            panic!("s did not open a screen");
+        };
+        let text = lines.join("\n");
+
+        // The obstacle: why this is not a pane.
+        assert!(
+            text.contains("terminal handover") && text.contains("alternate screen"),
+            "the panel must explain why tracing cannot be a pane: {text}"
+        );
+        // The workaround, with the selected pid substituted.
+        assert!(text.contains("strace -p"), "the command must be printed: {text}");
+
+        // The permission section must be specific on every platform, not just
+        // present: either the actual scope value or the platform's own reason.
+        #[cfg(target_os = "linux")]
+        assert!(
+            text.contains("ptrace_scope"),
+            "Linux must report the yama scope, read from the kernel: {text}"
+        );
+        #[cfg(target_os = "macos")]
+        assert!(text.contains("SIP"), "macOS must name SIP: {text}");
+        #[cfg(target_os = "freebsd")]
+        assert!(text.contains("truss"), "FreeBSD must name truss: {text}");
+    }
+
+    /// The note is generated, so it must never come back empty — an empty vector
+    /// would leave the panel with no permission section at all.
+    #[test]
+    fn the_ptrace_note_always_says_something() {
+        let note = ptrace_scope_note().join("\n");
+        assert!(note.contains("ptrace"), "got: {note}");
+        assert!(note.len() > 40, "too short to be useful: {note}");
     }
 }
 

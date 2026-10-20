@@ -163,6 +163,18 @@ pub use freebsd::FreeBsdPlatform as CurrentPlatform;
 ///
 /// Front ends use this to hide panes and columns that cannot work here, rather
 /// than discovering it at runtime. See `docs/PORTABILITY.md`.
+///
+/// **A constant here must be read by something.** This module had ten and four of
+/// them were referenced by nothing but their own doc comments — among them
+/// `PROC_IO`, which claimed per-process I/O counters were available while no such
+/// column existed. A capability nothing consults is worse than no capability: it
+/// reads like an implemented feature and answers a question nobody asked. They
+/// were removed rather than kept "for later"; adding one back is two lines, and
+/// the second line is the call site.
+///
+/// Where the answer is needed by only one module, ask that module instead of
+/// growing this list — `affinity::supported()` returns whether a mask can actually
+/// be read and written, which is a stricter question than "does the panel open".
 pub mod capability {
     /// The `a` affinity panel has something to say on this platform.
     ///
@@ -177,33 +189,12 @@ pub mod capability {
         target_os = "freebsd"
     ));
 
-    /// I/O priority can be adjusted (`ioprio_set`).
-    pub const IOPRIO: bool = cfg!(target_os = "linux");
-
-    /// Per-process shared/private memory is available (`smaps_rollup`).
-    pub const SMAPS: bool = cfg!(target_os = "linux");
-
     /// cgroup membership is readable (`/proc/<pid>/cgroup`).
+    ///
+    /// Gates the `CGROUP`/`CONTAINER` columns in the setup screen and the `O`
+    /// key, so a platform without cgroups offers neither rather than showing a
+    /// column of dashes.
     pub const CGROUP: bool = cfg!(target_os = "linux");
-
-    /// Pressure stall information is readable (`/proc/pressure`).
-    pub const PSI: bool = cfg!(target_os = "linux");
-
-    /// Per-task delay accounting is available over `TASKSTATS` netlink.
-    ///
-    /// `true` only says the *mechanism* exists on this platform. Whether it
-    /// actually answers depends on `CONFIG_TASKSTATS` at build time and
-    /// `CAP_NET_ADMIN` at run time; both are discovered at the first read, and
-    /// both make the columns render `-` rather than fail.
-    pub const DELAYACCT: bool = cfg!(target_os = "linux");
-
-    /// Per-process disk I/O counters are available.
-    ///
-    /// Linux reads `/proc/<pid>/io`, macOS `proc_pid_rusage`. FreeBSD exposes
-    /// `kinfo_proc.ki_rusage`, but the figures are cumulative block counts rather
-    /// than bytes and the columns that would show them are not implemented, so it
-    /// is `false` there rather than a promise the column list cannot keep.
-    pub const PROC_IO: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
     /// Host-wide disk byte counters are available (`/proc/diskstats`,
     /// `devstat_getdevs`).
@@ -213,14 +204,4 @@ pub mod capability {
     /// SDK. The `DiskIO` meter says so there instead of drawing a permanent zero.
     pub const HOST_DISK_IO: bool =
         cfg!(any(target_os = "linux", target_os = "freebsd"));
-
-    /// Threads can be enumerated as rows.
-    pub const THREADS: bool = cfg!(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "freebsd"
-    ));
-
-    /// Sampling is backed by a live OS source (not just fixtures).
-    pub const LIVE: bool = crate::PLATFORM_SUPPORTED;
 }
