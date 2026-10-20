@@ -11,6 +11,54 @@ The per-release notes below say what shipped; ROADMAP says why.
 
 ---
 
+## v0.6.1 — 2026-10-20
+
+**cleanup — dead code deleted, docs corrected**
+
+No new features. Three things that were lying about the code, and one small fix.
+
+Dead code
+
+  `capability` had ten constants and four were read by nothing but their own doc
+  comments. `PROC_IO` was the worst: `true` on Linux and macOS, claiming
+  per-process I/O counters were available, while no column existed to be gated by
+  it. Removed along with `IOPRIO`, `SMAPS`, `PSI`, `DELAYACCT`, `THREADS`, `LIVE`.
+
+  Darwin's `PrevRow` carried `disk_read`/`disk_written` behind
+  `#[allow(dead_code)]` since M1, and the `proc_pid_rusage` call that filled them
+  ran once per process per tick with the result thrown away. The attribute silenced
+  the compiler, not the syscall. Both gone; `scan::rusage()` stays, tested and
+  documented as unwired, for whoever builds the I/O columns.
+
+Docs
+
+  `DESIGN.md` §2 listed `sort.rs`, `filter.rs` and a `criterion` dependency that do
+  not exist, and omitted the `darwin/` and `freebsd/` backends. §4.1 restated the
+  `Field` enum from memory, including two variants deleted a milestone ago. §3 said
+  "the two platforms" about memory accounting when there are three.
+
+  These are now pointers to the source of truth plus the reasoning that is not in
+  the code. A doc that restates code is a doc that will be wrong within a milestone.
+
+`s` reports the actual `ptrace_scope`
+
+  It said tracing "may" be forbidden. With the common `ptrace_scope = 1` the attach
+  fails with EPERM for every pid on the machine including your own, which is not
+  something "may" lets you debug. The panel now reads the file, prints the value,
+  says what it means and how to change it. macOS names SIP, FreeBSD names truss.
+
+Three test bugs, all the same mistake
+
+  Asserting the machine instead of the contract: `devname(...) == "ttys000"` (broken
+  CI for two pushes), and `rusage → non-zero` (a page-cached test binary has done no
+  block I/O, so zero is correct). Both now check that the call succeeds and the data
+  is readable, which holds on any host.
+
+376 tests, zero clippy warnings, the Linux path re-run in a rust:1.89-slim
+container, all five CI jobs green including the FreeBSD VM.
+
+<sub>[compare v0.6.0...v0.6.1](https://github.com/pandasir/gander/compare/v0.6.0...v0.6.1)</sub>
+
 ## v0.6.0 — 2026-10-20
 
 **M4 complete — FreeBSD, the third backend**
