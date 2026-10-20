@@ -115,7 +115,13 @@ jobs:
             ${{ steps.bundle.outputs.digest }}
 
   release:
-    needs: build
+    # `build` alone was the dependency until v0.6.0, which meant the FreeBSD job
+    # below built its artifact, uploaded it, and then had it silently dropped:
+    # `download-artifact` only sees artifacts from *upstream* jobs, and `freebsd`
+    # is a sibling. Every release before v0.6.0 was therefore missing the one
+    # platform that milestone added, with nothing red anywhere — the job
+    # succeeded, the release succeeded, and the file was simply not attached.
+    needs: [build, freebsd]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
