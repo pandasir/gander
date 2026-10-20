@@ -1,37 +1,145 @@
 # Portability
 
-How the two backends differ, what is verified where, and what is honestly
+How the three backends differ, what is verified where, and what is honestly
 missing. Read [DESIGN.md § 5](DESIGN.md#5-platform-abstraction) for the trait
 design.
 
 ## Status matrix
 
-| | Linux | macOS |
-|---|---|---|
-| Process list | `/proc` scan | `proc_listallpids` + `PROC_PIDTASKALLINFO` |
-| CPU% | tick deltas from `/proc/<pid>/stat` | nanosecond deltas ÷ wall-clock interval |
-| Per-core CPU | `/proc/stat` | `host_processor_info` |
-| Memory | `/proc/meminfo` | `host_statistics64` + `hw.memsize` |
-| Swap | `/proc/meminfo` | `sysctl(vm.swapusage)` → `struct xsw_usage` |
-| Load average | `/proc/loadavg` | `getloadavg(3)` |
-| Boot time | `/proc/uptime` | `sysctl(kern.boottime)` |
-| Start time | field 22 of `stat` (ticks) | `pbi_start_tvsec/tvusec` |
-| cmdline | `/proc/<pid>/cmdline` | `sysctl(KERN_PROCARGS2)` |
-| exe | `readlink /proc/<pid>/exe` | `proc_pidpath` |
-| cwd | `readlink /proc/<pid>/cwd` | `proc_pidinfo(PROC_PIDVNODEPATHINFO)` |
-| uid | `/proc/<pid>/status` | `proc_bsdinfo.pbi_uid` |
-| session | field 4 of `stat` | `getsid(2)` |
-| tty / tpgid | fields 5 and 8 of `stat` | `e_tdev` / `e_tpgid` from `proc_bsdinfo` |
-| threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` |
-| per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* |
-| host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` |
-| host disk throughput | `/proc/diskstats` + `/sys/block` | none without IOKit |
-| cgroup path | `/proc/<pid>/cgroup` | no cgroup concept |
-| container detection | cgroup path + PID namespace | no containers |
-| Test coverage | fixtures + live | live only (no fixture format to replay) |
+| | Linux | macOS | FreeBSD |
+|---|---|---|---|
+| Process list | `/proc` scan | `proc_listallpids` + `PROC_PIDTASKALLINFO` | `sysctl(KERN_PROC_PROC)` → `kinfo_proc[]` |
+| CPU% | tick deltas from `/proc/<pid>/stat` | nanosecond deltas ÷ wall-clock interval | `ki_runtime` microsecond deltas ÷ wall-clock interval |
+| Per-core CPU | `/proc/stat` | `host_processor_info` | `kern.cp_times` |
+| Memory | `/proc/meminfo` | `host_statistics64` + `hw.memsize` | `vm.stats.vm.v_*` |
+| Swap | `/proc/meminfo` | `sysctl(vm.swapusage)` → `struct xsw_usage` | `kvm_getswapinfo(3)` |
+| Load average | `/proc/loadavg` | `getloadavg(3)` | `getloadavg(3)` |
+| Boot time | `/proc/uptime` | `sysctl(kern.boottime)` | `sysctl(kern.boottime)` |
+| Start time | field 22 of `stat` (ticks) | `pbi_start_tvsec/tvusec` | `ki_start` (a `timeval`) |
+| cmdline | `/proc/<pid>/cmdline` | `sysctl(KERN_PROCARGS2)` | `sysctl(KERN_PROC_ARGS)` |
+| exe | `readlink /proc/<pid>/exe` | `proc_pidpath` | `sysctl(KERN_PROC_PATHNAME)` |
+| cwd | `readlink /proc/<pid>/cwd` | `proc_pidinfo(PROC_PIDVNODEPATHINFO)` | `sysctl(KERN_PROC_CWD)` → `struct kinfo_file` |
+| uid | `/proc/<pid>/status` | `proc_bsdinfo.pbi_uid` | `kinfo_proc.ki_uid` |
+| session | field 4 of `stat` | `getsid(2)` | `kinfo_proc.ki_sid` |
+| tty / tpgid | fields 5 and 8 of `stat` | `e_tdev` / `e_tpgid` from `proc_bsdinfo` | `ki_tdev` / `ki_tpgid` |
+| threads | `/proc/<pid>/task` | `PROC_PIDLISTTHREADS` + `PROC_PIDTHREADINFO` | `sysctl(KERN_PROC_PID\|KERN_PROC_INC_THREAD)` |
+| priority | field 18 of `stat` | `pbi_nice` | `ki_pri.pri_level` |
+| per-process disk I/O | `/proc/<pid>/io` *(not yet)* | `proc_pid_rusage` *(parsed, not shown)* | `ki_rusage` *(not shown)* |
+| host network throughput | `/proc/net/dev` | `sysctl(NET_RT_IFLIST2)` → `if_data64` | `sysctl(NET_RT_IFLIST)` → `if_data` |
+| host disk throughput | `/proc/diskstats` + `/sys/block` | none without IOKit | `devstat_getdevs(3)` |
+| cgroup path | `/proc/<pid>/cgroup` | no cgroup concept | no cgroup concept |
+| container detection | cgroup path + PID namespace | no containers | no containers (jails: `ki_jid`, not shown) |
+| CPU affinity | `sched_getaffinity` | none (scheduler hint only) | `cpuset_getaffinity` |
+| Test coverage | fixtures + live | live only | live only (verified in a VM) |
 
-Both backends implement `PlatformSampler`, and `gander_core::Sampler` resolves to
-the right one at compile time.
+All three implement `PlatformSampler`, and `gander_core::Sampler` resolves to the
+right one at compile time.
+
+## FreeBSD-specific traps (all hit and fixed during development)
+
+The FreeBSD backend was built and verified on FreeBSD 14.5-RELEASE/arm64 in QEMU,
+with the test suite run inside the guest. These are the things that were wrong
+first:
+
+1. **`kern.proc` with a four-element MIB fails with `ENOTDIR`.** The documented
+   spelling is `sysctl(CTL_KERN, KERN_PROC, KERN_PROC_ALL)` — **three** elements.
+   A fourth (the `arg`) is only valid for the selectors that take one. Passing it
+   anyway produces `ENOTDIR`, which reads like "not a directory" and has nothing
+   to do with directories; the size query succeeds with three elements and
+   returns 105 KB of records, so the two calls disagree in shape as well as in
+   error. Both `KERN_PROC_ALL` and `KERN_PROC_PROC` have this property.
+2. **`KERN_PROC_ALL` really is "everything".** It returns per-thread rows *and*
+   zombies' thread-group duplicates, and the first record is pid 0 (the kernel's
+   thread container) rather than a process. `KERN_PROC_PROC` is the process table:
+   one row per process, no pid 0. htop uses `KERN_PROC_PROC` too
+   (`freebsd/FreeBSDProcessList.c`).
+3. **`KERN_PROC_INC_THREAD` cannot be combined with a bulk selector.** ORing it
+   into `KERN_PROC_PROC` fails with `ENOENT`; it only works with a specific pid.
+   So threads are one `sysctl` per process, not one extra field on the bulk scan —
+   which is exactly why they stay behind `ScanOptions::threads`.
+4. **`ki_runtime` is microseconds, not ticks.** Every other CPU-time field on the
+   other two platforms is a tick counter with a `HZ` divisor, and `kern.cp_time`
+   *is* ticks (100 Hz), so dividing one by the other gives a percentage off by
+   four orders of magnitude. `ki_runtime` is also what `ps`'s `TIME` column uses,
+   so there is no ambiguity about its units once it is checked against `ps`.
+5. **`ki_rssize` is pages; `ki_size` is bytes.** The two look like a pair and are
+   not. Forgetting the page size on `ki_rssize` reports a 1.2 GB process as 300 MB
+   — plausible enough that only a comparison against `ps -o rss=` catches it.
+   `ki_size` needs no scaling, which is the inconsistency.
+6. **`ki_stat` is not a state letter and is not even a function of the state.**
+   `SIDL` (1) means "being created by `fork`" and `ps` prints `R` for it, not `I`.
+   `SSLEEP` (3) splits three ways on `ki_tdflags & TDF_SINTR` and
+   `ki_slptime >= MAXSLP`: uninterruptible sleep is `D`, an interruptible sleep
+   older than 20 s is `I`, and everything else is `S`. `SLOCK` (7) is `L`.
+   Mapping arithmetically (`b'I' + stat - 1`) produced `I` for a brand-new
+   process and `X` for a locked one.
+7. **`KERN_PROC_CWD` returns a `struct kinfo_file`, not a path.** The mnemonic says
+   "cwd" but the payload is the file-descriptor record for the directory, with the
+   path at `kf_path`. Reading the buffer as a C string yields a single NUL byte for every
+   process — which looks exactly like "the kernel will not tell us", and is why
+   the first version of `cwd_path` silently returned `None` for every row.
+8. **`KERN_PROC_PATHNAME` and `KERN_PROC_CWD` need a buffer that is large enough
+   for their fixed-size structs.** Their size query returns `ENOMEM` rather than a
+   length, so the caller has to know the size in advance: `PATH_MAX` for the
+   former, `sizeof(struct kinfo_file)` (1392 bytes on this build) for the latter.
+   A `PATH_MAX`-sized buffer for CWD fails with `ENOMEM`.
+9. **`kvm_getswapinfo` reports pages, not bytes and not kilobytes.** `swapinfo(8)`
+   multiplies by `pagesize`. htop's FreeBSD backend multiplies by 1024 instead,
+   which reports a 1 GiB swap file as 4 MiB while labelling the figure bytes.
+   Doing it the way `swapinfo` does is the only choice that agrees with another
+   tool on the same machine.
+10. **`hw.physmem` is larger than the memory the VM manages.** On the test VM it
+    is 4 265 984 000 bytes while `v_page_count * pagesize` is 4 159 893 504; the
+    difference is the kernel's early allocations, which no page queue will ever
+    report. Using `hw.physmem` as the bar's denominator leaves it permanently
+    ~3 MiB short of full, which reads as a rendering bug on a machine that is
+    genuinely out of memory. `v_page_count` is by construction the sum of the
+    queues.
+11. **`kinfo_proc` is 1088 bytes and `ki_structsize` must be checked, not
+    assumed.** `libc`'s struct is compiled into the binary; the kernel's is
+    whatever the running system was built with. They agree only if the binary
+    was built for an ABI no newer than the kernel's, and a struct that grew makes
+    every field after the addition read from the wrong offset — the table looks
+    plausible while being wrong. `scan::validate()` compares `ki_structsize`
+    against `size_of` and checks that pid 1 is `init`/uid 0 at startup.
+12. **`c_long` is not `i64` on every FreeBSD target.** The CPU counters are
+    `long[]`, which is 64-bit on amd64/arm64 and 32-bit on i386, so a cast is
+    load-bearing on one target and a no-op on the others (and `clippy`'s
+    `unnecessary_cast` fires on the 64-bit ones).
+13. **A `sysctl` size query is racy by design.** `kern.proc` answers with the size
+    *now*, and the table can grow before the read. Three retries with quadratic
+    headroom is what `ps(1)` does. The same race is why the live tests compare
+    memory counters with a tolerance: each `vm.stats` counter is a separate
+    `sysctl`, so six calls see six slightly different moments on a VM whose page
+    daemon is running.
+14. **`devstat` entries include pass-through devices.** A `pass(4)` device
+    observes the same requests as the physical device beneath it, so summing both
+    double-counts every byte. `DEVSTAT_TYPE_PASS` marks them. `devstat` also
+    needs `devstat_checkversion` before the list is trusted, for the same reason
+    `kinfo_proc` needs `ki_structsize`: a struct that changed size would misread
+    every counter.
+15. **`libc` declares `devstat`/`devinfo` but not `struct statinfo`.** The
+    wrapper is 56 bytes of doubles and a pointer that only `devstat_getdevs`
+    reads, so it is declared here with the same field order.
+16. **`KERN_PROC_FILEDESC`'s records are variable-length and truncated.**
+    `libc`'s `struct kinfo_file` is 1392 bytes; the kernel truncates each record
+    after `kf_path` and reports 376–408 bytes. Walking by `size_of` runs off the
+    first record, and — the natural guard — rejecting records shorter than
+    `size_of` rejects *every* one, so `l` showed "cannot read file descriptors"
+    on a process whose descriptors were perfectly readable. The stride is each
+    record's own `kf_structsize`, and `kf_path` is at a fixed offset of **368**,
+    not at `offset_of!(kinfo_file, kf_path)`, because everything past the
+    truncation point was never copied out. Verified against `procstat -f`.
+17. **`KERN_PROC_FILEDESC` also lists things that are not descriptors.** `kf_fd`
+    is `-1` for the cwd, `-2` for the root directory, `-5` for the executable text
+    and `-6` for the controlling terminal. `procstat -f` prints all of them, and
+    filtering to `kf_fd >= 0` would drop exactly the entries a reader wants when a
+    process is stuck in a deleted directory.
+18. **`KERN_PROC_ENV` and `KERN_PROC_ARGS` have no size query.** Their size call
+    answers `ENOMEM` rather than a length, so the caller has to request `ARG_MAX`
+    up front and trust the returned count. `proc_string` does that, bounded, so a
+    process with a pathological environment cannot make gander allocate without
+    limit.
 
 ## Darwin-specific traps (all hit and fixed during development)
 
@@ -267,13 +375,40 @@ also accounts for, and `used + available > total` is correct on Linux. An earlie
 revision tried to force the complement and clamped `MemAvailable` down to
 `total - used`, understating available memory.
 
+### FreeBSD is a partition, like macOS, but of different things
+
+FreeBSD's VM keeps five mutually exclusive page queues, so the model is exactly
+the kind of partition macOS's is — and the [traps](#freebsd-specific-traps-all-hit-and-fixed-during-development)
+above explain why getting the denominator right matters:
+
+```text
+used      = active + wired + laundry
+cache     = inactive + page cache
+available = free + cache
+total     = v_page_count * pagesize      (not hw.physmem)
+```
+
+`laundry` counts as used because those pages are dirty and queued for writeback:
+they cannot be reused until the write completes, which is the same reasoning that
+puts macOS's compressor in `used`. `active` counts as used because it is the
+queue of recently touched pages the page daemon has not yet reclaimed. `inactive`
+is the reclaimable half, which is why it is cache and not used.
+
+`total` is the managed page count rather than `hw.physmem` for the reason in trap
+10: the kernel's early allocations are not in any queue, so a bar scaled to
+`hw.physmem` can never fill.
+
 ## Permission model
 
-Both platforms hide information for processes you do not own:
+All three platforms hide information for processes you do not own:
 
 - Linux: `exe`, `smaps_rollup` need `CAP_SYS_PTRACE` (root) to read others'.
 - macOS: `proc_pidinfo`, `proc_pidpath`, `proc_pid_rusage`, `KERN_PROCARGS2` return
   `EPERM` for other users' processes.
+- FreeBSD: `KERN_PROC_PATHNAME`/`KERN_PROC_CWD`/`KERN_PROC_ARGS` describe other
+  users' processes only for root, and `kvm_openfiles` is denied inside a jail —
+  which makes `swap` fall back to `vm.swap_total` with `used` unknown rather than
+  reporting a machine with no swap.
 
 The UI shows `-` rather than failing. This is correct behaviour, not a bug; it is
 also why `htop` runs `sudo htop` when you want full detail.
@@ -292,11 +427,41 @@ also why `htop` runs `sudo htop` when you want full detail.
 | GPU columns | Needs `IOKit`/`IOAccelerator`; a different mechanism from Linux `drm-usage-stats`, and the design forbids a vendor SDK. Gated out of the column list on macOS. |
 | Delay accounting | `TASKSTATS` is a Linux generic-netlink family with no Darwin equivalent. The `CPUD%`/`IOD%`/`SWPD%` columns are gated out on macOS. |
 | `DiskIO` meter (host-wide) | No host-wide disk byte counter without IOKit. Per-process `rusage` figures exist but summing them double-counts shared I/O. The meter reports `n/a here`. |
+| Container detection (`O`, `CONTAINER`) | No cgroup concept. Gated out of the column list, and `O` says so instead of toggling a no-op. |
+
+## Deliberate omissions on FreeBSD
+
+The same rule: a *column* that can only render `-` is `#[cfg]`-gated out, while a
+*meter* survives with `n/a here` so a config file still works when moved.
+
+| Feature | Why |
+|---|---|
+| cgroup, container columns | No cgroup concept. Jails are the nearest analogue and `kinfo_proc` carries `ki_jid`, but a jail is not a container: it shares the kernel, has no image layers and no id beyond a small integer. Listing it as `CONTAINER` would be a false equivalence. |
+| PSI pressure meters | No `/proc/pressure` equivalent. |
+| Zram / Zswap / HugePages | None of the three subsystems exists. All three meters say `n/a here`. |
+| PSS / EPSS / private / swap-per-process | No `smaps_rollup`. FreeBSD has `kinfo_getvmmap(3)`, which reports per-mapping residency, but a `PSS`-equivalent would have to divide shared mappings by their share count, which the kernel does not expose. Gated out. |
+| GPU columns | No `drm-usage-stats` in `fdinfo`. FreeBSD's DRM drivers do not export it; a different mechanism (IOKit territory on the Linux side of the fence) would mean a vendor SDK, which the design forbids. |
+| Delay accounting | `TASKSTATS` is a Linux generic-netlink family with no FreeBSD equivalent. Gated out. |
+| `i` I/O priority | No `ioprio_set`. FreeBSD has `idprio`/`rtprio` for realtime scheduling, which is a different question. The panel says so instead of pretending. |
+| `DiskIO` meter (host-wide) | **Supported**, via `devstat_getdevs(3)`. This is the one platform where the per-process and host-wide figures both exist; only the host-wide one is shown, for the same double-counting reason as macOS. |
+| Per-process disk I/O columns | `ki_rusage` carries block counts rather than bytes, and there is no column that would display them yet. `capability::PROC_IO` is `false` here so nothing promises otherwise. |
+| `a` affinity panel | **Supported**, via `cpuset_getaffinity`/`cpuset_setaffinity`. |
+| `e` environment panel | **Supported.** `sysctl(KERN_PROC_ENV)` is the same NUL-separated payload as `/proc/<pid>/environ`. |
+| `l` open files panel | **Supported**, via `sysctl(KERN_PROC_FILEDESC)` — see the truncation trap below. |
+| `x` file locks panel | No `/proc/locks` and no `sysctl` for the lock table. The panel says so and points at `lsof`. |
+
+### Jails: detected, not displayed
+
+`kinfo_proc.ki_jid` is read into `RawProc::jail` and is available to a future
+`JAIL` column, but nothing renders it yet. The reason is the same one that governs
+`CONTAINER`: an identifier that no other column groups on is a number, not
+information. `jid 0` means "host", which is the common case, so a column would be
+a list of zeroes with a few exceptions — the inverse of useful.
 
 ## Network and disk counters
 
-Both backends report host-wide throughput, but not from the same kind of source,
-and one obvious choice is wrong on each platform.
+All three backends report host-wide throughput, but not from the same kind of
+source, and one obvious choice is wrong on each platform.
 
 ### macOS network: `NET_RT_IFLIST2`, not `getifaddrs`
 
@@ -335,6 +500,18 @@ packet count. Split on `:` first, then whitespace. Loopback is excluded: it neve
 reaches a wire, and counting it would double every local byte (once received, once
 transmitted) — a container running a local database would otherwise report
 hundreds of MB/s on an idle NIC.
+
+### FreeBSD disk: `devstat`, and the pass-through trap
+
+`devstat_getdevs(3)` is the kernel's own per-device statistics interface, so
+unlike Linux there is no partition-versus-disk ambiguity: each entry is a whole
+device and its counters already include everything written through its
+partitions.
+
+The trap is `DEVSTAT_TYPE_PASS`. Those are `pass(4)` devices, which see the *same*
+requests as the `da`/`ada` device they front; summing both doubles every byte.
+`devstat_checkversion` must also pass first, for the same reason `kinfo_proc`'s
+`ki_structsize` must: a struct that changed size misreads every counter.
 
 ### Linux disk: `/proc/diskstats` mixes disks and partitions
 
@@ -404,7 +581,7 @@ the number that explains where the memory went. Only `Hugepagesize` is in kB.
 
 ## What is verified, and where
 
-Both backends have now been exercised against a live OS.
+All three backends have been exercised against a live OS.
 
 **macOS (arm64, this machine)** — 73 core tests plus the TUI suite, including live
 tests that call `proc_pidinfo`, `host_statistics64`, `KERN_PROCARGS2`,
@@ -437,6 +614,50 @@ tree on any unix:
 | `smaps_rollup` unread by default | every row has `pss == None` |
 | GPU percentages | within `0..=100`, and a percentage implies engine time was read |
 
+**FreeBSD (arm64, 14.5-RELEASE in QEMU)** —
+`crates/core/tests/freebsd_live.rs`, twenty tests that compare gander's figures
+with `sysctl(8)`, `ps(1)`, `swapinfo(8)` and `netstat(1)` *inside one test*, so a
+changing system cannot explain a discrepancy and a fixed expectation cannot go
+stale. The whole workspace suite (134 core unit tests, 148 TUI tests, 33 config
+tests, 11 CLI tests) also runs inside the guest.
+
+| check | result |
+|---|---|
+| total memory | exactly `v_page_count * pagesize`, not `hw.physmem` |
+| page queues vs `vm.stats.vm.v_*` | each within 16 MiB (six separate `sysctl` calls) |
+| `used` = `wired + active + laundry` | exact identity |
+| bar segments vs total | within 1 % (same reason) |
+| swap vs `swapinfo -k` | within 64 KiB |
+| core count | `hw.ncpu` + 1 aggregate; no core exceeds the aggregate |
+| CPU% over two samples | finite, non-negative, capped at `ncpu * 100` |
+| process count vs `ps -ax` | within 5 |
+| RSS vs `ps -o rss=` | within 25 % (a pages-vs-bytes error would be off by 4096x) |
+| `ELAPSED` vs `ps -o etimes=` | within 2 s, and never older than uptime |
+| state letter vs `ps -o stat=` | every non-transitioning process agrees |
+| `cmdline`/`exe`/`cwd` vs `ps -o args=` and the cwd | exact |
+| `kern.hostname` vs `gethostname(2)` | exact |
+| network counters vs `netstat -ibn` | at least their sum (the VM keeps talking) |
+| disk counters | monotonic; rates finite and non-negative |
+| threads | off by default; every thread row has a unique identity and a process row |
+| sort by 16 fields × 2 directions | a permutation, with ties in ascending pid order |
+| a process that exits | gone from the next sample |
+
+Four bugs the live run found that the code review had not:
+
+* **`SSLEEP` is three states, not one.** Every sleeping process rendered `S`; the
+  `D`/`S` split is `ki_tdflags & TDF_SINTR` and `I` is `ki_slptime >= MAXSLP`.
+  `SIDL` was also `I` when `ps` prints `R`. Collapsing `D` into `S` hides exactly
+  the state that explains a machine that feels hung.
+* **`comm_buf` truncated to *empty*.** `ArrayString::try_push_str` rejects a
+  string that does not fit and leaves the buffer as it was, so a long name
+  produced a blank `COMMAND` instead of a shortened one. The fully qualified path
+  in the test's own argv triggered it on every run.
+* **`ELAPSED` subtracted the boot time twice.** It computed `uptime - (start -
+  boot)`, which is 0 for every process on a machine whose start is newer than the
+  boot — that is, all of them.
+* **`cwd` was `None` for every process.** `KERN_PROC_CWD` returns a
+  `struct kinfo_file`, and a `PATH_MAX` buffer is too small for it (`ENOMEM`).
+
 The M3 run found a bug of a different kind: the *documentation* was wrong. An
 early version of the PSI code asserted that `/proc/pressure/cpu` has no `full`
 line, on the reasoning that a CPU stall is inherently per-task. A live test
@@ -463,5 +684,11 @@ Performance, measured in that container (405 and 805 processes):
 `openat` per process per scan: 4.0 cold, 1.16 warm — the identity cache removes
 71 % of the syscalls (DESIGN.md § 9.3).
 
-Still unmeasured: render cost, memory footprint, and behaviour above ~1 000
-processes. A container cannot usefully simulate a busy server.
+Performance on FreeBSD was not measured: the test VM has 11 processes, which
+measures syscall latency rather than a scan. The backend makes **one** `sysctl`
+for the whole table — fewer than Linux's one `openat` per process — so it should
+be faster per process, but "should be" is not a measurement.
+
+Still unmeasured on all three: render cost, memory footprint, and behaviour above
+~1 000 processes. A container or a 4-core VM cannot usefully simulate a busy
+server.

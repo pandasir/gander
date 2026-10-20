@@ -101,11 +101,12 @@ and neither is visible until someone looks. See
 
 ### M4 — portability
 
-Status: **macOS done ahead of schedule** (it is the development machine, and the
-cost of retrofitting the abstraction later would have been higher). FreeBSD and
-the other BSDs remain.
+Status: **complete for Linux, macOS and FreeBSD.** macOS landed ahead of schedule
+(it is the development machine, and the cost of retrofitting the abstraction later
+would have been higher); FreeBSD followed, verified against a live 14.5 VM. The
+remaining BSDs are not planned — see [PORTABILITY.md](PORTABILITY.md).
 
-- `PlatformSampler` trait has two implementations: `/proc` and `darwin`
+- `PlatformSampler` trait has three implementations: `/proc`, `darwin`, `freebsd`
 - Not all fields exist everywhere → `Field` is `#[non_exhaustive]`, and
   `gander_core::capability::*` consts let the UI hide what cannot work
 - Platform differences and the traps that were hit: see
@@ -401,27 +402,59 @@ render the same, or the meter lies.
 
 ## 5. Platform abstraction
 
-Three traits, matching htop's three platform files. Two traits would be too few
-(`Machine` vs `ProcessTable` have different lifetimes), four too many.
+One trait, implemented three times:
 
 ```rust
-pub trait Platform {
-    fn read_system(&mut self) -> SystemSnapshot;
-    fn enumerate(&self, ctx: &mut ScanCtx, out: &mut Vec<Row>);
-    fn field_meta(f: Field) -> Option<&'static FieldMeta>;
-    fn meter_types() -> &'static [&'static dyn MeterSpec];
+pub trait PlatformSampler: Default {
+    fn sample(&mut self) -> (SystemSnapshot, Vec<Row>);
+    fn cache_len(&self) -> usize;
+    fn backend_name() -> &'static str;
+    fn set_scan_options(&mut self, opts: ScanOptions) {}
+    fn supports_threads() -> bool { false }
 }
 ```
+
+It replaces an earlier four-method `Platform` trait that nothing implemented.
+`sample` and `cache_len` live **only** on the trait, so neither backend can grow
+a method the others lack — that is what let the Linux backend accidentally shadow
+the trait for two milestones while macOS satisfied it.
+
+`set_scan_options` is the cost gate (see the subsection below): one value
+describing what the front end is showing, so a backend knows
+which expensive reads to perform. A backend with nothing to switch on (macOS has
+no `smaps_rollup`) accepts and ignores it rather than being a special case at the
+call site.
 
 Selection is **compile-time**:
 
 ```rust
-#[cfg(target_os = "linux")]   mod linux;
-#[cfg(target_os = "linux")]   pub use linux::LinuxPlatform as Current;
+#[cfg(target_os = "linux")]   pub type Sampler = linux::system::Sampler;
+#[cfg(target_os = "macos")]   pub type Sampler = darwin::system::Sampler;
+#[cfg(target_os = "freebsd")] pub type Sampler = freebsd::system::Sampler;
 ```
 
-No `Box<dyn Platform>`: a single-platform binary has no use for runtime
+No `Box<dyn PlatformSampler>`: a single-platform binary has no use for runtime
 polymorphism, and the extra indirection in the hot loop is pure cost.
+
+### Platform differences are `cfg`, not runtime flags
+
+Nothing asks "am I on Linux" at run time. Where a *column* cannot exist, the
+`Field` variant is `#[cfg]`-gated, so it is absent from the setup screen,
+`Field::all()`, and the `htoprc` importer — rather than present and rendering `-`
+for every row, which is a setup entry that does nothing.
+
+Where a *meter* cannot work, it survives and reports `n/a here`, because a meter
+name has to survive a config file moving between machines. A header edited on a
+Linux box and copied to a Mac keeps its layout; the meters that cannot work there
+say so instead of vanishing and renumbering everything.
+
+`crates/core/src/lib.rs`'s `capability::*` consts are the third case: `HOST_DISK_IO`,
+`AFFINITY`, `SMAPS` and friends answer "can this be done here", so a key can say
+why it does nothing instead of looking broken. `capability::AFFINITY` is true on
+macOS even though there is no mask, because the panel has something to say there;
+`affinity::supported()` is the stricter question.
+
+See [PORTABILITY.md](PORTABILITY.md) for the per-platform source of every field.
 
 ---
 

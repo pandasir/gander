@@ -127,6 +127,27 @@ pub struct MemInfo {
     pub huge_pages_surplus: u64,
     /// Bytes per huge page (`Hugepagesize`), `0` when huge pages are disabled.
     pub huge_page_size: u64,
+    // --- FreeBSD -----------------------------------------------------------
+    /// Pages that are dirty and queued for writeback (`v_laundry_count`).
+    ///
+    /// FreeBSD counts these separately from `active` and `inactive`, and they
+    /// cannot be reused without a write first, so they belong in `used` rather
+    /// than in cache.
+    pub laundry: u64,
+    /// The page cache (`v_cache_count`), in bytes rather than pages.
+    ///
+    /// Modern FreeBSD folds the unified buffer cache into the inactive queue and
+    /// reports 0 here; it is kept because older kernels and `vfs.bufspace` still
+    /// populate it, and silently dropping it would understate reclaimable memory
+    /// on exactly those systems.
+    pub file_cache: u64,
+    /// `v_page_count`, the number of pages the VM subsystem manages.
+    ///
+    /// Used as the denominator for the partition check: `active + inactive +
+    /// laundry + wired + free` must equal it, which is what makes the bar
+    /// segments add up to physical memory.
+    pub managed_pages: u64,
+
     /// `internal_page_count`: anonymous pages, the "by backing store" family.
     ///
     /// macOS reports memory twice over, once by usage (`active`, `inactive`, …)
@@ -330,6 +351,93 @@ impl MemInfo {
                 counts_as_cache: true,
                 counts_as_total: true,
                 color_slot: 3,
+            },
+            MemoryClass {
+                label: "free",
+                bytes: free,
+                counts_as_used: false,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 5,
+            },
+        ];
+    }
+
+    /// FreeBSD accounting.
+    ///
+    /// FreeBSD's VM keeps five mutually exclusive page queues, so the model is a
+    /// partition rather than a formula:
+    ///
+    /// ```text
+    /// used      = active + wired + laundry
+    /// cache     = inactive + page cache
+    /// available = free + cache
+    /// ```
+    ///
+    /// Every page is in exactly one queue (`v_page_count` is their sum), which is
+    /// why the bar segments can be checked against physical memory the way
+    /// macOS's can. `laundry` counts as used because those pages cannot be
+    /// reused until their write completes — the same reasoning that puts
+    /// macOS's compressor in `used`.
+    ///
+    /// `free` is the kernel's own free count, never `total - used`: deriving it
+    /// is what made the macOS bar claim 7.8 GB free on a machine with 0.3 GB.
+    pub fn finish_freebsd(&mut self) {
+        let wired = self.wired.min(self.total);
+        let compressed = 0; // no compressor on FreeBSD
+        let _ = compressed;
+        let active = self.active.min(self.total - wired);
+        let laundry = self.laundry.min(self.total - wired - active);
+        let used = wired + active + laundry;
+
+        let inactive = self.inactive.min(self.total - used);
+        let file_cache = self.file_cache.min(self.total - used - inactive);
+        let free = self.free.min(self.total - used - inactive - file_cache);
+
+        self.used = used;
+        self.cached = inactive + file_cache;
+        self.available = (free + self.cached).min(self.total);
+
+        self.classes = vec![
+            MemoryClass {
+                label: "wired",
+                bytes: wired,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 0,
+            },
+            MemoryClass {
+                label: "active",
+                bytes: active,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 1,
+            },
+            MemoryClass {
+                label: "laundry",
+                bytes: laundry,
+                counts_as_used: true,
+                counts_as_cache: false,
+                counts_as_total: true,
+                color_slot: 2,
+            },
+            MemoryClass {
+                label: "inactive",
+                bytes: inactive,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 3,
+            },
+            MemoryClass {
+                label: "cache",
+                bytes: file_cache,
+                counts_as_used: false,
+                counts_as_cache: true,
+                counts_as_total: true,
+                color_slot: 4,
             },
             MemoryClass {
                 label: "free",

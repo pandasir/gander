@@ -71,8 +71,8 @@ These each open a scrollable panel; `Esc` closes it.
 
 | Key | Action |
 |---|---|
-| `a` | CPU affinity panel (real mask on Linux) |
-| `i` | I/O priority panel (Linux only) |
+| `a` | CPU affinity panel (real mask on Linux and FreeBSD via `cpuset`; macOS explains that it has only a scheduler hint) |
+| `i` | I/O priority panel (`ioprio_set` is a Linux syscall; the panel says so elsewhere) |
 | `e` | Environment of the selected process |
 | `w` | Full command line, wrapped |
 | `l` | Open file descriptors |

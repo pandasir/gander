@@ -24,6 +24,48 @@ jobs:
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
 
+  # FreeBSD has no GitHub-hosted runner, so the backend is checked two ways.
+  #
+  # This job only *compiles* it, which is cheap and catches the common
+  # regression: a new `cfg` arm that forgets a target, or a `libc` item that
+  # exists on two platforms and not the third. It is deliberately not the whole
+  # story — the `freebsd-vm` job below runs the suite on a real kernel, because
+  # this project has already learned that "it compiles" is worth little (see
+  # docs/PORTABILITY.md).
+  cross-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-freebsd
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-freebsd
+      - run: cargo clippy --target x86_64-unknown-freebsd --all-targets -- -D warnings
+
+  # The FreeBSD suite, on a real FreeBSD kernel in QEMU.
+  #
+  # `vmactions/freebsd-vm` boots a VM with a shared directory, so this is a live
+  # run: `freebsd_live.rs` compares gander's figures against `ps(1)`,
+  # `sysctl(8)`, `swapinfo(8)` and `netstat(1)` inside the guest. That is what
+  # caught the `SSLEEP`-is-three-states bug and the `KERN_PROC_CWD` struct that
+  # looked like a permission failure.
+  freebsd-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.5"
+          usesh: true
+          prepare: |
+            pkg install -y rust
+          run: |
+            cargo test --workspace
+            cargo clippy --workspace --all-targets -- -D warnings
+
   # The `rust-version` in Cargo.toml is a promise to users, and nothing enforced
   # it. It had drifted two minor versions behind reality (declared 1.75 while
   # ratatui 0.30 needs 1.88), so `cargo install` on a machine that satisfied the

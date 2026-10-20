@@ -13,7 +13,7 @@ use crate::args::Batch;
 
 pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
     if !PLATFORM_SUPPORTED {
-        eprintln!("gander: batch mode requires the Linux backend");
+        eprintln!("gander: batch mode requires a live backend (Linux, macOS or FreeBSD)");
         return std::process::ExitCode::from(1);
     }
 
@@ -151,12 +151,12 @@ fn is_linux_only_field(_name: &str) -> bool {
 }
 
 /// Clock ticks per second, for the TIME column.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 fn sample_clk_tck() -> u64 {
     gander_core::CurrentPlatform::clk_tck()
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 fn sample_once(
     sampler: &mut gander_core::Sampler,
     sort: Sort,
@@ -177,7 +177,7 @@ fn sample_once(
 }
 
 /// Placeholder for targets without a backend; batch mode is rejected earlier.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
 fn sample_once(
     _sampler: &mut gander_core::Sampler,
     _sort: Sort,

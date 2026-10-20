@@ -788,7 +788,11 @@ fn backend_name() -> &'static str {
     {
         "darwin (libproc + sysctl + Mach)"
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "freebsd")]
+    {
+        "freebsd (sysctl + libkvm)"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         "none (fixtures only)"
     }

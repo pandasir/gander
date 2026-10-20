@@ -316,7 +316,7 @@ gander 把 htop 的*功能清单*当作需求文档，丢掉它的*代码结构*
 | 控件 | `Object` 虚表 + 焦点栈 | `enum Screen` + 各屏独立的 `handle_key()` |
 | 数据 | 单线程扫描 | 并行扫描（rayon）+ 后台采样线程 |
 | 配置 | `htoprc`，手写解析器 | TOML，并提供 `htoprc` 导入器 |
-| 平台 | Linux、BSD、macOS | Linux + macOS，共用 `PlatformSampler` trait |
+| 平台 | Linux、BSD、macOS | Linux、macOS、FreeBSD，共用 `PlatformSampler` trait |
 
 更多内容：设计见 [docs/DESIGN.md](docs/DESIGN.md)，已完成与后续计划见
 [docs/ROADMAP.md](docs/ROADMAP.md)。

@@ -56,9 +56,11 @@ fn main() -> std::process::ExitCode {
     }
 
     if !gander_core::PLATFORM_SUPPORTED {
+        // Naming the platforms that *do* work is the whole value of this message;
+        // it said "Linux only" for two milestones after macOS had shipped.
         eprintln!(
             "gander: this platform is not supported yet. \
-             gander currently runs on Linux only."
+             gander runs on Linux, macOS and FreeBSD."
         );
         return std::process::ExitCode::from(1);
     }

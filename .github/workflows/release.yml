@@ -73,6 +73,47 @@ jobs:
             ${{ steps.bundle.outputs.asset }}
             ${{ steps.bundle.outputs.digest }}
 
+  # FreeBSD is built *inside* a FreeBSD VM rather than cross-compiled.
+  #
+  # Cross-linking from Linux or macOS fails: the final link wants FreeBSD's
+  # `ld`, `-lkvm`, `-ldevstat` and `-lprocstat`, and no hosted runner has them.
+  # Every attempt to fake it with a sysroot produces a binary that links and then
+  # fails at run time, which is worse than not shipping one. `vmactions` mounts
+  # the checkout and writes back, so the release build happens on the same kernel
+  # the tests run on.
+  freebsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.5"
+          usesh: true
+          prepare: pkg install -y rust
+          run: cargo build --release
+      - name: Bundle
+        id: bundle
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          target="x86_64-unknown-freebsd"
+          name="${BIN}-${version}-${target}"
+          dir="${name}"
+          mkdir -p "${dir}"
+          cp "target/release/${BIN}" "${dir}/"
+          cp README.md README.zh-CN.md LICENSE "${dir}/"
+          tar -czf "${name}.tar.gz" "${dir}"
+          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          echo "asset=${name}.tar.gz"            >> "$GITHUB_OUTPUT"
+          echo "digest=${name}.tar.gz.sha256"     >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-x86_64-unknown-freebsd
+          path: |
+            ${{ steps.bundle.outputs.asset }}
+            ${{ steps.bundle.outputs.digest }}
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -103,5 +144,6 @@ jobs:
             | `x86_64-apple-darwin` | macOS, Intel |
             | `x86_64-unknown-linux-gnu` | Linux (glibc) |
             | `x86_64-unknown-linux-musl` | Linux (static, any distro) |
+            | `x86_64-unknown-freebsd` | FreeBSD 14 and later |
 
             Every archive has a `.sha256` checksum next to it.

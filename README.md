@@ -5,15 +5,16 @@
 > A cross-platform interactive process viewer in Rust — `take a gander` at your system.
 
 gander shows you what is running on your machine and what it is costing. It runs
-on **Linux and macOS**, keeps almost all of htop's keybindings (the two that differ
-are [listed below](#keys-that-differ-from-htop)), and is built on a different
-screen layout than htop — one that spends its space on the process list instead
-of on horizontal bars.
+on **Linux, macOS and FreeBSD**, keeps almost all of htop's keybindings (the two
+that differ are [listed below](#keys-that-differ-from-htop)), and is built on a
+different screen layout than htop — one that spends its space on the process list
+instead of on horizontal bars.
 
 ## Install
 
 **Prebuilt binaries** (macOS and Linux) are on the
-[Releases page](https://github.com/pandasir/gander/releases):
+[Releases page](https://github.com/pandasir/gander/releases). FreeBSD builds from
+source — it needs no headers beyond what the base system ships:
 
 ```bash
 curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.5.0-aarch64-apple-darwin.tar.gz
@@ -335,29 +336,32 @@ all four draw paths (htop, panels, setup, dialogs) inherit it.
 
 ## Platform support
 
-| | Linux | macOS |
-|---|---|---|
-| Process list | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
-| Per-process details | `/proc/<pid>` | Mach + `proc_pidinfo` |
-| Container columns | cgroup + PID namespace | not available |
-| PSS / EPSS / private columns | `smaps_rollup`, read on demand | not available |
-| PSI pressure (some/full) | `/proc/pressure` | not available |
-| Zram / Zswap / HugePages meters | `/sys/block/zram*`, `meminfo` | not available |
-| GPU columns (`GPU%`, `GPU_TIME`) | `drm-usage-stats` in `fdinfo` | not available |
-| Delay columns (`CPUD%`, `IOD%`, `SWPD%`) | `TASKSTATS` netlink (needs `CAP_NET_ADMIN`) | not available |
-| Threads as rows | yes (`H`) | yes (`H`) |
-| CPU affinity (`a`) | read/write | scheduler hint only, explains why |
-| I/O priority (`i`) | read/write | not available, explains why |
+| | Linux | macOS | FreeBSD |
+|---|---|---|---|
+| Process list | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` | `sysctl(KERN_PROC_PROC)` |
+| Per-process details | `/proc/<pid>` | Mach + `proc_pidinfo` | `kinfo_proc` |
+| Container columns | cgroup + PID namespace | not available | not available |
+| PSS / EPSS / private columns | `smaps_rollup`, read on demand | not available | not available |
+| PSI pressure (some/full) | `/proc/pressure` | not available | not available |
+| Zram / Zswap / HugePages meters | `/sys/block/zram*`, `meminfo` | not available | not available |
+| GPU columns (`GPU%`, `GPU_TIME`) | `drm-usage-stats` in `fdinfo` | not available | not available |
+| Delay columns (`CPUD%`, `IOD%`, `SWPD%`) | `TASKSTATS` netlink (needs `CAP_NET_ADMIN`) | not available | not available |
+| Threads as rows | yes (`H`) | yes (`H`) | yes (`H`) |
+| CPU affinity (`a`) | read/write | scheduler hint only, explains why | read/write (`cpuset`) |
+| I/O priority (`i`) | read/write | not available, explains why | not available, explains why |
+| Host disk throughput (`DiskIO`) | `/proc/diskstats` | not available | `devstat` |
 
-Both backends are verified against a live OS. Other unix targets compile the
-`/proc` backend but have no live data source, and the TUI refuses to start there
-rather than showing nothing. Details: [docs/PORTABILITY.md](docs/PORTABILITY.md).
+All three backends are verified against a live OS — FreeBSD in a QEMU VM running
+14.5-RELEASE, where the whole test suite runs inside the guest. Other unix targets
+compile the `/proc` backend but have no live data source, and the TUI refuses to
+start there rather than showing nothing. Details:
+[docs/PORTABILITY.md](docs/PORTABILITY.md).
 
 ## Build and test
 
 ```bash
 cargo build --release      # target/release/gander
-cargo test                 # 356 on macOS, 366 on Linux
+cargo test                 # 374 on macOS, 363 on FreeBSD
 cargo clippy --all-targets # zero warnings
 cargo bench -p gander-core # scan timings
 ```
@@ -378,7 +382,7 @@ The core crate has no UI dependency, which is what makes `--json` nearly free.
 | Widgets | `Object` vtable, focus stack | `enum Screen` + per-screen `handle_key()` |
 | Data | single-threaded scan | parallel scan (rayon) + background sampler |
 | Config | `htoprc`, hand-rolled parser | TOML, plus an `htoprc` importer |
-| Platforms | Linux, BSD, macOS | Linux + macOS, same `PlatformSampler` trait |
+| Platforms | Linux, BSD, macOS | Linux, macOS, FreeBSD, same `PlatformSampler` trait |
 
 More: [docs/DESIGN.md](docs/DESIGN.md) for the design,
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what is next.

@@ -32,6 +32,10 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod darwin;
 
+/// The FreeBSD backend: `sysctl` + `libkvm` + `devstat`.
+#[cfg(target_os = "freebsd")]
+pub mod freebsd;
+
 /// Process identifier.
 pub type Pid = u32;
 
@@ -125,7 +129,15 @@ impl ScanOptions {
 }
 
 /// Whether a live backend exists for this build.
-pub const PLATFORM_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+///
+/// Three backends: Linux reads `/proc`, macOS uses `libproc` and Mach, FreeBSD
+/// uses `sysctl` and `libkvm`. Everything else compiles but has no sampler, and
+/// the front ends refuse to start rather than showing an empty table.
+pub const PLATFORM_SUPPORTED: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "freebsd"
+));
 
 /// The sampler for the current target.
 #[cfg(target_os = "linux")]
@@ -134,6 +146,9 @@ pub type Sampler = linux::system::Sampler;
 #[cfg(target_os = "macos")]
 pub type Sampler = darwin::system::Sampler;
 
+#[cfg(target_os = "freebsd")]
+pub type Sampler = freebsd::system::Sampler;
+
 /// Re-export of the platform selected at compile time.
 #[cfg(target_os = "linux")]
 pub use linux::LinuxPlatform as CurrentPlatform;
@@ -141,13 +156,26 @@ pub use linux::LinuxPlatform as CurrentPlatform;
 #[cfg(target_os = "macos")]
 pub use darwin::DarwinPlatform as CurrentPlatform;
 
+#[cfg(target_os = "freebsd")]
+pub use freebsd::FreeBsdPlatform as CurrentPlatform;
+
 /// Platform capabilities that vary per OS, resolved at compile time.
 ///
 /// Front ends use this to hide panes and columns that cannot work here, rather
 /// than discovering it at runtime. See `docs/PORTABILITY.md`.
 pub mod capability {
-    /// CPU affinity can be adjusted.
-    pub const AFFINITY: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+    /// The `a` affinity panel has something to say on this platform.
+    ///
+    /// True on macOS as well, where there is no per-process mask: the panel still
+    /// opens, and explains that the OS offers only a scheduler hint rather than
+    /// silently doing nothing. Whether a mask can actually be **read and
+    /// written** is a stricter question, and it is
+    /// [`affinity::supported()`](crate::affinity::supported) that answers it.
+    pub const AFFINITY: bool = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    ));
 
     /// I/O priority can be adjusted (`ioprio_set`).
     pub const IOPRIO: bool = cfg!(target_os = "linux");
@@ -170,17 +198,28 @@ pub mod capability {
     pub const DELAYACCT: bool = cfg!(target_os = "linux");
 
     /// Per-process disk I/O counters are available.
+    ///
+    /// Linux reads `/proc/<pid>/io`, macOS `proc_pid_rusage`. FreeBSD exposes
+    /// `kinfo_proc.ki_rusage`, but the figures are cumulative block counts rather
+    /// than bytes and the columns that would show them are not implemented, so it
+    /// is `false` there rather than a promise the column list cannot keep.
     pub const PROC_IO: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
-    /// Host-wide disk byte counters are available (`/proc/diskstats`).
+    /// Host-wide disk byte counters are available (`/proc/diskstats`,
+    /// `devstat_getdevs`).
     ///
-    /// Linux only: macOS exposes per-process `rusage` figures but no host-wide
-    /// byte counter that avoids IOKit, and the design forbids a vendor SDK. The
-    /// `DiskIO` meter says so instead of drawing a permanent zero.
-    pub const HOST_DISK_IO: bool = cfg!(target_os = "linux");
+    /// macOS is the exception: it exposes per-process `rusage` figures but no
+    /// host-wide byte counter that avoids IOKit, and the design forbids a vendor
+    /// SDK. The `DiskIO` meter says so there instead of drawing a permanent zero.
+    pub const HOST_DISK_IO: bool =
+        cfg!(any(target_os = "linux", target_os = "freebsd"));
 
     /// Threads can be enumerated as rows.
-    pub const THREADS: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+    pub const THREADS: bool = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    ));
 
     /// Sampling is backed by a live OS source (not just fixtures).
     pub const LIVE: bool = crate::PLATFORM_SUPPORTED;

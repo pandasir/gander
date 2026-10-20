@@ -1374,19 +1374,25 @@ impl App {
         });
     }
 
+    /// `e`: the environment of the selected process.
+    ///
+    /// Linux reads `/proc/<pid>/environ`; FreeBSD has `sysctl(KERN_PROC_ENV)`,
+    /// which is the same NUL-separated payload, so both answer. macOS has
+    /// `KERN_PROCARGS2`, but it returns argv *and* env interleaved in one buffer
+    /// with the layout decided by `argc`, and `sysctl` refuses another user's
+    /// process — so there the panel explains instead of showing a truncated blob.
     fn show_env(&mut self) -> Reaction {
         let Some(row) = self.selected_row() else {
             return Reaction::Continue;
         };
         let pid = row.pid;
-        let lines = read_limited(&format!("/proc/{pid}/environ"), |bytes| {
-            bytes
-                .split(|b| *b == 0)
-                .filter(|s| !s.is_empty())
-                .map(|s| String::from_utf8_lossy(s).into_owned())
-                .collect()
-        })
-        .unwrap_or_else(|| vec!["cannot read environment".to_string()]);
+        let lines = env_of(pid).unwrap_or_else(|| {
+            vec![
+                "cannot read environment".to_string(),
+                String::new(),
+                env_unavailable_reason().to_string(),
+            ]
+        });
         self.screen = Screen::Info {
             title: format!("Environment of {pid}"),
             lines,
@@ -1513,24 +1519,22 @@ impl App {
         Reaction::Continue
     }
 
+    /// `l`: the file descriptors of the selected process.
+    ///
+    /// Linux reads `/proc/<pid>/fd`; FreeBSD has `sysctl(KERN_PROC_FILEDESC)`,
+    /// which returns `struct kinfo_file` records with `kf_fd` and `kf_path`.
     fn show_open_files(&mut self) -> Reaction {
         let Some(row) = self.selected_row() else {
             return Reaction::Continue;
         };
         let pid = row.pid;
-        let list = std::fs::read_dir(format!("/proc/{pid}/fd"))
-            .map(|dir| {
-                dir.filter_map(|e| e.ok())
-                    .map(|e| {
-                        let fd = e.file_name().to_string_lossy().into_owned();
-                        let target = std::fs::read_link(e.path())
-                            .map(|t| t.to_string_lossy().into_owned())
-                            .unwrap_or_else(|_| "?".into());
-                        format!("{fd:>4}  {target}")
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|_| vec!["cannot read file descriptors".to_string()]);
+        let list = open_files_of(pid).unwrap_or_else(|| {
+            vec![
+                "cannot read file descriptors".to_string(),
+                String::new(),
+                fd_unavailable_reason().to_string(),
+            ]
+        });
         self.screen = Screen::Info {
             title: format!("Open files of {pid}"),
             lines: list,
@@ -1544,15 +1548,13 @@ impl App {
             return Reaction::Continue;
         };
         let pid = row.pid;
-        let lines: Vec<String> = read_limited("/proc/locks", |bytes| {
-            let text = String::from_utf8_lossy(bytes);
-            let pid_marker = format!(" {pid} ");
-            text.lines()
-                .filter(|l| l.contains(&pid_marker))
-                .map(|l| l.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+        let lines: Vec<String> = file_locks_of(pid).unwrap_or_else(|| {
+            vec![
+                "no locks".to_string(),
+                String::new(),
+                locks_unavailable_reason().to_string(),
+            ]
+        });
         self.screen = Screen::Info {
             title: format!("File locks of {pid}"),
             lines: if lines.is_empty() {
@@ -2726,8 +2728,39 @@ fn tty_name_platform(tty_nr: i64) -> String {
     }
 }
 
+/// FreeBSD: `ki_tdev` is a real `dev_t` and `devname_r(3)` knows the names.
+///
+/// The value has already been normalised to `0` for "no terminal" by the sampler,
+/// so the only question here is whether the OS has a name for the device. A
+/// `dev_t` that resolves to nothing (a pty whose master is gone) prints the raw
+/// number rather than an empty cell.
+#[cfg(target_os = "freebsd")]
+fn tty_name_platform(tty_nr: i64) -> String {
+    let mut buf = [0 as libc::c_char; 128];
+    // SAFETY: `buf` is 128 bytes, its length is passed, and `devname_r` writes a
+    // NUL-terminated name into it or returns NULL.
+    let ptr = unsafe {
+        libc::devname_r(
+            tty_nr as libc::dev_t,
+            libc::S_IFCHR,
+            buf.as_mut_ptr(),
+            buf.len() as libc::c_int,
+        )
+    };
+    if ptr.is_null() {
+        return format!("{tty_nr:#x}");
+    }
+    // SAFETY: a non-null return points into `buf`.
+    let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
+    if name.is_empty() {
+        format!("{tty_nr:#x}")
+    } else {
+        name.into_owned()
+    }
+}
+
 /// Platforms with neither a `dev_t` in `stat` nor `devname(3)`: show the value.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
 fn tty_name_platform(tty_nr: i64) -> String {
     tty_nr.to_string()
 }
@@ -2742,6 +2775,7 @@ fn tty_name_platform(tty_nr: i64) -> String {
 /// * macOS stores `pbi_start_tvsec * 1e6` — **microseconds since the epoch**. That
 ///   is already an absolute time, and adding the derived boot time again would put
 ///   every process a machine-uptime in the future.
+/// * FreeBSD stores `ki_start` the same way, so it shares macOS's arm.
 ///
 /// The platform switch is a compile-time `cfg` rather than a runtime flag because
 /// `starttime`'s units are fixed by the backend that fills it.
@@ -2772,7 +2806,24 @@ fn started_at_unix(row: &Row, _snapshot: &SystemSnapshot) -> Option<i64> {
     Some((row.starttime / 1_000_000) as i64)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// FreeBSD: `ki_start` is already an absolute `timeval`, so `starttime` carries
+/// epoch microseconds exactly as it does on macOS.
+///
+/// The units are shared with macOS but the *source* is not: macOS multiplies
+/// `pbi_start_tvsec` by a million and drops the microseconds (its `pbi_start_tvusec`
+/// is available but the identity key only needs seconds), while FreeBSD keeps the
+/// full `ki_start.tv_usec`. Both are absolute, so the same division applies and no
+/// boot time is added — adding one would push every process a machine-uptime into
+/// the future.
+#[cfg(target_os = "freebsd")]
+fn started_at_unix(row: &Row, _snapshot: &SystemSnapshot) -> Option<i64> {
+    if row.starttime == 0 {
+        return None;
+    }
+    Some((row.starttime / 1_000_000) as i64)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
 fn started_at_unix(_row: &Row, _snapshot: &SystemSnapshot) -> Option<i64> {
     None
 }
@@ -2876,6 +2927,229 @@ fn pad_right(text: &str, width: usize) -> String {
     out
 }
 
+/// The environment of `pid`, as `KEY=value` lines.
+///
+/// `None` means "not read" — the process is another user's, or the platform has
+/// no such interface — and the caller shows the reason with
+/// [`env_unavailable_reason`].
+#[cfg(target_os = "linux")]
+fn env_of(pid: gander_core::Pid) -> Option<Vec<String>> {
+    read_limited(&format!("/proc/{pid}/environ"), |bytes| {
+        bytes
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect()
+    })
+}
+
+/// FreeBSD: `sysctl(KERN_PROC_ENV)`, the same NUL-separated payload.
+#[cfg(target_os = "freebsd")]
+fn env_of(pid: gander_core::Pid) -> Option<Vec<String>> {
+    // No size query for this selector (it answers `ENOMEM` instead of a length),
+    // so `ARG_MAX` is requested the way `ps` does.
+    let raw = gander_core::freebsd::scan::proc_string(libc::KERN_PROC_ENV, pid, 256 * 1024)?;
+    let lines: Vec<String> = raw
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect();
+    (!lines.is_empty()).then_some(lines)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn env_of(_pid: gander_core::Pid) -> Option<Vec<String>> {
+    None
+}
+
+fn env_unavailable_reason() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "Another user's environment needs CAP_SYS_PTRACE (root)."
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        "Another user's environment needs root, and a process inside a jail is\
+         not readable from outside it."
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        "macOS exposes the environment only through KERN_PROCARGS2, interleaved \
+         with argv, and only for your own processes."
+    }
+}
+
+/// The open file descriptors of `pid`, as `fd  path` lines.
+#[cfg(target_os = "linux")]
+fn open_files_of(pid: gander_core::Pid) -> Option<Vec<String>> {
+    let dir = std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?;
+    Some(
+        dir.filter_map(|e| e.ok())
+            .map(|e| {
+                let fd = e.file_name().to_string_lossy().into_owned();
+                let target = std::fs::read_link(e.path())
+                    .map(|t| t.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "?".into());
+                format!("{fd:>4}  {target}")
+            })
+            .collect(),
+    )
+}
+
+/// FreeBSD: `sysctl(KERN_PROC_FILEDESC)` returns `struct kinfo_file` records.
+///
+/// Three details make this different from walking `/proc/<pid>/fd`, and each one
+/// is a trap:
+///
+/// * **The records are variable-length.** The kernel truncates each one after the
+///   `kf_path` field, so a real record is 376–408 bytes while `libc`'s
+///   `kinfo_file` is 1392. The stride is the record's own `kf_structsize`, and a
+///   check of `stride >= size_of::<kinfo_file>()` — the natural thing to write —
+///   silently rejects every record and shows an empty panel.
+/// * **`kf_path` is at a fixed offset (368) inside the record**, not at
+///   `offset_of!(kinfo_file, kf_path)`, because everything after the record's end
+///   was cut before `copyout`. Reading it through `libc`'s struct would read far
+///   past the 384 bytes the kernel actually wrote.
+/// * **Descriptors that are not files appear too.** `kf_fd` is `-1` for the cwd,
+///   `-2` for the root directory, `-5` for the executable text and `-6` for the
+///   controlling terminal. `procstat -f` prints all of them, and hiding them
+///   would leave out exactly the entries a reader is looking for when a process
+///   is stuck in a deleted directory.
+#[cfg(target_os = "freebsd")]
+fn open_files_of(pid: gander_core::Pid) -> Option<Vec<String>> {
+    /// `offsetof(struct kinfo_file, kf_path)` — the *truncated* record's end, not
+    /// `libc`'s full struct. Verified against `procstat -f` on FreeBSD 14.5.
+    const PATH_OFF: usize = 368;
+    /// The smallest record that can still carry a path.
+    const MIN_RECORD: usize = PATH_OFF + 1;
+
+    let mut size = 0usize;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_FILEDESC, pid as i32];
+    // SAFETY: a null buffer with a zero length asks for the size only.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || size < MIN_RECORD {
+        return None;
+    }
+    // Headroom: a process can open descriptors between the size query and the
+    // read, and this selector genuinely reports a size (unlike ARGS/ENV).
+    let mut buf = vec![0u8; size + 8192];
+    let mut got = buf.len();
+    // SAFETY: `buf` is `got` bytes and `got` is passed as its length.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            buf.as_mut_ptr().cast(),
+            &mut got,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || got == 0 {
+        return None;
+    }
+
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    while offset + MIN_RECORD <= got {
+        let i32_at = |o: usize| i32::from_ne_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+        let stride = i32_at(offset) as usize;
+        if stride < MIN_RECORD || offset + stride > got {
+            break; // a short or overlong record: stop rather than misread
+        }
+        let fd = i32_at(offset + 8);
+        let start = offset + PATH_OFF;
+        let end = buf[start..offset + stride]
+            .iter()
+            .position(|b| *b == 0)
+            .map(|e| start + e)
+            .unwrap_or(offset + stride);
+        let path = String::from_utf8_lossy(&buf[start..end]).into_owned();
+        out.push(format!(
+            "{fd:>4}  {}",
+            if path.is_empty() { "-" } else { &path }
+        ));
+        offset += stride;
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn open_files_of(_pid: gander_core::Pid) -> Option<Vec<String>> {
+    None
+}
+
+fn fd_unavailable_reason() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "Another user's descriptors need CAP_SYS_PTRACE (root)."
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        "Another user's descriptors need root."
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        "macOS has proc_pidinfo(PROC_PIDLISTFDS) plus proc_pidfdinfo, which is \
+         not wired up here; use `lsof -p <pid>` meanwhile."
+    }
+}
+
+/// `flock(2)`/`fcntl(2)` locks held by `pid`.
+#[cfg(target_os = "linux")]
+fn file_locks_of(pid: gander_core::Pid) -> Option<Vec<String>> {
+    read_limited("/proc/locks", |bytes| {
+        let text = String::from_utf8_lossy(bytes);
+        let pid_marker = format!(" {pid} ");
+        text.lines()
+            .filter(|l| l.contains(&pid_marker))
+            .map(|l| l.to_string())
+            .collect()
+    })
+}
+
+/// FreeBSD has no `/proc/locks` and no `sysctl` that lists locks by owner; the
+/// kernel's lock list is only reachable with `lsof`, which is a port.
+#[cfg(target_os = "freebsd")]
+fn file_locks_of(_pid: gander_core::Pid) -> Option<Vec<String>> {
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn file_locks_of(_pid: gander_core::Pid) -> Option<Vec<String>> {
+    None
+}
+
+fn locks_unavailable_reason() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "No locks are recorded for this process."
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        "FreeBSD does not expose the lock table: `/proc/locks` does not exist and \
+         there is no `sysctl` for it. `lsof` (from ports) can show it."
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        "macOS does not expose a per-process lock table to unprivileged callers."
+    }
+}
+
+/// Read a `/proc` file, refusing anything pathologically large.
+///
+/// Only the Linux arms use it, so it is gated with them rather than being dead
+/// code on the other platforms.
+#[cfg(target_os = "linux")]
 fn read_limited<T>(path: &str, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
     let bytes = std::fs::read(path).ok()?;
     // Guard against pathological files (environ can be large but bounded).
@@ -5317,7 +5591,7 @@ mod newly_reachable_column_tests {
             assert_eq!(text, expected);
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
             // Epoch microseconds — already absolute, no boot-time shift applies.
             let at = 1_700_000_000i64;
@@ -5347,7 +5621,7 @@ mod newly_reachable_column_tests {
             assert_eq!(render_with(&r, Field::StartTime, &snap), "-");
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
             // A process row whose `starttime` was never filled in.
             r.starttime = 0;

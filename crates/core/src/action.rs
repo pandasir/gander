@@ -64,7 +64,7 @@ pub fn execute(action: &Action) -> Result<(), std::io::Error> {
             // SAFETY: both calls take only integers.
             unsafe { set_errno(0) };
             // SAFETY: `getpriority` has no preconditions.
-            let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, pid as libc::id_t) };
+            let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, who(pid)) };
             // SAFETY: reading errno has no preconditions.
             if cur == -1 && unsafe { errno() } != 0 {
                 return Err(io::Error::last_os_error());
@@ -125,11 +125,27 @@ unsafe fn set_errno(value: i32) {
     }
 }
 
+/// The `who` argument for `getpriority`/`setpriority`.
+///
+/// POSIX types it `id_t`, and FreeBSD's `id_t` is genuinely 64-bit while its
+/// `getpriority` still takes an `int`; `libc` reproduces each platform's actual
+/// prototype, so the two spellings differ. Naming the type once keeps the call
+/// sites identical.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn who(pid: Pid) -> libc::id_t {
+    pid as libc::id_t
+}
+
+#[cfg(target_os = "freebsd")]
+fn who(pid: Pid) -> libc::c_int {
+    pid as libc::c_int
+}
+
 #[cfg(unix)]
 fn set_nice(pid: Pid, nice: i32) -> Result<(), std::io::Error> {
     use std::io;
     // SAFETY: integer arguments only.
-    let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, nice) };
+    let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, who(pid), nice) };
     if rc == 0 {
         Ok(())
     } else {

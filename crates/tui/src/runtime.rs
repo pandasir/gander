@@ -12,7 +12,7 @@ use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers};
 #[allow(unused_imports)]
 use crate::app::{App, Key};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
@@ -267,11 +267,11 @@ mod platform {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 pub use platform::run;
 
 /// Non-Linux stub: there is no backend yet, so the TUI cannot start.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
 pub fn run(_app: App) -> std::io::Result<gander_config::Config> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,

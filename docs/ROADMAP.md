@@ -539,11 +539,95 @@ The in-app help screen and `--help` listed a fraction of the bindings: `L`, `H`,
 The `docs/KEYS.md` "Acting on processes" table was broken by a paragraph in the
 middle, leaving eight keys outside the table; it is now two tables.
 
+## M4 — portability
+
+| Area | State |
+|---|---|
+| macOS backend (`libproc` + `sysctl` + Mach) | done, ahead of schedule |
+| FreeBSD backend (`sysctl` + `libkvm` + `devstat`) | done, verified in a live VM |
+| Three `PlatformSampler` implementations behind one compile-time selection | done |
+| Per-platform `Field` gating, so a column that cannot work is absent rather than `-` | done |
+| CPU affinity on Linux and FreeBSD; macOS says why it has none | done |
+| Host disk throughput on Linux and FreeBSD; macOS says why it has none | done |
+| Other BSDs (OpenBSD, NetBSD, DragonFly) | not planned — see below |
+
+M4 is complete for Linux, macOS and FreeBSD. The FreeBSD backend was written and
+verified on **FreeBSD 14.5-RELEASE/arm64 in QEMU**: the full workspace suite runs
+inside the guest, plus `crates/core/tests/freebsd_live.rs`, twenty tests that
+compare gander's figures against `sysctl(8)`, `ps(1)`, `swapinfo(8)` and
+`netstat(1)` in the same test. The TUI was started in the guest and rendered the
+`panels` layout correctly.
+
+### The four bugs only a live FreeBSD run could find
+
+Every one of these passed review and passed the other platforms' tests, because
+each is a place where two plausible readings of the same field differ:
+
+**`SSLEEP` is three states, not one.** `ki_stat` is not a state letter and is not
+even a function of the state. The first version mapped `1..7` onto `I R S T Z W ?`
+arithmetically, which reported `I` for a process that had just been forked
+(`SIDL`) and `S` for every sleeper. `ps`'s `print.c` is the authority: `SIDL` and
+`SRUN` are `R`; `SSLEEP` splits into `D` (uninterruptible, `ki_tdflags &
+TDF_SINTR` clear), `I` (interruptible and asleep for `MAXSLP` = 20 s), and `S`;
+`SLOCK` is `L`. Collapsing `D` into `S` hides exactly the state that explains a
+machine that feels hung — a process blocked on disk cannot be signalled away. The
+live test compares every process's letter against `ps -axo pid,stat`.
+
+**`comm_buf` truncated to empty.** `ArrayString::try_push_str` *rejects* a string
+that does not fit and leaves the buffer as it was. So a name longer than 64 bytes
+produced a blank `COMMAND`, not a shortened one — and a blank command name looks
+exactly like a process the sampler could not identify. The test's own fully
+qualified path triggered it on every run.
+
+**`ELAPSED` subtracted the boot time twice.** The first version computed
+`uptime - (start - boot)`. On a machine whose clock is newer than its boot — that
+is, all of them — `start - boot` is the process's age, so every process reported
+`0`. `now - start` is the whole formula; the boot time is irrelevant once `start`
+is absolute.
+
+**`cwd` was `None` for every process.** `KERN_PROC_CWD` returns a
+`struct kinfo_file`, not a path, and a `PATH_MAX`-sized buffer is too small for it
+(`ENOMEM`). Reading the buffer as a C string yields a single NUL byte, for every process,
+which is indistinguishable from "the kernel will not tell us" — so the failure
+looked like a permission model rather than a parsing bug.
+
+**`KERN_PROC_FILEDESC`'s records are variable-length.** The `l` panel said
+"cannot read file descriptors" for a process whose descriptors were perfectly
+readable. `libc`'s `struct kinfo_file` is 1392 bytes; the kernel truncates each
+record after `kf_path` and reports 376–408. The guard written was the natural one
+— *skip a record whose `kf_structsize` is smaller than the struct we know about*
+— which rejects every record the kernel sends. The stride is the record's own
+size, and `kf_path` sits at a fixed offset of 368 because everything past the
+truncation point was never copied out.
+
+Four more were found by comparing against the system's own tools rather than by
+reviewing the code: `hw.physmem` is larger than `v_page_count * pagesize` by the
+kernel's early allocations, so using it as the bar's denominator leaves the bar
+permanently short of full; `kvm_getswapinfo` reports pages, not bytes; `devstat`'s
+pass-through devices double-count every byte; and `KERN_PROC_FILEDESC` lists the
+cwd, root, text and controlling terminal as negative `kf_fd` entries rather than
+leaving them out.
+
+### Why not the other BSDs
+
+OpenBSD and NetBSD have neither `kinfo_proc` nor `libkvm` in the same shape, and
+DragonFly has diverged from FreeBSD since 2003. Each would be a new backend
+written against a system this project has no way to test — and the M3 lesson is
+that "it compiles" is worth very little: every trap in
+[PORTABILITY.md](PORTABILITY.md#freebsd-specific-traps-all-hit-and-fixed-during-development)
+produced a plausible number. A backend that cannot be run is a backend that
+cannot be trusted.
+
+`crates/core/src/lib.rs` is written so adding one is mechanical — a new `mod`, a
+`PlatformSampler` impl, a `type Sampler` arm — but nobody should write it without
+a machine to run it on.
+
 ## Deliberately not planned
 
 - A PCP-style dynamic metric engine (runtime-defined columns/meters).
 - Any daemon, setuid helper, or eBPF dependency.
 - Windows support.
+- OpenBSD, NetBSD and DragonFly backends — see above.
 
 ## Known limitations
 
@@ -553,6 +637,19 @@ middle, leaving eight keys outside the table; it is now two tables.
   user cannot be inspected that way, and are shown as `?` rather than guessed at.
 - macOS has no per-process CPU affinity mask and no I/O priority; both panels say
   so instead of failing silently.
+- FreeBSD has no I/O priority panel (`ioprio_set` is a Linux syscall; FreeBSD's
+  `rtprio`/`idprio` answer a different question), and the panel says so.
+- FreeBSD jails are read (`kinfo_proc.ki_jid`) but not displayed: a bare integer
+  that nothing groups on is a number, not information, and `jid 0` is the common
+  case.
+- FreeBSD's `kern.proc` size query is racy, so a machine forking thousands of
+  processes a second can lose a row between the size query and the read. There is
+  no atomic "read the whole table" interface; three retries with headroom is what
+  `ps(1)` does.
+- FreeBSD's memory is read from six separate `sysctl` calls rather than one
+  snapshot, so the counters are milliseconds apart on a busy VM. The bar can be
+  off by a few hundred pages under load; reading them atomically would need a
+  subtree walk for no visible gain.
 - Rayon parallelism is only exercised at 512+ processes; the 4-process fixture
   path is sequential by design.
 - The Linux path is verified in a Docker container (see PORTABILITY.md), but not

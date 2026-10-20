@@ -355,7 +355,11 @@ mod tests {
             error: None,
             dirty: false,
         };
-        assert!(p.can_edit() || cfg!(not(target_os = "linux")));
+        // On a platform with no mask the panel must refuse to edit; on one with a
+        // mask it must allow it. `capability::AFFINITY` is not the right question
+        // here — it is true on macOS too, where the panel exists only to explain
+        // that a scheduler hint is all the OS offers.
+        assert_eq!(p.can_edit(), gander_core::affinity::supported());
         let before = p.mask.count();
         if p.can_edit() {
             p.toggle();
@@ -414,15 +418,34 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     #[test]
     fn macos_panels_explain_themselves() {
         let panel = IoPriorityPanel::new(std::process::id());
         assert!(!panel.can_edit());
         assert!(panel.unsupported.as_deref().unwrap().contains("Linux"));
 
+        // macOS has no per-process mask, so the affinity panel explains itself
+        // too — unlike FreeBSD, where `cpuset_setaffinity` makes it real.
         let affinity = AffinityPanel::new(std::process::id(), 8);
         assert!(!affinity.can_edit());
         assert!(affinity.unsupported.is_some());
+    }
+
+    /// `i` is the one panel FreeBSD cannot honour: it has `rtprio`/`idprio`
+    /// instead of an I/O priority class, which is a different question.
+    #[cfg(target_os = "freebsd")]
+    #[test]
+    fn freebsd_has_affinity_but_no_io_priority() {
+        let affinity = AffinityPanel::new(std::process::id(), 8);
+        assert!(
+            affinity.can_edit(),
+            "cpuset_setaffinity works on FreeBSD: {:?}",
+            affinity.unsupported
+        );
+
+        let io = IoPriorityPanel::new(std::process::id());
+        assert!(!io.can_edit(), "FreeBSD has no ioprio_set");
+        assert!(io.unsupported.as_deref().unwrap().contains("Linux"));
     }
 }

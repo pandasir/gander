@@ -1,11 +1,15 @@
 //! CPU affinity: which cores a process may run on.
 //!
-//! The two supported platforms disagree about what affinity *is*, so this module
+//! The supported platforms disagree about what affinity *is*, so this module
 //! models the platform honestly instead of pretending they match:
 //!
 //! * Linux has hard affinity. `sched_getaffinity` reads the mask, and the mask is
 //!   enforced by the scheduler, so it can be set without privilege on your own
 //!   processes.
+//! * FreeBSD also has hard affinity, through `cpuset_getaffinity`. The API is a
+//!   `cpuset_t` (1024 bits) rather than a sized byte array, and the *level* and
+//!   *which* arguments select the target: `CPU_LEVEL_WHICH` + `CPU_WHICH_PID`
+//!   means "this process's set", which is what the panel edits.
 //! * macOS has only a *hint*. `thread_policy_set(THREAD_AFFINITY_POLICY)` tags a
 //!   thread with an affinity group, and the scheduler uses it as a preference.
 //!   There is no per-process mask, and reading it back is not supported. Leaving
@@ -91,7 +95,7 @@ impl CpuMask {
 
 /// Whether this build can change affinity at all.
 pub fn supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(target_os = "linux", target_os = "freebsd"))
 }
 
 /// Read the affinity mask of `pid`.
@@ -151,7 +155,84 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// FreeBSD: `cpuset_getaffinity`/`cpuset_setaffinity`.
+///
+/// The kernel's `cpuset_t` is opaque in `libc` (its bit array is private), and
+/// the syscall takes the *size* of the set, so this wraps the struct rather than
+/// reimplementing the bit layout. Going through `CpuMask` keeps one model for the
+/// UI: bits in, bits out.
+#[cfg(target_os = "freebsd")]
+mod imp {
+    use super::CpuMask;
+
+    pub fn read(pid: u32, cores: usize) -> Result<Option<CpuMask>, String> {
+        let mut set = std::mem::MaybeUninit::<libc::cpuset_t>::zeroed();
+        // SAFETY: `set` is one `cpuset_t` and its size is passed, as the syscall
+        // requires.
+        let rc = unsafe {
+            libc::cpuset_getaffinity(
+                libc::CPU_LEVEL_WHICH,
+                libc::CPU_WHICH_PID,
+                pid as libc::id_t,
+                std::mem::size_of::<libc::cpuset_t>(),
+                set.as_mut_ptr(),
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // SAFETY: a zero return means the whole set was filled.
+        let set = unsafe { set.assume_init() };
+        // `cpuset_t`'s fields are private, so it is read as bytes: the bit for
+        // core N is byte N/8, bit N%8, which is the same layout Linux uses for
+        // `sched_getaffinity` and therefore the layout `CpuMask::from_bytes`
+        // already understands.
+        //
+        // SAFETY: `cpuset_t` is a plain array of integers with no padding, so
+        // every byte of it is initialised.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                (&set as *const libc::cpuset_t).cast::<u8>(),
+                std::mem::size_of::<libc::cpuset_t>(),
+            )
+        };
+        Ok(Some(CpuMask::from_bytes(bytes, cores)))
+    }
+
+    pub fn write(pid: u32, mask: &CpuMask) -> Result<(), String> {
+        let mut set = std::mem::MaybeUninit::<libc::cpuset_t>::zeroed();
+        // SAFETY: `set` is one `cpuset_t` and is fully initialised before use.
+        let ptr = set.as_mut_ptr();
+        unsafe {
+            std::ptr::write_bytes(ptr.cast::<u8>(), 0, std::mem::size_of::<libc::cpuset_t>());
+            let bytes =
+                std::slice::from_raw_parts_mut(ptr.cast::<u8>(), std::mem::size_of::<libc::cpuset_t>());
+            for (i, b) in mask.to_bytes().into_iter().enumerate() {
+                if let Some(slot) = bytes.get_mut(i) {
+                    *slot = b;
+                }
+            }
+        }
+        // SAFETY: `set` was fully initialised above and its size is passed.
+        let rc = unsafe {
+            libc::cpuset_setaffinity(
+                libc::CPU_LEVEL_WHICH,
+                libc::CPU_WHICH_PID,
+                pid as libc::id_t,
+                std::mem::size_of::<libc::cpuset_t>(),
+                set.as_ptr(),
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
+        }
+    }
+}
+
+/// macOS (and everything else): no per-process mask.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod imp {
     use super::CpuMask;
 
@@ -230,7 +311,7 @@ mod tests {
         assert!(err.is_err(), "an empty mask must never reach the kernel");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn reading_our_own_affinity_works_and_is_never_empty() {
         let cores = std::thread::available_parallelism()
@@ -241,7 +322,7 @@ mod tests {
         assert!(mask.count() <= cores);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn setting_our_own_affinity_round_trips() {
         let cores = std::thread::available_parallelism()
@@ -262,7 +343,7 @@ mod tests {
         let _ = write(std::process::id(), &original);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     #[test]
     fn platforms_without_a_mask_say_so() {
         assert!(!supported());
