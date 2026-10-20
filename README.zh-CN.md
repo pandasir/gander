@@ -299,23 +299,24 @@ uptime、任务、时钟、日期、主机名、空白）之外，还有两个�
 
 ## 平台支持
 
-| | Linux | macOS |
-|---|---|---|
-| 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` |
-| 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` |
-| 容器列 | cgroup + PID namespace | 不可用 |
-| PSS / EPSS / private 列 | `smaps_rollup`，按需读取 | 不可用 |
-| PSI 压力（some/full） | `/proc/pressure` | 不可用 |
-| Zram / Zswap / HugePages meter | `/sys/block/zram*`、`meminfo` | 不可用 |
-| GPU 列（`GPU%`、`GPU_TIME`） | `fdinfo` 里的 `drm-usage-stats` | 不可用 |
-| 延迟列（`CPUD%`、`IOD%`、`SWPD%`） | `TASKSTATS` netlink（需 `CAP_NET_ADMIN`） | 不可用 |
-| 线程按行显示 | 支持（`H`） | 支持（`H`） |
-| CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 |
-| I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 |
+| | Linux | macOS | FreeBSD |
+|---|---|---|---|
+| 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` | `sysctl(KERN_PROC_PROC)` |
+| 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` | `kinfo_proc` |
+| 容器列 | cgroup + PID namespace | 不可用 | 不可用 |
+| PSS / EPSS / private 列 | `smaps_rollup`，按需读取 | 不可用 | 不可用 |
+| PSI 压力（some/full） | `/proc/pressure` | 不可用 | 不可用 |
+| Zram / Zswap / HugePages meter | `/sys/block/zram*`、`meminfo` | 不可用 | 不可用 |
+| GPU 列（`GPU%`、`GPU_TIME`） | `fdinfo` 里的 `drm-usage-stats` | 不可用 | 不可用 |
+| 延迟列（`CPUD%`、`IOD%`、`SWPD%`） | `TASKSTATS` netlink（需 `CAP_NET_ADMIN`） | 不可用 | 不可用 |
+| 线程按行显示 | 支持（`H`） | 支持（`H`） | 支持（`H`） |
+| CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 | 可读可写（`cpuset`） |
+| I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 | 不可用，面板会说明原因 |
+| 主机磁盘吞吐（`DiskIO`） | `/proc/diskstats` | 不可用 | `devstat` |
 
-两个后端都针对真实操作系统验证过。其他 unix 目标可以编译 `/proc` 后端，但没有
-可用的数据源；此时 TUI 会拒绝启动，而不是显示一片空白。细节见
-[docs/PORTABILITY.md](docs/PORTABILITY.md)。
+三个后端都针对真实操作系统验证过——FreeBSD 在 QEMU 里跑 14.5-RELEASE，整套测试在
+guest 内运行。其他 unix 目标可以编译 `/proc` 后端，但没有可用的数据源；此时 TUI 会
+拒绝启动，而不是显示一片空白。细节见 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
 
 ## 构建与测试
 
@@ -344,7 +345,8 @@ gander 把 htop 的*功能清单*当作需求文档，丢掉它的*代码结构*
 | 平台 | Linux、BSD、macOS | Linux、macOS、FreeBSD，共用 `PlatformSampler` trait |
 
 更多内容：设计见 [docs/DESIGN.md](docs/DESIGN.md)，已完成与后续计划见
-[docs/ROADMAP.md](docs/ROADMAP.md)。
+[docs/ROADMAP.md](docs/ROADMAP.md)，每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)，
+发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 许可证
 

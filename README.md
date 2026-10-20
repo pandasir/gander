@@ -385,7 +385,9 @@ The core crate has no UI dependency, which is what makes `--json` nearly free.
 | Platforms | Linux, BSD, macOS | Linux, macOS, FreeBSD, same `PlatformSampler` trait |
 
 More: [docs/DESIGN.md](docs/DESIGN.md) for the design,
-[docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what is next.
+[docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what is next,
+[CHANGELOG.md](CHANGELOG.md) for what changed in each release, and
+[docs/RELEASING.md](docs/RELEASING.md) for how a release is cut.
 
 ## License
 

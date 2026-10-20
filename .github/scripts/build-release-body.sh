@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# Build the release body from the annotated tag the release is for.
+#
+# Why this exists: the body used to be a static block in `release.yml`, identical
+# for every tag, so the Releases page said nothing about what changed — while the
+# tag message, which said it well, was visible only to `git`. Two copies of the
+# release notes, with one of them always wrong.
+#
+# There is no hand-maintained changelog. A changelog written by hand is a third
+# copy of facts that already live in the tag and in `docs/ROADMAP.md`, and this
+# repository's two documented failures are both "a restatement drifted": the
+# `Field` example in DESIGN.md §4.1 and the workspace tree in §2. The tag message
+# is written at release time by the person who knows what changed, cannot be
+# forgotten (an annotated tag has a message or it is not one), and is reviewed by
+# whoever reads `git log`. `CHANGELOG.md` is generated from these tags, not edited.
+#
+# Usage: build-release-body.sh <tag>    e.g. v0.6.0
+# Body goes to stdout. Exits non-zero rather than publishing empty notes.
+
+set -euo pipefail
+
+tag="${1:-}"
+if [[ -z "$tag" ]]; then
+    echo "usage: $0 <tag>" >&2
+    exit 2
+fi
+
+repo="${GITHUB_REPOSITORY:-pandasir/gander}"
+
+if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    echo "error: no such tag: $tag" >&2
+    exit 1
+fi
+
+# A lightweight tag points at a commit and carries no message of its own, so
+# `%(contents)` would hand back the *commit's* message and the release would ship
+# a changelog entry that nobody wrote as one. Refuse instead; the fix is to tag
+# with `-a`, which is what the script in docs/RELEASING.md does.
+if [[ "$(git cat-file -t "$tag")" != "tag" ]]; then
+    echo "error: $tag is a lightweight tag; releases need an annotated tag with notes" >&2
+    exit 1
+fi
+
+subject=$(git tag -l --format='%(contents:subject)' "$tag")
+notes=$(git tag -l --format='%(contents:body)' "$tag")
+
+if [[ -z "${notes//[[:space:]]/}" ]]; then
+    echo "error: $tag has no tag message body; the release would ship without notes" >&2
+    exit 1
+fi
+
+# The subject already reads "v0.6.0: M4 complete — …", so it becomes the title
+# rather than being repeated as the body's first line.
+title="$subject"
+case "$title" in
+    "$tag:"*) title="${title#"$tag: "}" ;;
+    *) title="$tag — $title" ;;
+esac
+
+prev=$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)
+
+# Headline first: the old body opened with "download the archive", the same
+# sentence for every release, which carried no information at the one place a
+# reader looks to find out what a version is.
+printf '## %s\n\n' "$title"
+printf '%s\n\n' "$notes"
+
+printf -- '---\n\n'
+printf '## Install\n\n'
+printf '```bash\n'
+printf 'tar -xzf gander-%s-<platform>.tar.gz\n' "${tag#v}"
+printf './gander-%s-*/gander\n' "${tag#v}"
+printf '```\n\n'
+printf '| Archive | Platform |\n'
+printf '|---|---|\n'
+printf '| `aarch64-apple-darwin` | macOS, Apple Silicon |\n'
+printf '| `x86_64-apple-darwin` | macOS, Intel |\n'
+printf '| `x86_64-unknown-linux-gnu` | Linux (glibc) |\n'
+printf '| `x86_64-unknown-linux-musl` | Linux (static, any distro) |\n'
+printf '| `x86_64-unknown-freebsd` | FreeBSD 14 and later |\n'
+printf '\n'
+printf 'Every archive has a `.sha256` beside it: `shasum -a 256 -c <file>.sha256`.\n'
+printf 'From source: `cargo install --path crates/bin` (Rust 1.89+).\n\n'
+
+if [[ -n "$prev" ]]; then
+    printf 'Full diff and commit list: [%s...%s](https://github.com/%s/compare/%s...%s)\n\n' \
+        "$prev" "$tag" "$repo" "$prev" "$tag"
+else
+    printf 'Full history: [commits](https://github.com/%s/commits/%s)\n\n' "$repo" "$tag"
+fi
+
+printf 'Every release is explained at length — the reasoning, the alternatives, and what a\n'
+printf 'live kernel or VM taught the implementation — in\n'
+printf '[docs/ROADMAP.md](https://github.com/%s/blob/%s/docs/ROADMAP.md). The notes above say\n' "$repo" "$tag"
+printf 'what shipped; ROADMAP says why.\n'

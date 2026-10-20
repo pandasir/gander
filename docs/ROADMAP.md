@@ -88,8 +88,9 @@ Done:
       `screen:NAME=` tab sections
 - [x] Per-meter cursor in the header (`Shift+Left`/`Shift+Right`), so `I` changes
       only the selected meter, and the selection is underlined
-- [x] `PlatformSampler` is implemented by both backends; `sample`/`cache_len` live
-      only on the trait, so neither platform can grow a method the other lacks
+- [x] `PlatformSampler` is implemented by all three backends (Linux `/proc`,
+      `darwin`, `freebsd`); `sample`/`cache_len` live only on the trait, so no
+      platform can grow a method the others lack
 - [x] Settings changed inside the TUI are actually saved on exit (the exit path
       used to write back the config it had *started* with)
 - [x] Linux verified in a Debian container against a real `/proc`, including the
@@ -627,7 +628,8 @@ a machine to run it on.
 
 ## M5 — per-process I/O, and the promises the repo makes
 
-Not started. Ships as **v0.7.0**.
+Not started. Ships as **v0.7.0**. One of its five items (release notes) already
+landed in v0.6.0, because it was cheap and its absence was actively misleading.
 
 M0–M4 left one column family unbuilt and a set of claims that are no longer true.
 Both are the same kind of defect: something this repository says is not something
@@ -640,7 +642,7 @@ last milestone's audit (see [Post-M3 fixes](#post-m3-fixes)) found four of those
 | Per-process I/O rates: `IO_READ_RATE` / `IO_WRITE_RATE` / `IO_RATE` | not started |
 | `s` attaches a real tracer instead of explaining itself | not started |
 | `DESIGN.md` and `PORTABILITY.md` match the code that exists | not started |
-| Per-release `CHANGELOG.md`, and release notes that say what changed | not started |
+| Per-release `CHANGELOG.md`, and release notes that say what changed | **done in v0.6.0** |
 
 ### Per-process I/O, and why it is not just three more columns
 
@@ -745,15 +747,15 @@ a sentence a user could act on and be wrong:
   `benches/ criterion` when there is no criterion dependency — the benchmark is a
   hand-timed `benches/scan.rs`, and says so in its own header. The tree also omits
   `darwin/` and `freebsd/` entirely, i.e. two thirds of the backends.
-- **`README.md` and `README.zh-CN.md` say the identity columns "work on both
-  platforms"**. There are three. A reader on FreeBSD is told the column set is
-  half-broken when it is not. (The English sentence and the missing 身份列 section
-  in the Chinese file are fixed; the rest of the item is not.)
-- **`README.zh-CN.md`'s platform table still has two columns and says "两个后端"**,
-  and its "其他 unix 目标" paragraph predates the FreeBSD backend entirely. The
-  English table has three columns and two extra rows. The Chinese file is the one
-  a Chinese reader trusts and it is missing a whole platform, so it is rewritten
-  from the English table rather than patched.
+- **`README.md` and `README.zh-CN.md` said the identity columns "work on both
+  platforms"**. There are three. Fixed in v0.6.0: the English sentence, and the
+  missing 身份列 section in the Chinese file, which had none at all.
+- **`README.zh-CN.md`'s platform table had two columns and said "两个后端"**, and its
+  "其他 unix 目标" paragraph predated the FreeBSD backend. Fixed in v0.6.0 by
+  rewriting it from the English table (three columns, `DiskIO` row included), along
+  with the English "both platforms" sentence and the missing 身份列 section. The
+  remaining instances of "both" in this file are M0-era history and have been left
+  where they describe that milestone, corrected where they claimed a current state.
 - **`DESIGN.md` §3's memory snippet says "the two platforms genuinely disagree"**
   and gives two formulas. `freebsd/system.rs` is a third model entirely
   (`used = active + wired + laundry`, with the page queues checked against
@@ -772,23 +774,36 @@ pointer to the source of truth plus the reasoning that is *not* in the code —
 why `core` has no UI dependency, why the cost gates sit on `Field`. A doc that
 restates code is a doc that will be wrong within one milestone.
 
-### Releases that say what they contain
+### Releases that say what they contain — **done**
 
-There is no `CHANGELOG.md`. Every release's notes are a static body in
-`.github/workflows/release.yml` — the same six lines for every tag — so the
-Releases page says nothing about what v0.5.0 changed, and the milestone write-ups
-that explain it best live only in this file, inside the repository, where a user
-downloading a binary will not look.
+Every release's notes were a static body in `.github/workflows/release.yml`: the same
+six lines for every tag, so the Releases page said nothing about what v0.5.0
+changed, while the tag message that explained it well was visible only to `git`.
+The v0.6.0 release made the cost concrete — it listed
+`x86_64-unknown-freebsd` in its platform table for a milestone whose FreeBSD
+archive the workflow never attached.
 
-- `CHANGELOG.md`, newest first, one section per version, each pointing at the
-  milestone section here for the reasoning.
-- `release.yml` builds the release body from that file's section for
-  `$GITHUB_REF_NAME`, so the notes cannot be forgotten and cannot disagree with the
-  tag.
-- `README.md`'s download snippet hardcodes `0.5.0` three times in each language
-  file; it points at `releases/latest/download/` with a version-pinned *filename*,
-  which is wrong on the day the next tag lands. Either derive it or link the
-  release page.
+There is still no hand-maintained changelog, deliberately. A file edited by hand at
+release time is a file that gets forgotten, and a hand-written changelog is a third
+copy of facts that already live in the tag and in this document.
+
+**The annotated tag is the only input.** It is written by whoever knows what
+changed, at the moment they know it, and reviewers already read it through
+`git log`.
+
+- `.github/scripts/build-release-body.sh <tag>` builds the release body from the
+  tag: headline, then the notes verbatim, then install instructions and a compare
+  link. It exits non-zero for a missing tag, a lightweight tag, or an empty body,
+  so a release cannot ship with blank notes — the failure mode that started this.
+- `.github/scripts/gen-changelog.sh --write` regenerates `CHANGELOG.md` from every
+  annotated tag in version order. It is idempotent, so re-running it produces no
+  diff.
+- The `release` job also compares `$GITHUB_REF_NAME` against
+  `[workspace.package] version` and fails if they differ. `--version` reads the
+  manifest, so a tag without a bump would publish binaries claiming the previous
+  version under the new version's filename.
+- The procedure, including how to fix a bad release (delete and re-tag rather than
+  patch over it) is [RELEASING.md](RELEASING.md).
 
 ### Done when
 
@@ -809,8 +824,8 @@ downloading a binary will not look.
 - [ ] `DESIGN.md`'s tree and §4.1 enum example match the repository; §3's memory
       snippet covers all three models; README says three platforms in both
       languages; the M0 checklist says three backends
-- [ ] `CHANGELOG.md`, release body generated from it, README download link no
-      longer pinned by hand
+- [ ] `CHANGELOG.md` regenerated at release time (the mechanism exists; the item is
+      the habit, not the script)
 - [ ] Tests on all three platforms, zero clippy warnings, and the Linux container
       check extended to the new read path
 
