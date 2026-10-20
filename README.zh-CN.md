@@ -14,9 +14,9 @@ htop 不同 —— 一个把空间花在进程列表上、而不是花在横向�
 [Releases 页面](https://github.com/pandasir/gander/releases)：
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.6.0-aarch64-apple-darwin.tar.gz
-./gander-0.6.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.1-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.6.1-aarch64-apple-darwin.tar.gz
+./gander-0.6.1-aarch64-apple-darwin/gander
 ```
 
 按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
