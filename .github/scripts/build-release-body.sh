@@ -37,8 +37,19 @@ fi
 # `%(contents)` would hand back the *commit's* message and the release would ship
 # a changelog entry that nobody wrote as one. Refuse instead; the fix is to tag
 # with `-a`, which is what the script in docs/RELEASING.md does.
+#
+# The second clause is what made this error misleading in CI: `actions/checkout`
+# fetches a tag ref by commit SHA, so the tag object is absent and a perfectly good
+# annotated tag looks lightweight. Nothing local can distinguish that from a real
+# lightweight tag, so the message says both possibilities and names the workflow
+# step that fixes the checkout case.
 if [[ "$(git cat-file -t "$tag")" != "tag" ]]; then
-    echo "error: $tag is a lightweight tag; releases need an annotated tag with notes" >&2
+    {
+        echo "error: $tag does not resolve to a tag object here"
+        echo "  either it is a lightweight tag (use: git tag -a $tag)"
+        echo "  or the tag object was never fetched (use: git fetch --force origin "
+        echo "    +refs/tags/$tag:refs/tags/$tag); actions/checkout does not do this"
+    } >&2
     exit 1
 fi
 

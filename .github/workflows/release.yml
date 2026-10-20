@@ -126,6 +126,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch the real tag object
+        # `actions/checkout` on a tag ref runs
+        #   git fetch --no-tags --depth=1 origin +<sha>:refs/tags/<tag>
+        # which points the tag ref at the *commit*, so `git cat-file -t` reports
+        # "commit" and the annotated tag — i.e. the release notes — never arrives.
+        # v0.6.0 passed by luck; v0.6.1 failed with "lightweight tag" while the tag
+        # on the remote is annotated. Re-fetching the ref explicitly gets the tag
+        # object back. `--force` because the shallow ref already exists.
+        run: |
+          git fetch --force --depth=1 origin \
+            "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          kind=$(git cat-file -t "${GITHUB_REF_NAME}")
+          echo "${GITHUB_REF_NAME} is a ${kind}"
+          if [ "$kind" != tag ]; then
+            echo "::error::${GITHUB_REF_NAME} is not an annotated tag on the remote"
+            exit 1
+          fi
+
       - name: The tag and the manifest must agree
         # `--version` reads `CARGO_PKG_VERSION` from `Cargo.toml`, so a tag pushed
         # without a version bump publishes binaries that report the *previous*
