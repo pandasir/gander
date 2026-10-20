@@ -14,9 +14,9 @@ htop 不同 —— 一个把空间花在进程列表上、而不是花在横向�
 [Releases 页面](https://github.com/pandasir/gander/releases)：
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.5.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.5.0-aarch64-apple-darwin.tar.gz
-./gander-0.5.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.6.0-aarch64-apple-darwin.tar.gz
+./gander-0.6.0-aarch64-apple-darwin/gander
 ```
 
 按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
@@ -166,6 +166,31 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 搜索与过滤历史单独存放于 `$XDG_STATE_HOME/gander/{search,filter}_history`——
 配置是你会复制到另一台机器的*决定*，历史只是使用这台机器的*副产品*。在
 `F3` / `F4` 提示符里按 `Up` / `Down` 即可翻阅，重跑昨天的过滤只需要一个键。
+
+### 身份列
+
+另有七列描述进程*是谁*，而不是*在做什么*。三平台全部可用。
+
+| 列 | 含义 |
+|---|---|
+| `SESSION` | 登录会话 id（`SID`）；内核不说时显示 `-` |
+| `TTY` | 控制终端，解码为 `pts/3` 或 `tty1`；没有则显示 `?` |
+| `TPGID` | 该终端上前台作业的进程组 |
+| `STARTTIME` | 墙钟启动时间：boot 时间加上进程的 start ticks |
+| `TGID` | 线程组 id：线程行所属的进程 |
+| `SCHED_POLICY` | `other`、`fifo`、`rr`、`batch`、`idle`、`deadline` |
+| `PROC_COMM` | 内核持有的短命令名 |
+| `PROC_EXE` | 解析后的可执行文件路径 |
+| `CWD` | 工作目录 |
+
+`COMM` 与 `PROC_COMM` 不是同一列，这是有意的：`COMM` 是 htop 的 Command 列，
+显示*命令行*；`PROC_COMM` 是内核持有的可执行文件名。htop 也做同样的区分。
+
+`STARTTIME` 以快照的 boot 时间偏移，并按**本地时间**渲染，所以它与表头的 `Clock`
+一致，而不是悄悄使用 UTC。
+
+`TTY` 解码内核的 `tty_nr` 设备号而不是直接打印：`34816` 不是一个任何人能认出的终端，
+`pts/0` 才是。`TPGID` 对内核的 `-1` 渲染为 `-`，那表示“没有前台作业”，不是一个进程组。
 
 ### 容器列（Linux）
 

@@ -17,9 +17,9 @@ instead of on horizontal bars.
 source — it needs no headers beyond what the base system ships:
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.5.0-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.5.0-aarch64-apple-darwin.tar.gz
-./gander-0.5.0-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.0-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.6.0-aarch64-apple-darwin.tar.gz
+./gander-0.6.0-aarch64-apple-darwin/gander
 ```
 
 Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
@@ -189,7 +189,7 @@ the `F3` / `F4` prompt walks it, so re-running yesterday's filter is one key.
 ### Identity columns
 
 Seven columns that describe *which* process this is rather than what it is doing.
-All of them work on both platforms.
+All of them work on all three platforms.
 
 | Column | Meaning |
 |---|---|

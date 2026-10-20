@@ -112,6 +112,17 @@ remaining BSDs are not planned — see [PORTABILITY.md](PORTABILITY.md).
 - Platform differences and the traps that were hit: see
   [PORTABILITY.md](PORTABILITY.md)
 
+### M5 — not started
+
+Per-process I/O (the last unbuilt column family), a real `s` tracer pane, and
+correcting the claims in this document that the code no longer supports. The plan
+and its reasoning: [ROADMAP.md § M5](ROADMAP.md#m5--per-process-io-and-the-promises-the-repo-makes).
+
+Nothing in this file has been changed ahead of that work, deliberately: the stale
+tree in §2 and the `IoReadRate, IoWriteRate` variants in §4.1 are the *evidence*
+that documentation drifts from code when it restates it, and deleting them here
+would erase the case for fixing it properly.
+
 ### Out of scope
 
 - Dynamic/runtime-defined metrics (PCP model)

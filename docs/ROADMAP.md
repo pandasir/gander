@@ -541,6 +541,9 @@ middle, leaving eight keys outside the table; it is now two tables.
 
 ## M4 — portability
 
+Released as **v0.6.0**. FreeBSD is the milestone's own work; macOS landed ahead of
+schedule.
+
 | Area | State |
 |---|---|
 | macOS backend (`libproc` + `sysctl` + Mach) | done, ahead of schedule |
@@ -621,6 +624,207 @@ cannot be trusted.
 `crates/core/src/lib.rs` is written so adding one is mechanical — a new `mod`, a
 `PlatformSampler` impl, a `type Sampler` arm — but nobody should write it without
 a machine to run it on.
+
+## M5 — per-process I/O, and the promises the repo makes
+
+Not started. Ships as **v0.7.0**.
+
+M0–M4 left one column family unbuilt and a set of claims that are no longer true.
+Both are the same kind of defect: something this repository says is not something
+the code does. A missing column is visible; a stale `DESIGN.md` is not, and the
+last milestone's audit (see [Post-M3 fixes](#post-m3-fixes)) found four of those.
+
+| Area | State |
+|---|---|
+| Per-process I/O: `RCHAR` / `WCHAR` / `SYSCR` / `SYSCW` / `RBYTES` / `WBYTES` / `CNCLWB` | not started |
+| Per-process I/O rates: `IO_READ_RATE` / `IO_WRITE_RATE` / `IO_RATE` | not started |
+| `s` attaches a real tracer instead of explaining itself | not started |
+| `DESIGN.md` and `PORTABILITY.md` match the code that exists | not started |
+| Per-release `CHANGELOG.md`, and release notes that say what changed | not started |
+
+### Per-process I/O, and why it is not just three more columns
+
+`capability::PROC_IO` has been declared since M0 and **read by nothing**. The
+Darwin sampler still carries `disk_read` / `disk_written` in `PrevRow` behind
+`#[allow(dead_code)]`, with the comment "kept for the IO columns (milestone M1)" —
+a promise from three milestones ago, kept alive by an attribute that suppresses the
+warning that would have noticed it. `docs/PORTABILITY.md` is honest about the
+state ("*not yet*", "*parsed, not shown*"), which is the only reason this has not
+looked like a bug.
+
+| | Linux | macOS | FreeBSD |
+|---|---|---|---|
+| bytes and syscalls | `/proc/<pid>/io` | — | — |
+| bytes actually hitting the block layer | `read_bytes` / `write_bytes` | `ri_diskio_bytesread/written` | `ki_rusage.ru_inblock/ru_oublock` — a *count*, see below |
+| rates | delta ÷ **measured** interval | same | — |
+
+Four things decide whether the numbers are right, and each has a wrong answer that
+looks plausible:
+
+**`RCHAR` is not `RBYTES`.** `rchar` counts bytes returned by `read(2)` and
+`wchar` by `write(2)`, including page-cache hits, pipes and ttys. `read_bytes`
+counts what actually reached the block layer, and a process reading a cached file
+has a large `rchar` and a `read_bytes` of zero. htop's title for `RBYTES` is
+`IO_R` and its description says "Bytes of read(2) I/O", which is the wrong way
+round for the name and the right way round for the number. Both columns ship, with
+titles that say which is which.
+
+**A rate needs a measured interval, not the configured delay.** Same lesson as the
+`NetworkIO` and `DiskIO` meters in M1: a slow scan makes the real gap longer than
+`delay_ms`, so dividing by the configured value overstates the rate by exactly the
+amount the last scan was late.
+
+**The first sample has no rate.** It has a counter and no previous one, so the
+rate is `None`, not `0 B/s` — the same distinction the PSS family and the delay
+columns already make, and the reason the meters carry `prev_net` as an `Option`.
+
+**FreeBSD has the field and not the figure.** `getrusage(2)` there defines
+`ru_inblock` and `ru_oublock` as "the number of times the file system had to
+perform input/output" — an operation *count*, not a byte total and not even a
+block count. There is no way to turn it into bytes that does not need a per-device
+block size and an assumption that every operation moved one block.  htop's FreeBSD
+backend has no I/O columns at all, so there is nothing to agree or disagree with.
+The family is therefore **absent** on FreeBSD — `Field` gating already exists for
+exactly this, and a column that cannot work should not be in the setup screen at
+all rather than render `-` for every row.
+
+**Cost.** One `openat` + `read` per process, which is nothing next to
+`smaps_rollup`, but 4 000 of them per tick is not nothing either. `ScanOptions`
+gains a fifth flag, derived the same way as the other four — from the active tab's
+visible columns — so a tab without an I/O column pays nothing.
+
+**Batch mode.** `--json`'s extras object is `#[cfg(target_os = "linux")]`
+`memory_json`, holding the PSS and GPU values. I/O exists on macOS too, so it needs
+a sibling rather than a fifth arm inside a Linux-only function; a JSON consumer on
+macOS currently has no way to ask for these at all.
+
+### `s`, for real
+
+`s` has been a screen that explains why tracing is a terminal handover since the
+post-M3 audit. The explanation is correct and stays true — `strace` writes a live
+stream the alternate screen would swallow — but the conclusion does not follow.
+The answer is a pane that reads a **pipe**, which is what htop does
+(`TraceScreen.c`): `fork` + `pipe`, the child `dup2`s onto stdout/stderr and
+`exec`s the tracer, the parent reads non-blocking on the event loop's own tick and
+appends to the same scrollable buffer the other info screens use. `Esc` kills the
+child and reaps it.
+
+| | tracer | absence |
+|---|---|---|
+| Linux | `strace -T -tt -s 512 -p <pid>` | `ptrace` may be denied; see below |
+| FreeBSD | `truss -s 512 -p <pid>` | in the base system |
+| macOS | `dtruss -p <pid>` | needs SIP disabled; the panel must say so |
+
+**`ptrace_scope` is the thing that actually stops people.** The current panel warns
+about "the ptrace-permission caveat" in the abstract. On most distributions
+`/proc/sys/kernel/yama/ptrace_scope` is `1`, which forbids attaching to anything
+that is not a child — so the key fails for every process on the machine, for a
+reason the user cannot see and might reasonably blame on gander. The panel reads
+that file and prints its value, because it is the difference between "this is not
+implemented" and "this is set to 1".
+
+`b` (backtrace) stays a panel. `libunwind-ptrace` is marked **[later]** in
+[DESIGN.md](DESIGN.md) and unwinding a live process is a different problem from
+reading a pipe; the honest alternative — deleting the key — is worse, because htop
+has one and a missing key reads as a missing feature rather than an unbuilt one.
+
+### Documentation that is no longer true
+
+Found by reading the docs against the source, not by a failing test. Every item is
+a sentence a user could act on and be wrong:
+
+- **`DESIGN.md` §4.1 lists `IoReadRate, IoWriteRate`** in the `Field` enum. They
+  were deleted in the post-M3 audit (their htop ids could not be verified against
+  `ProcessField.h`, so naming them would have invented config keys). The section
+  is an example of what a derived column looks like, so it cannot simply be
+  trimmed to match — M5 gives those two variants real metadata and a real
+  implementation, and the snippet becomes true by construction. The same goes for
+  the nine identity columns, which the snippet still omits.
+- **`DESIGN.md` §2 lists files that do not exist**: `core/src/sort.rs`,
+  `core/src/filter.rs` (sorting and filtering live in `table.rs`), and
+  `benches/ criterion` when there is no criterion dependency — the benchmark is a
+  hand-timed `benches/scan.rs`, and says so in its own header. The tree also omits
+  `darwin/` and `freebsd/` entirely, i.e. two thirds of the backends.
+- **`README.md` and `README.zh-CN.md` say the identity columns "work on both
+  platforms"**. There are three. A reader on FreeBSD is told the column set is
+  half-broken when it is not. (The English sentence and the missing 身份列 section
+  in the Chinese file are fixed; the rest of the item is not.)
+- **`README.zh-CN.md`'s platform table still has two columns and says "两个后端"**,
+  and its "其他 unix 目标" paragraph predates the FreeBSD backend entirely. The
+  English table has three columns and two extra rows. The Chinese file is the one
+  a Chinese reader trusts and it is missing a whole platform, so it is rewritten
+  from the English table rather than patched.
+- **`DESIGN.md` §3's memory snippet says "the two platforms genuinely disagree"**
+  and gives two formulas. `freebsd/system.rs` is a third model entirely
+  (`used = active + wired + laundry`, with the page queues checked against
+  `v_page_count`), and it has no arm in that snippet — so the one document that
+  says *how memory is computed* omits a third of the answer. The formula is also
+  duplicated in `system.rs`'s own doc comments, which is why it drifted.
+- **`ROADMAP.md`'s M0 checklist says `PlatformSampler` "is implemented by both
+  backends"**, in a milestone section whose own text now says three.
+- **`PORTABILITY.md`'s per-process I/O row** is the "*not yet*" this milestone
+  removes.
+
+The fix for the class of problem, not just the instances: **a fact should live in
+one place**. The `Field` enum's example in `DESIGN.md` duplicates `row.rs` and
+drifted; the workspace tree duplicates `Cargo.toml` and drifted. Both become a
+pointer to the source of truth plus the reasoning that is *not* in the code —
+why `core` has no UI dependency, why the cost gates sit on `Field`. A doc that
+restates code is a doc that will be wrong within one milestone.
+
+### Releases that say what they contain
+
+There is no `CHANGELOG.md`. Every release's notes are a static body in
+`.github/workflows/release.yml` — the same six lines for every tag — so the
+Releases page says nothing about what v0.5.0 changed, and the milestone write-ups
+that explain it best live only in this file, inside the repository, where a user
+downloading a binary will not look.
+
+- `CHANGELOG.md`, newest first, one section per version, each pointing at the
+  milestone section here for the reasoning.
+- `release.yml` builds the release body from that file's section for
+  `$GITHUB_REF_NAME`, so the notes cannot be forgotten and cannot disagree with the
+  tag.
+- `README.md`'s download snippet hardcodes `0.5.0` three times in each language
+  file; it points at `releases/latest/download/` with a version-pinned *filename*,
+  which is wrong on the day the next tag lands. Either derive it or link the
+  release page.
+
+### Done when
+
+- [ ] `RCHAR`, `WCHAR`, `SYSCR`, `SYSCW`, `RBYTES`, `WBYTES`, `CNCLWB` on Linux,
+      with the byte and syscall families' descriptions naming which is which
+- [ ] `IO_READ_RATE`, `IO_WRITE_RATE`, `IO_RATE` on Linux and macOS, over a
+      measured interval, `None` on the first sample and after a failed read
+- [ ] The I/O family absent rather than dashed on FreeBSD, and PORTABILITY.md says
+      why (`ru_inblock` counts I/O operations)
+- [ ] `capability::PROC_IO` read by something, or deleted; the `#[allow(dead_code)]`
+      fields in `darwin::system::PrevRow` either used or gone
+- [ ] `ScanOptions` carries `proc_io`, derived from the visible columns, exercised
+      by a fixture test that asserts an I/O column does *not* open
+      `/proc/<pid>/io` when it is off screen
+- [ ] `--json` emits the I/O figures on every platform that reads them
+- [ ] `s` runs a tracer in a pane, kills it on `Esc`, and prints the actual
+      `ptrace_scope` value; `truss` on FreeBSD, `dtruss`-with-SIP on macOS
+- [ ] `DESIGN.md`'s tree and §4.1 enum example match the repository; §3's memory
+      snippet covers all three models; README says three platforms in both
+      languages; the M0 checklist says three backends
+- [ ] `CHANGELOG.md`, release body generated from it, README download link no
+      longer pinned by hand
+- [ ] Tests on all three platforms, zero clippy warnings, and the Linux container
+      check extended to the new read path
+
+### Deliberately out of M5
+
+- **Man page and distro packaging** (a `gander.1`, a Homebrew formula, a
+  `cargo-binstall` metadata block). Worth a milestone of its own, because each is
+  a separate build pipeline to keep honest and none of them is a code change.
+- **macOS `IOKit` disk throughput for the `DiskIO` meter.** The per-process figures
+  are what M5 is for; a host-wide counter needs a whole framework to answer a
+  question the meter already declines to fake.
+- **FreeBSD jails in a column.** `ki_jid` is read and not shown; `jid 0` is the
+  common case and a bare integer nobody groups on is a number, not information.
+  Showing it needs an aggregate view, not a column.
 
 ## Deliberately not planned
 
