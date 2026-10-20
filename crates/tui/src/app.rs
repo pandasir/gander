@@ -5515,12 +5515,46 @@ mod newly_reachable_column_tests {
 
         #[cfg(target_os = "macos")]
         {
-            // `ttys000` is dev_t 0x1000_0000 on Darwin, and `devname(3)` is the
-            // authority on the spelling.
-            r.tty_nr = 0x1000_0000;
-            assert_eq!(render(&r, Field::Tty), "ttys000");
-            r.tty_nr = 0x1000_0002;
-            assert_eq!(render(&r, Field::Tty), "ttys002");
+            // `devname(3)` answers from the live `/dev` table, so a machine with
+            // no open ttys — every CI runner — has no name to give and correctly
+            // falls back to the raw number. Asserting the literal `ttys000`
+            // therefore asserted a property of the *machine*: it passed on a
+            // developer's Mac with 22 ttys and failed on GitHub's runners, which
+            // is where this test was found to be wrong rather than the code.
+            //
+            // The contract is narrower and testable anywhere: when the OS knows
+            // a name, that is what is shown (never the number); when it does
+            // not, the number is shown in hex. Both arms are checked against
+            // `devname` itself, so the test agrees with the platform whatever
+            // the platform's table contains.
+            for dev in [0x1000_0000i64, 0x1000_0002] {
+                r.tty_nr = dev;
+                let shown = render(&r, Field::Tty);
+
+                // SAFETY: `devname` reads a static table; the result is NULL or
+                // a NUL-terminated string owned by libc.
+                let ptr = unsafe { libc::devname(dev as libc::dev_t, libc::S_IFCHR) };
+                let named = if ptr.is_null() {
+                    None
+                } else {
+                    // SAFETY: non-null means NUL-terminated.
+                    let s = unsafe { std::ffi::CStr::from_ptr(ptr) };
+                    (!s.to_bytes().is_empty()).then(|| s.to_string_lossy().into_owned())
+                };
+
+                match named {
+                    Some(name) => assert_eq!(shown, name, "devname knows this device"),
+                    None => assert_eq!(
+                        shown,
+                        format!("{dev:#x}"),
+                        "no name from the OS means the raw number, not a guess"
+                    ),
+                }
+            }
+
+            // A device the OS certainly has no name for must not borrow one.
+            r.tty_nr = 0x7fff_ff00;
+            assert_eq!(render(&r, Field::Tty), "0x7fffff00");
         }
     }
 
