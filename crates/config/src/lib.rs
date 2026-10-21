@@ -183,6 +183,22 @@ impl Config {
         std::time::Duration::from_millis(self.delay_ms.clamp(100, 10_000))
     }
 
+    pub fn validate(&self) -> std::io::Result<()> {
+        if self.tabs.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "config must contain at least one tab",
+            ));
+        }
+        if self.active_tab >= self.tabs.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "active_tab is out of range",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn active_tab(&self) -> &TabConfig {
         &self.tabs[self.active_tab.min(self.tabs.len().saturating_sub(1))]
     }
@@ -217,25 +233,73 @@ pub fn state_dir() -> PathBuf {
     base.join("gander")
 }
 
-/// Load configuration, falling back to defaults on any problem.
-///
-/// A first run must work with no file present, so this never fails hard.
-pub fn load(path: &Path) -> Config {
-    match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_default(),
-        Err(_) => Config::default(),
-    }
+/// A missing file is a first run; other errors must not silently discard settings.
+pub fn load(path: &Path) -> std::io::Result<Config> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(e) => return Err(e),
+    };
+    let config: Config = toml::from_str(&text)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    config.validate()?;
+    Ok(config)
 }
 
-/// Persist configuration. Called on clean exit only — a signal must lose changes,
-/// matching htop's documented behaviour (`docs/DESIGN.md` §8).
+/// Persist by replacing a fully written sibling file, never truncating the old
+/// configuration. Follow existing symlinks so dotfile-managed configs stay linked.
 pub fn save(config: &Config, path: &Path) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    config.validate()?;
     let text = toml::to_string_pretty(config)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, text)
+    let path = if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let (temp_path, mut file) = loop {
+        let temp_path = dir.join(format!(
+            ".gander-{}-{}.tmp",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temp_path) {
+            Ok(file) => break (temp_path, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = (|| {
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            file.set_permissions(metadata.permissions())?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temp_path, &path)?;
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -302,7 +366,7 @@ mod tests {
 
     #[test]
     fn missing_file_yields_defaults() {
-        let c = load(Path::new("/nonexistent/gander/config.toml"));
+        let c = load(Path::new("/nonexistent/gander/config.toml")).unwrap();
         assert_eq!(c.delay_ms, 1500);
     }
 }

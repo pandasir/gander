@@ -287,7 +287,10 @@ impl Sampler {
             // Identity is the process's, already cached under the leader's pid by
             // `read_rows`. Reuse it rather than re-reading `KERN_PROCARGS2` for
             // every thread of the same process.
-            let start_usec = kp.start_sec.saturating_mul(1_000_000);
+            let start_usec = kp
+                .start_sec
+                .saturating_mul(1_000_000)
+                .saturating_add(kp.start_usec);
             let stable = self.identity(pid, start_usec);
 
             for (index, handle) in handles.into_iter().enumerate() {
@@ -419,7 +422,10 @@ impl Sampler {
             let ti = bsd_details.map(|all| all.task);
             let details = bsd_details.map(|all| all.bsd).unwrap_or_default();
 
-            let start_usec = kp.start_sec.saturating_mul(1_000_000);
+            let start_usec = kp
+                .start_sec
+                .saturating_mul(1_000_000)
+                .saturating_add(kp.start_usec);
             let prev = self.prev_rows.get(&pid).copied();
             let same_process = prev.is_some_and(|p| p.start_usec == start_usec);
 
@@ -495,13 +501,7 @@ impl Sampler {
                 }
             }
 
-            next_prev.insert(
-                pid,
-                PrevRow {
-                    start_usec,
-                    cpu_ns,
-                },
-            );
+            next_prev.insert(pid, PrevRow { start_usec, cpu_ns });
 
             row.percent_mem = if mem_total > 0 {
                 row.res as f32 * 100.0 / mem_total as f32

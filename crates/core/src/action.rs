@@ -5,6 +5,146 @@
 
 use crate::Pid;
 
+/// A process incarnation, not just a recyclable PID.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProcessTarget {
+    pub pid: Pid,
+    pub starttime: u64,
+}
+
+impl From<&crate::row::Row> for ProcessTarget {
+    fn from(row: &crate::row::Row) -> Self {
+        Self {
+            pid: row.pid,
+            starttime: row.starttime,
+        }
+    }
+}
+
+impl ProcessTarget {
+    pub fn capture(pid: Pid) -> std::io::Result<Self> {
+        valid_pid(pid)?;
+        Ok(Self {
+            pid,
+            starttime: current_starttime(pid)?,
+        })
+    }
+
+    /// Fail closed if the process exited, was replaced, or cannot be inspected.
+    /// On platforms without process handles, a small check/use race remains.
+    pub fn verify(self) -> std::io::Result<()> {
+        let current = Self::capture(self.pid)?;
+        if current == self {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "process identity changed; refusing operation",
+            ))
+        }
+    }
+}
+
+fn valid_pid(pid: Pid) -> std::io::Result<()> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid process PID",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn current_starttime(pid: Pid) -> std::io::Result<u64> {
+    crate::linux::scan::read_stat(std::path::Path::new("/proc"), pid)
+        .map(|(_, stat)| stat.starttime)
+        .ok_or_else(|| std::io::Error::other("cannot verify process start time"))
+}
+
+#[cfg(target_os = "macos")]
+fn current_starttime(pid: Pid) -> std::io::Result<u64> {
+    crate::darwin::kinfo::list_processes()?
+        .into_iter()
+        .find(|p| p.pid == pid)
+        .map(|p| {
+            p.start_sec
+                .saturating_mul(1_000_000)
+                .saturating_add(p.start_usec)
+        })
+        .ok_or_else(|| std::io::Error::other("cannot verify process start time"))
+}
+
+#[cfg(target_os = "freebsd")]
+fn current_starttime(pid: Pid) -> std::io::Result<u64> {
+    crate::freebsd::scan::process(pid)
+        .map(|p| {
+            (p.start_sec.max(0) as u64)
+                .saturating_mul(1_000_000)
+                .saturating_add(p.start_usec.max(0) as u64)
+        })
+        .ok_or_else(|| std::io::Error::other("cannot verify process start time"))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+fn current_starttime(_pid: Pid) -> std::io::Result<u64> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "cannot verify process identity",
+    ))
+}
+
+/// Execute against the sampled incarnation. Linux signals use a pidfd when
+/// available; priority changes and other platforms verify immediately before use.
+pub fn execute_checked(target: ProcessTarget, action: &Action) -> std::io::Result<()> {
+    let pid = match *action {
+        Action::Kill { pid, .. } | Action::Renice { pid, .. } | Action::Priority { pid, .. } => pid,
+    };
+    valid_pid(pid)?;
+    if pid != target.pid {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "action target mismatch",
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    if let Action::Kill { signal, .. } = *action {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        // SAFETY: pidfd_open takes a positive PID and zero flags.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        if fd >= 0 {
+            // SAFETY: the syscall returned a new, owned descriptor.
+            let fd = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+            target.verify()?;
+            // SAFETY: the descriptor is live, siginfo is null and flags are zero.
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    fd.as_raw_fd(),
+                    signal,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0,
+                )
+            };
+            return if rc == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            };
+        }
+        let error = std::io::Error::last_os_error();
+        // Older kernels and non-leader thread IDs do not support pidfd_open.
+        if !matches!(
+            error.raw_os_error(),
+            Some(libc::ENOSYS) | Some(libc::EINVAL) | Some(libc::ENOENT)
+        ) {
+            return Err(error);
+        }
+    }
+    target.verify()?;
+    execute(action)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Kill {
@@ -24,18 +164,18 @@ pub enum Action {
 
 /// Signals offered by the signal picker, in the order htop shows them.
 pub const SIGNALS: &[(i32, &str)] = &[
-    (1, "SIGHUP"),
-    (2, "SIGINT"),
-    (3, "SIGQUIT"),
-    (4, "SIGILL"),
-    (6, "SIGABRT"),
-    (9, "SIGKILL"),
-    (11, "SIGSEGV"),
-    (15, "SIGTERM"),
-    (17, "SIGCHLD"),
-    (18, "SIGCONT"),
-    (19, "SIGSTOP"),
-    (20, "SIGTSTP"),
+    (libc::SIGHUP, "SIGHUP"),
+    (libc::SIGINT, "SIGINT"),
+    (libc::SIGQUIT, "SIGQUIT"),
+    (libc::SIGILL, "SIGILL"),
+    (libc::SIGABRT, "SIGABRT"),
+    (libc::SIGKILL, "SIGKILL"),
+    (libc::SIGSEGV, "SIGSEGV"),
+    (libc::SIGTERM, "SIGTERM"),
+    (libc::SIGCHLD, "SIGCHLD"),
+    (libc::SIGCONT, "SIGCONT"),
+    (libc::SIGSTOP, "SIGSTOP"),
+    (libc::SIGTSTP, "SIGTSTP"),
 ];
 
 /// Executes actions against the real system.
@@ -46,6 +186,10 @@ pub const SIGNALS: &[(i32, &str)] = &[
 #[cfg(unix)]
 pub fn execute(action: &Action) -> Result<(), std::io::Error> {
     use std::io;
+    let pid = match *action {
+        Action::Kill { pid, .. } | Action::Renice { pid, .. } | Action::Priority { pid, .. } => pid,
+    };
+    valid_pid(pid)?;
     match *action {
         Action::Kill { pid, signal } => {
             // SAFETY: `kill` is async-signal-safe and takes only integers.
@@ -180,12 +324,12 @@ mod tests {
     }
 
     #[test]
-    fn signal_table_is_sorted_and_unique() {
+    fn signal_table_is_unique_and_contains_common_signals() {
         let mut signals: Vec<i32> = SIGNALS.iter().map(|(n, _)| *n).collect();
         let len = signals.len();
+        signals.sort_unstable();
         signals.dedup();
         assert_eq!(signals.len(), len, "duplicate signal numbers");
-        signals.sort_unstable();
         assert_eq!(signals.first(), Some(&1));
         assert!(signals.contains(&9) && signals.contains(&15));
     }
@@ -297,7 +441,9 @@ pub fn ioprio_supported() -> bool {
 pub fn ioprio_get(pid: Pid) -> Result<IoPriority, std::io::Error> {
     use std::io;
     // SAFETY: `ioprio_get` is a plain syscall taking integers.
-    let rc = unsafe { libc::syscall(libc::SYS_ioprio_get, 1 /* IOPRIO_WHO_PROCESS */, pid) };
+    let rc = unsafe {
+        libc::syscall(libc::SYS_ioprio_get, 1 /* IOPRIO_WHO_PROCESS */, pid)
+    };
     if rc < 0 {
         return Err(io::Error::last_os_error());
     }

@@ -37,7 +37,14 @@ fn main() -> std::process::ExitCode {
             }
         }
     } else {
-        config_crate::load(&config_crate::config_path())
+        let path = config_crate::config_path();
+        match config_crate::load(&path) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("gander: cannot load config {}: {e}", path.display());
+                return std::process::ExitCode::from(1);
+            }
+        }
     };
 
     if let Some(delay) = args.delay_ms {

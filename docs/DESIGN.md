@@ -264,8 +264,10 @@ Non-negotiables:
   `pth_user_time` is nanoseconds while a process's `pti_total_user` is Mach ticks.
 - A thread row needs its own identity. On macOS a thread has no pid at all (its
   row carries the leader's), and the 64-bit `pth` handle is not unique across
-  processes, so `Row::thread_id` holds the identity and `Row::identity()` is what
-  tags, selection and kill key on. Never key a row by `pid` alone.
+  processes, so `Row::thread_id` holds the identity. Selection follows
+  `(Row::identity(), starttime)` across samples. Process-action tags and dialogs
+  use `action::ProcessTarget` (`pid`, `starttime`); on macOS and FreeBSD a thread
+  row's actions target its owning process. Never key a process action by PID alone.
 
 ### 3.5 Derived metrics
 
@@ -602,7 +604,10 @@ for a user trying gander should be zero.
 - **Write on clean exit only.** htop documents this deliberately; a signal
   losing config changes is the expected behavior, not a bug.
 - Every config field needs a sane hardcoded default, because a first run must work
-  with no file present.
+  with no file present. Other load errors are reported, not silently replaced with
+  defaults. Loaded configs require at least one tab and a valid active-tab index.
+- Saves write and sync a temporary sibling before atomically renaming it over the
+  destination. Existing symlinks and file permissions are preserved.
 
 ---
 

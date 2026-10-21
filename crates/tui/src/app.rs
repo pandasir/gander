@@ -4,6 +4,7 @@
 //! `App` value and a `match` on `Screen`. See `docs/DESIGN.md` §6.
 
 use gander_config::Config;
+use gander_core::action::ProcessTarget;
 use gander_core::row::{Field, Row};
 use gander_core::system::SystemSnapshot;
 use gander_core::table::{self, Dir, Filter, ProcTable};
@@ -130,7 +131,9 @@ pub struct App {
     /// The combined visibility predicate (text filter, user, kernel threads).
     /// Kept in sync by `refresh_visibility`.
     visibility: gander_core::table::Visibility,
-    pub tags: std::collections::HashSet<gander_core::Pid>,
+    pub tags: std::collections::HashSet<ProcessTarget>,
+    /// Frozen when a process-action dialog opens; samples must not retarget it.
+    action_targets: Vec<ProcessTarget>,
     pub filter: Option<Filter>,
     pub input: Input,
     pub command_column_interactive: bool,
@@ -168,7 +171,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config) -> Self {
+    pub fn new(mut config: Config) -> Self {
+        if config.tabs.is_empty() {
+            config.tabs = Config::default().tabs;
+        }
+        config.active_tab = config.active_tab.min(config.tabs.len() - 1);
         let theme = Theme::named(&config.color_scheme).unwrap_or_default();
         let table = ProcTable {
             sort: config.active_tab().sort(),
@@ -202,6 +209,7 @@ impl App {
                 ..Default::default()
             },
             tags: Default::default(),
+            action_targets: Vec::new(),
             filter: None,
             input: Input::default(),
             command_column_interactive: true,
@@ -228,10 +236,14 @@ impl App {
     /// searched for that morning.
     pub fn with_history(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
         self.history_dir = dir.into();
-        self.search_history =
-            gander_config::history::History::load(&self.history_dir, gander_config::history::Kind::Search);
-        self.filter_history =
-            gander_config::history::History::load(&self.history_dir, gander_config::history::Kind::Filter);
+        self.search_history = gander_config::history::History::load(
+            &self.history_dir,
+            gander_config::history::Kind::Search,
+        );
+        self.filter_history = gander_config::history::History::load(
+            &self.history_dir,
+            gander_config::history::Kind::Filter,
+        );
         self
     }
 
@@ -272,6 +284,13 @@ impl App {
 
     /// Adopt a fresh sample: update rows, meters, and reorder.
     pub fn apply_sample(&mut self, snapshot: SystemSnapshot, rows: Vec<Row>) {
+        let selected = self
+            .selected_row()
+            .map(|row| (row.identity(), row.starttime));
+        if !self.tags.is_empty() {
+            let live: std::collections::HashSet<_> = rows.iter().map(ProcessTarget::from).collect();
+            self.tags.retain(|target| live.contains(target));
+        }
         // The header depends on the core count, which is only known once the
         // first snapshot arrives.
         if self.meters.is_empty() {
@@ -282,6 +301,14 @@ impl App {
         }
         self.table.rows = rows;
         self.reorder();
+        if let Some(identity) = selected {
+            if let Some(index) = self.table.view.order.iter().position(|&i| {
+                let row = &self.table.rows[i];
+                (row.identity(), row.starttime) == identity
+            }) {
+                self.selected = index;
+            }
+        }
         // The panels layout draws its own CPU sparkline, so the history is kept
         // here rather than inside a meter it does not own.
         {
@@ -379,11 +406,7 @@ impl App {
         // Carry a live mode over when the same meter is still present: editing
         // the header should not silently reset the mode the user chose with `I`.
         for (i, meter) in header.meters.iter().enumerate() {
-            if let Some(pos) = self
-                .meters
-                .iter()
-                .position(|m| m.name() == meter.name())
-            {
+            if let Some(pos) = self.meters.iter().position(|m| m.name() == meter.name()) {
                 if let Some(mode) = self.meter_modes.get(pos) {
                     header.modes[i] = *mode;
                 }
@@ -615,8 +638,9 @@ impl App {
                     // SIGTERM is htop's default selection; it is the polite one.
                     let default = gander_core::action::SIGNALS
                         .iter()
-                        .position(|(num, _)| *num == 15)
+                        .position(|(_, name)| *name == "SIGTERM")
                         .unwrap_or(0);
+                    self.action_targets = self.process_targets();
                     self.screen = Screen::SignalPicker { cursor: default };
                 }
                 Reaction::Continue
@@ -1060,27 +1084,19 @@ impl App {
             return;
         };
 
-        // Tagged processes take precedence, matching htop: if anything is
-        // tagged, the action applies to the tagged set.
-        let targets: Vec<gander_core::Pid> = if self.tags.is_empty() {
-            match self.selected_row() {
-                Some(row) => vec![row.pid],
-                None => {
-                    self.status = Some("no process selected".into());
-                    return;
-                }
-            }
-        } else {
-            let mut tagged: Vec<gander_core::Pid> = self.tags.iter().copied().collect();
-            tagged.sort_unstable();
-            tagged
-        };
+        // Targets were frozen on opening the picker, including any tagged set.
+        let targets = self.action_targets.clone();
+        if targets.is_empty() {
+            self.status = Some("no process selected".into());
+            return;
+        }
 
         let mut sent = 0usize;
         let mut failures: Vec<String> = Vec::new();
-        for pid in &targets {
-            let action = gander_core::action::Action::Kill { pid: *pid, signal };
-            match gander_core::action::execute(&action) {
+        for target in &targets {
+            let pid = target.pid;
+            let action = gander_core::action::Action::Kill { pid, signal };
+            match gander_core::action::execute_checked(*target, &action) {
                 Ok(()) => sent += 1,
                 Err(e) => failures.push(format!("{pid}: {e}")),
             }
@@ -1088,7 +1104,7 @@ impl App {
 
         self.status = Some(if failures.is_empty() {
             if targets.len() == 1 {
-                format!("sent {name} to {}", targets[0])
+                format!("sent {name} to {}", targets[0].pid)
             } else {
                 format!("sent {name} to {sent} processes")
             }
@@ -1216,11 +1232,24 @@ impl App {
         self.move_selection(pages * step);
     }
 
+    fn process_targets(&self) -> Vec<ProcessTarget> {
+        let mut targets: Vec<_> = if self.tags.is_empty() {
+            self.selected_row()
+                .map(ProcessTarget::from)
+                .into_iter()
+                .collect()
+        } else {
+            self.tags.iter().copied().collect()
+        };
+        targets.sort_unstable();
+        targets
+    }
+
     fn toggle_tag(&mut self) {
         if let Some(row) = self.selected_row() {
-            let pid = row.pid;
-            if !self.tags.remove(&pid) {
-                self.tags.insert(pid);
+            let target = ProcessTarget::from(row);
+            if !self.tags.remove(&target) {
+                self.tags.insert(target);
             }
         }
     }
@@ -1228,8 +1257,12 @@ impl App {
     fn tag_with_children(&mut self) {
         if let Some(row) = self.selected_row() {
             let pid = row.pid;
-            for p in tree::subtree(&self.table.rows, pid) {
-                self.tags.insert(p);
+            let pids: std::collections::HashSet<_> =
+                tree::subtree(&self.table.rows, pid).into_iter().collect();
+            for row in &self.table.rows {
+                if pids.contains(&row.pid) {
+                    self.tags.insert(ProcessTarget::from(row));
+                }
             }
         }
     }
@@ -1241,6 +1274,7 @@ impl App {
             return Reaction::Continue;
         };
         let pid = row.pid;
+        self.action_targets = vec![ProcessTarget::from(row)];
         let cores = self.snapshot.cpu_count().max(1);
         self.screen = Screen::Affinity(crate::panels::AffinityPanel::new(pid, cores));
         Reaction::Continue
@@ -1253,8 +1287,18 @@ impl App {
             return Reaction::Continue;
         };
         let pid = row.pid;
+        self.action_targets = vec![ProcessTarget::from(row)];
         self.screen = Screen::IoPriority(crate::panels::IoPriorityPanel::new(pid));
         Reaction::Continue
+    }
+
+    fn verify_dialog_target(&self, pid: gander_core::Pid) -> Result<(), String> {
+        let target = self
+            .action_targets
+            .first()
+            .filter(|target| target.pid == pid)
+            .ok_or_else(|| "no process target".to_string())?;
+        target.verify().map_err(|e| e.to_string())
     }
 
     fn handle_affinity_key(&mut self, key: Key) -> Reaction {
@@ -1274,7 +1318,10 @@ impl App {
             Key::Home => panel.move_cursor(-(panel.cores as isize)),
             Key::End => panel.move_cursor(panel.cores as isize),
             Key::Char(' ') | Key::Enter => panel.toggle(),
-            Key::Char('S') => match panel.apply() {
+            Key::Char('S') => match self
+                .verify_dialog_target(panel.pid)
+                .and_then(|()| panel.apply())
+            {
                 Ok(()) => {
                     self.status = Some(format!(
                         "affinity of {} set to {} CPUs",
@@ -1305,7 +1352,10 @@ impl App {
             Key::Char(' ') | Key::Enter => panel.cycle_class(),
             Key::Up | Key::Right => panel.change_level(1),
             Key::Down | Key::Left => panel.change_level(-1),
-            Key::Char('S') => match panel.apply() {
+            Key::Char('S') => match self
+                .verify_dialog_target(panel.pid)
+                .and_then(|()| panel.apply())
+            {
                 Ok(()) => {
                     self.status = Some(format!(
                         "I/O priority of {} set to {}",
@@ -1332,25 +1382,18 @@ impl App {
     fn renice_selected(&mut self, delta: i8) {
         // Same target selection as the signal picker: if anything is tagged, the
         // action applies to the tagged set.
-        let targets: Vec<gander_core::Pid> = if self.tags.is_empty() {
-            match self.selected_row() {
-                Some(row) => vec![row.pid],
-                None => {
-                    self.status = Some("no process selected".into());
-                    return;
-                }
-            }
-        } else {
-            let mut tagged: Vec<gander_core::Pid> = self.tags.iter().copied().collect();
-            tagged.sort_unstable();
-            tagged
-        };
+        let targets = self.process_targets();
+        if targets.is_empty() {
+            self.status = Some("no process selected".into());
+            return;
+        }
 
         let mut reniced = 0usize;
         let mut failures: Vec<String> = Vec::new();
-        for pid in &targets {
-            let action = gander_core::action::Action::Priority { pid: *pid, delta };
-            match gander_core::action::execute(&action) {
+        for target in &targets {
+            let pid = target.pid;
+            let action = gander_core::action::Action::Priority { pid, delta };
+            match gander_core::action::execute_checked(*target, &action) {
                 Ok(()) => reniced += 1,
                 Err(e) => failures.push(format!("{pid}: {e}")),
             }
@@ -1359,7 +1402,7 @@ impl App {
         let verb = if delta < 0 { "raised" } else { "lowered" };
         self.status = Some(if failures.is_empty() {
             if targets.len() == 1 {
-                format!("reniced {} ({verb} priority)", targets[0])
+                format!("reniced {} ({verb} priority)", targets[0].pid)
             } else {
                 format!("reniced {reniced} processes ({verb} priority)")
             }
@@ -1668,7 +1711,7 @@ impl App {
                     chunks[1],
                     frame.buffer_mut(),
                     &self.theme,
-                    self.selected_row(),
+                    &self.action_targets,
                     *cursor,
                 );
             }
@@ -1774,7 +1817,7 @@ impl App {
                     columns[1],
                     frame.buffer_mut(),
                     &self.theme,
-                    self.selected_row(),
+                    &self.action_targets,
                     *cursor,
                 );
             }
@@ -2043,7 +2086,7 @@ impl App {
 
             let base = if pos == self.selected {
                 theme.row_selected
-            } else if self.tags.contains(&row.pid) {
+            } else if self.tags.contains(&ProcessTarget::from(row)) {
                 theme.row_tagged
             } else if row.is_kernel_thread() {
                 theme.row_kernel_thread
@@ -2078,7 +2121,8 @@ impl App {
                     // can be emphasised after the row is painted. Computed from the
                     // finished `text` (prefix included) rather than adjusted after
                     // the fact, so tree mode needs no offset arithmetic.
-                    let base_name_span = if *field == Field::Comm && self.config.highlight_base_name {
+                    let base_name_span = if *field == Field::Comm && self.config.highlight_base_name
+                    {
                         row.base_name_span_in(&text)
                     } else {
                         None
@@ -2346,7 +2390,14 @@ impl App {
             return;
         }
         let x = area.right().saturating_sub(text_len);
-        crate::meters::put_str(buf, x, area.y, &text, self.theme.function_bar_status, text_len);
+        crate::meters::put_str(
+            buf,
+            x,
+            area.y,
+            &text,
+            self.theme.function_bar_status,
+            text_len,
+        );
     }
 }
 
@@ -2366,14 +2417,7 @@ fn theme_cursor_width(available: u16) -> u16 {
 ///
 /// The cell text is preserved; only the style changes. Overwriting the glyphs
 /// would destroy the number the bar is annotating.
-fn paint_value_bar(
-    buf: &mut Buffer,
-    x: u16,
-    y: u16,
-    width: u16,
-    frac: f32,
-    style: Style,
-) {
+fn paint_value_bar(buf: &mut Buffer, x: u16, y: u16, width: u16, frac: f32, style: Style) {
     if width == 0 {
         return;
     }
@@ -2934,10 +2978,14 @@ fn ptrace_scope_note() -> Vec<String> {
                 let value = text.trim();
                 out.push(format!("yama/ptrace_scope = {value}"));
                 match value {
-                    "0" => out.push("  Unrestricted: attaching to your own processes works.".into()),
+                    "0" => {
+                        out.push("  Unrestricted: attaching to your own processes works.".into())
+                    }
                     "1" => {
                         out.push("  Restricted: only *child* processes may be traced, so".into());
-                        out.push("  attaching to an existing pid fails with EPERM even when".into());
+                        out.push(
+                            "  attaching to an existing pid fails with EPERM even when".into(),
+                        );
                         out.push("  it is your own. Either run the program under strace".into());
                         out.push("    strace -f <command>".into());
                         out.push("  or raise the limit for this boot:".into());
@@ -2961,7 +3009,9 @@ fn ptrace_scope_note() -> Vec<String> {
     {
         out.push(String::new());
         out.push("On macOS, `dtruss` needs SIP disabled (csrutil disable, then reboot).".into());
-        out.push("That is a system-wide security setting, not something gander can ask for.".into());
+        out.push(
+            "That is a system-wide security setting, not something gander can ask for.".into(),
+        );
     }
 
     #[cfg(target_os = "freebsd")]
@@ -3103,7 +3153,12 @@ fn open_files_of(pid: gander_core::Pid) -> Option<Vec<String>> {
     const MIN_RECORD: usize = PATH_OFF + 1;
 
     let mut size = 0usize;
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_FILEDESC, pid as i32];
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_FILEDESC,
+        pid as i32,
+    ];
     // SAFETY: a null buffer with a zero length asks for the size only.
     let rc = unsafe {
         libc::sysctl(
@@ -3375,7 +3430,7 @@ fn draw_signal_picker(
     area: Rect,
     buf: &mut Buffer,
     theme: &Theme,
-    row: Option<&Row>,
+    targets: &[ProcessTarget],
     cursor: usize,
 ) {
     let w = 40.min(area.width);
@@ -3387,9 +3442,10 @@ fn draw_signal_picker(
         h,
     );
     Widget::render(Clear, rect, buf);
-    let title = match row {
-        Some(r) => format!("Send signal to {} ({})", r.pid, r.comm.as_str()),
-        None => "Send signal".to_string(),
+    let title = match targets {
+        [target] => format!("Send signal to {}", target.pid),
+        [] => "Send signal".to_string(),
+        _ => format!("Send signal to {} processes", targets.len()),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -3425,6 +3481,10 @@ fn draw_signal_picker(
 fn _style_helper(theme: &Theme) -> Style {
     theme.row_normal
 }
+
+#[cfg(test)]
+#[path = "app_safety_tests.rs"]
+mod safety_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3468,9 +3528,15 @@ mod tests {
     fn tagging_toggles() {
         let mut app = app_with(vec![row(7, "a")]);
         app.handle_key(Key::Char(' '));
-        assert!(app.tags.contains(&7));
+        assert!(app.tags.contains(&ProcessTarget {
+            pid: 7,
+            starttime: 0
+        }));
         app.handle_key(Key::Char(' '));
-        assert!(!app.tags.contains(&7));
+        assert!(!app.tags.contains(&ProcessTarget {
+            pid: 7,
+            starttime: 0
+        }));
     }
 
     #[test]
@@ -3719,6 +3785,7 @@ mod tests {
         app.viewport = 5;
 
         // Open the picker and confirm SIGTERM (the default selection).
+        app.table.rows[0].starttime = ProcessTarget::capture(pid).unwrap().starttime;
         app.handle_key(Key::F(9));
         assert!(matches!(app.screen, Screen::SignalPicker { .. }));
         app.handle_key(Key::Enter);
@@ -3838,7 +3905,10 @@ mod tests {
         app.handle_key(Key::Tab);
         assert_eq!(app.config.active_tab, 0);
         assert!(
-            app.status.as_deref().unwrap_or("").contains("one screen tab"),
+            app.status
+                .as_deref()
+                .unwrap_or("")
+                .contains("one screen tab"),
             "should say why nothing happened, got {:?}",
             app.status
         );
@@ -3852,9 +3922,7 @@ mod tests {
         app.viewport = 5;
         app.apply_sample(
             SystemSnapshot::default(),
-            (1..=50)
-                .map(Row::default_for_test)
-                .collect::<Vec<_>>(),
+            (1..=50).map(Row::default_for_test).collect::<Vec<_>>(),
         );
 
         for _ in 0..10 {
@@ -4015,7 +4083,9 @@ mod tests {
         assert!(app.meters.len() > 2);
 
         // Everything starts as configured (bar / text).
-        let before: Vec<MeterMode> = (0..app.meters.len()).map(|i| app.meter_mode_at(i)).collect();
+        let before: Vec<MeterMode> = (0..app.meters.len())
+            .map(|i| app.meter_mode_at(i))
+            .collect();
 
         app.cycle_meter_mode(1);
         assert_ne!(app.meter_mode_at(1), before[1], "meter 1 changed");
@@ -4161,7 +4231,10 @@ mod tests {
 
         // The inspector shows the selected pid in the top-left of its panel, so
         // the two renders must differ.
-        assert_ne!(first, second, "moving the selection must redraw the details");
+        assert_ne!(
+            first, second,
+            "moving the selection must redraw the details"
+        );
     }
 
     /// The in-table value bars are drawn as a background style, so a text-only
@@ -4248,9 +4321,8 @@ mod tests {
         term.draw(|f| app.draw(f)).unwrap();
         let buf = term.backend().buffer();
         let bar_bg = app.theme.row_value_bar.bg.unwrap_or(Color::Reset);
-        let found = (0..20).any(|y| {
-            (0..120).any(|x| buf[(x, y)].style().bg.unwrap_or(Color::Reset) == bar_bg)
-        });
+        let found = (0..20)
+            .any(|y| (0..120).any(|x| buf[(x, y)].style().bg.unwrap_or(Color::Reset) == bar_bg));
         assert!(!found, "the htop layout must not paint table value bars");
     }
 
@@ -4263,7 +4335,11 @@ mod tests {
         app.reorder();
         let without = app.table.visible();
         assert!(
-            !app.table.view.order.iter().any(|&i| app.table.rows[i].is_thread),
+            !app.table
+                .view
+                .order
+                .iter()
+                .any(|&i| app.table.rows[i].is_thread),
             "threads are hidden by default"
         );
 
@@ -4393,9 +4469,9 @@ mod tests {
 
     #[test]
     fn the_selected_meter_is_visibly_marked() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use gander_core::system::{CpuTimes, SystemSnapshot};
 
         let snapshot = SystemSnapshot {
             cpu: vec![CpuTimes::default(); 9],
@@ -4442,7 +4518,11 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
         term.draw(|f| app.draw(f)).unwrap();
         let marked = marked_rows(term.backend().buffer());
-        assert_eq!(marked.len(), 1, "still exactly one marked row, got {marked:?}");
+        assert_eq!(
+            marked.len(),
+            1,
+            "still exactly one marked row, got {marked:?}"
+        );
     }
 
     #[test]
@@ -4562,10 +4642,8 @@ mod m1_tests {
     }
 
     fn temp_history_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gander-app-history-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gander-app-history-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -4592,8 +4670,7 @@ mod m1_tests {
     #[test]
     fn only_submitted_prompts_are_remembered() {
         let dir = temp_history_dir("submit");
-        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
-            .with_history(dir.clone());
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]).with_history(dir.clone());
 
         // Cancelled: never reaches the history.
         app.handle_key(Key::Char('/'));
@@ -4614,8 +4691,7 @@ mod m1_tests {
     #[test]
     fn search_and_filter_history_are_separate() {
         let dir = temp_history_dir("separate");
-        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
-            .with_history(dir.clone());
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]).with_history(dir.clone());
 
         app.handle_key(Key::Char('/'));
         app.handle_key(Key::Char('a'));
@@ -4692,8 +4768,7 @@ mod m1_tests {
     #[test]
     fn a_recalled_filter_takes_effect_immediately() {
         let dir = temp_history_dir("recall-filter");
-        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")])
-            .with_history(dir.clone());
+        let mut app = app_with(vec![row(1, "alpha"), row(2, "beta")]).with_history(dir.clone());
 
         app.handle_key(Key::Char('\\'));
         app.handle_key(Key::Char('b'));
@@ -4706,7 +4781,11 @@ mod m1_tests {
 
         app.handle_key(Key::Char('\\'));
         app.handle_key(Key::Up);
-        assert_eq!(app.table.visible(), 1, "the recalled filter applies at once");
+        assert_eq!(
+            app.table.visible(),
+            1,
+            "the recalled filter applies at once"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4796,8 +4875,12 @@ mod m1_tests {
     #[test]
     fn network_and_disk_meters_can_be_added_to_the_header() {
         let mut config = Config::default();
-        config.meters_right.push(gander_config::MeterConfig::new("NetworkIO", "text"));
-        config.meters_right.push(gander_config::MeterConfig::new("DiskIO", "text"));
+        config
+            .meters_right
+            .push(gander_config::MeterConfig::new("NetworkIO", "text"));
+        config
+            .meters_right
+            .push(gander_config::MeterConfig::new("DiskIO", "text"));
 
         let mut app = App::new(config);
         let snapshot = SystemSnapshot {
@@ -5008,10 +5091,7 @@ mod container_column_tests {
         let mut config = Config::default();
         config.tabs[0].columns = vec!["PID".into(), "CONTAINER".into(), "CGROUP".into()];
         let fields = config.tabs[0].fields();
-        assert_eq!(
-            fields,
-            vec![Field::Pid, Field::Container, Field::Cgroup]
-        );
+        assert_eq!(fields, vec![Field::Pid, Field::Container, Field::Cgroup]);
     }
 
     #[test]
@@ -5108,12 +5188,11 @@ mod m2_tests {
         // Building the target list is what the fix changed; the actual syscall is
         // not exercised here (renicing another process's test fixture would be
         // rude and needs privileges).
-        let targets: Vec<gander_core::Pid> = {
-            let mut t: Vec<gander_core::Pid> = app.tags.iter().copied().collect();
-            t.sort_unstable();
-            t
-        };
-        assert_eq!(targets.len(), 2, "both tagged pids are targets");
+        let targets = app.process_targets();
+        assert_eq!(
+            targets.iter().map(|t| t.pid).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     /// With nothing tagged, the action still applies to the selection.
@@ -5170,7 +5249,10 @@ mod m2_tests {
         let (off_text, off_cells) = capture(false);
         let (on_text, on_cells) = capture(true);
 
-        assert!(on_text.contains("nginx"), "the command still renders:\n{on_text}");
+        assert!(
+            on_text.contains("nginx"),
+            "the command still renders:\n{on_text}"
+        );
         assert_eq!(off_text, on_text, "highlighting must not change the text");
 
         // The base name occupies 5 cells; with highlighting on, those cells must
@@ -5557,7 +5639,10 @@ mod no_silent_key_tests {
             "the panel must explain why tracing cannot be a pane: {text}"
         );
         // The workaround, with the selected pid substituted.
-        assert!(text.contains("strace -p"), "the command must be printed: {text}");
+        assert!(
+            text.contains("strace -p"),
+            "the command must be printed: {text}"
+        );
 
         // The permission section must be specific on every platform, not just
         // present: either the actual scope value or the platform's own reason.
@@ -5781,7 +5866,10 @@ mod newly_reachable_column_tests {
         {
             // A process row whose `starttime` was never filled in.
             r.starttime = 0;
-            assert_eq!(render_with(&r, Field::StartTime, &SystemSnapshot::default()), "-");
+            assert_eq!(
+                render_with(&r, Field::StartTime, &SystemSnapshot::default()),
+                "-"
+            );
         }
     }
 
@@ -5803,5 +5891,4 @@ mod newly_reachable_column_tests {
         r.sched_policy = 200;
         assert_eq!(render(&r, Field::SchedPolicy), "?");
     }
-
 }

@@ -31,6 +31,7 @@ pub const STRIDE: usize = 648;
 //   kp_eproc.e_ucred.cr_uid    at 420 (effective uid; differs for setuid execs)
 //   kp_eproc.e_ppid            at 560
 const OFF_STARTTIME_SEC: usize = 0;
+const OFF_STARTTIME_USEC: usize = 8;
 const OFF_PID: usize = 40;
 const OFF_PPID: usize = 560;
 const OFF_NICE: usize = 242;
@@ -53,6 +54,7 @@ pub struct RawProc {
     pub nice: i32,
     pub p_stat: i8,
     pub start_sec: u64,
+    pub start_usec: u64,
     pub comm: [u8; COMM_LEN],
 }
 
@@ -100,6 +102,7 @@ fn decode(rec: &[u8]) -> Option<RawProc> {
         nice: rec[OFF_NICE] as i8 as i32,
         p_stat: rec[OFF_STAT] as i8,
         start_sec: read_u64(rec, OFF_STARTTIME_SEC),
+        start_usec: read_u64(rec, OFF_STARTTIME_USEC),
         comm,
     })
 }
@@ -354,6 +357,17 @@ mod tests {
     }
 
     #[test]
+    fn start_time_including_microseconds_matches_libproc() {
+        let pid = std::process::id();
+        let procs = list_processes().unwrap();
+        let this = procs.iter().find(|p| p.pid == pid).unwrap();
+        let bsd = crate::darwin::scan::task_all_info(pid).unwrap().bsd;
+        assert_eq!(this.start_sec, bsd.start_sec);
+        assert_eq!(this.start_usec, bsd.start_usec);
+        assert!(this.start_usec < 1_000_000);
+    }
+
+    #[test]
     fn own_ppid_matches_getppid() {
         let procs = list_processes().unwrap();
         let me = std::process::id();
@@ -429,7 +443,8 @@ mod tests {
             stat,
             Some(4),
             "a stopped process must read SSTOP(4), not {} (offset wrong?)",
-            stat.map(|s| s.to_string()).unwrap_or_else(|| "missing".into())
+            stat.map(|s| s.to_string())
+                .unwrap_or_else(|| "missing".into())
         );
     }
 }

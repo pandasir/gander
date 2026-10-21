@@ -64,6 +64,12 @@ takes effect immediately; `Esc` clears the filter and closes the prompt.
 
 `F9`, `F7` and `F8` all act on **every tagged process** when anything is tagged, and
 on the selection otherwise. A status message on the function bar reports the result.
+Selection follows the same row across samples, and expired process tags are removed.
+The signal picker freezes its targets when opened; later samples cannot retarget it.
+Signals, renice and panel changes verify the process start time before acting.
+Linux uses pidfds for signals when supported; other operations retain a small
+identity-check/system-call race. On macOS and FreeBSD, a thread row's actions
+apply to its owning process.
 
 ### Info screens
 

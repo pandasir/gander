@@ -139,7 +139,8 @@ htop 的 `I` 用于反转排序；在 gander 中请使用 `F6` / `<` `>` / `.`�
 配置为 TOML 格式，路径优先使用 `$GANDER_CONFIG`，否则为
 `$XDG_CONFIG_HOME/gander/config.toml`（回退到 `~/.config/gander/config.toml`）。
 每个标签页各自保留列与排序，表头 meter 及其显示模式也可配置。设置仅在正常退出时
-写入。
+写入，并以原子替换方式保存。配置文件不存在时使用默认值；无法读取、格式错误或配置
+无效时会报错退出，不会用默认配置覆盖原文件。
 
 搜索与过滤历史存放在 `$XDG_STATE_HOME/gander/`（回退到
 `~/.local/state/gander/`）。

@@ -174,10 +174,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gander-history-test-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gander-history-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -199,7 +197,10 @@ mod tests {
         h.save(&dir, Kind::Filter).expect("save");
 
         let back = History::load(&dir, Kind::Filter);
-        assert_eq!(back.entries().collect::<Vec<_>>(), vec!["python|node", "nginx"]);
+        assert_eq!(
+            back.entries().collect::<Vec<_>>(),
+            vec!["python|node", "nginx"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -214,11 +215,15 @@ mod tests {
         f.save(&dir, Kind::Filter).unwrap();
 
         assert_eq!(
-            History::load(&dir, Kind::Search).entries().collect::<Vec<_>>(),
+            History::load(&dir, Kind::Search)
+                .entries()
+                .collect::<Vec<_>>(),
             vec!["alpha"]
         );
         assert_eq!(
-            History::load(&dir, Kind::Filter).entries().collect::<Vec<_>>(),
+            History::load(&dir, Kind::Filter)
+                .entries()
+                .collect::<Vec<_>>(),
             vec!["beta"]
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -266,7 +271,10 @@ mod tests {
             h.push(&format!("entry-{i}"));
         }
         assert_eq!(h.len(), MAX_ENTRIES);
-        assert_eq!(h.recent(0), Some(format!("entry-{}", MAX_ENTRIES + 9).as_str()));
+        assert_eq!(
+            h.recent(0),
+            Some(format!("entry-{}", MAX_ENTRIES + 9).as_str())
+        );
         // The first ten fell off.
         assert!(!h.entries().any(|e| e == "entry-0"));
     }
@@ -336,9 +344,7 @@ mod tests {
     fn an_oversized_file_is_truncated_on_load() {
         let dir = temp_dir("oversized");
         std::fs::create_dir_all(&dir).unwrap();
-        let text: String = (0..MAX_ENTRIES * 2)
-            .map(|i| format!("e{i}\n"))
-            .collect();
+        let text: String = (0..MAX_ENTRIES * 2).map(|i| format!("e{i}\n")).collect();
         std::fs::write(dir.join(Kind::Search.file_name()), text).unwrap();
 
         let h = History::load(&dir, Kind::Search);

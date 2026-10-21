@@ -179,8 +179,9 @@ reintroduced:
     within its own process, so per-thread state must be keyed by `(pid, handle)`.
 12. **Thread handles are 64-bit and mostly do not fit in a pid.** 94.9% of the
     handles on a desktop exceed `u32::MAX`, so a thread row cannot store its
-    handle in `Row::pid`. `Row::thread_id` carries it instead, and `Row::identity`
-    is the key for tags, selection and kill.
+    handle in `Row::pid`. `Row::thread_id` carries it instead; selection follows
+    `(Row::identity(), starttime)`. Process actions and tags use `(pid, starttime)`,
+    so actions on these thread rows apply to their owning process.
 13. **`PROC_PIDLISTTHREADS` has no size query, zero-fills the tail, and can leave
     holes in the middle.** A null buffer returns 0 rather than a byte count, and a
     buffer larger than the thread count comes back with the extra entries zeroed

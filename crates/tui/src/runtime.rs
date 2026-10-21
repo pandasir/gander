@@ -61,21 +61,14 @@ mod platform {
     /// cost of a `/proc` scan.
     const TICK: Duration = Duration::from_millis(33);
 
-    /// Shared "list threads too" flag.
-    ///
-    /// The sampler thread runs the scan, but `H` is handled on the UI thread, so
-    /// the setting has to be visible to both. It is read once per sample, which
-    /// is the coarsest cadence that still feels immediate.
-    type ThreadsFlag = Arc<AtomicBool>;
-
     /// Shared "which expensive per-process reads are needed" slot.
     ///
     /// `smaps_rollup` makes the kernel walk every VMA of the process and `fdinfo`
     /// costs a directory walk per process; together they dwarf the rest of a scan.
     /// The columns that need them are chosen in the setup screen, on the UI thread,
-    /// so the decision has to cross the thread boundary. It is stored behind a
-    /// mutex-free `AtomicU8`-style encoding: the three flags are packed into one
-    /// `AtomicU64` so the sampler can never observe a half-updated combination.
+    /// so the decision has to cross the thread boundary. It is stored in an
+    /// `AtomicU64` so threads, smaps, GPU and delay accounting are published as
+    /// one value; the sampler can never observe a half-updated combination.
     type OptionsSlot = Arc<AtomicU64>;
 
     /// Run the application until the user quits.
@@ -95,27 +88,16 @@ mod platform {
         let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
 
         // Prime the first sample synchronously so the very first frame has data.
+        sampler.set_scan_options(app.scan_options());
         let (snapshot, rows) = sampler.sample();
         app.apply_sample(snapshot, rows);
 
-        let threads = Arc::new(AtomicBool::new(app.table.show_userland_threads));
         let options = Arc::new(AtomicU64::new(encode_options(app.scan_options())));
         let delay_ms = Arc::new(AtomicU64::new(clamp_delay_ms(app.config.delay_ms)));
-        let (handle, stop) = spawn_sampler(
-            slot.clone(),
-            delay_ms.clone(),
-            threads.clone(),
-            options.clone(),
-        );
+        let (handle, stop) = spawn_sampler(slot.clone(), delay_ms.clone(), options.clone());
 
         let mut terminal = init_terminal()?;
-        let result = event_loop(
-            &mut terminal,
-            &mut app,
-            &slot,
-            &options,
-            &delay_ms,
-        );
+        let result = event_loop(&mut terminal, &mut app, &slot, &options, &delay_ms);
 
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
@@ -156,10 +138,6 @@ mod platform {
     fn spawn_sampler(
         slot: Slot,
         delay_ms: DelayMs,
-        // The thread list is carried inside `ScanOptions` as well, but the `H` key
-        // is the one toggle that also has to be visible to `App`, so it keeps its
-        // own slot and is folded in at sample time.
-        threads: ThreadsFlag,
         options: OptionsSlot,
     ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let stop = Arc::new(AtomicBool::new(false));
@@ -173,8 +151,7 @@ mod platform {
                     let started = Instant::now();
                     gander_core::PlatformSampler::set_scan_options(
                         &mut sampler,
-                        decode_options(options.load(Ordering::Relaxed))
-                            .with_threads(threads.load(Ordering::Relaxed)),
+                        decode_options(options.load(Ordering::Relaxed)),
                     );
                     let (snapshot, rows) = sampler.sample();
                     slot.store(Arc::new(Some(Sample { snapshot, rows })));
@@ -195,6 +172,11 @@ mod platform {
             .expect("spawn sampler thread");
 
         (handle, stop)
+    }
+
+    fn publish_settings(app: &App, options: &OptionsSlot, delay_ms: &DelayMs) {
+        options.store(encode_options(app.scan_options()), Ordering::Relaxed);
+        delay_ms.store(clamp_delay_ms(app.config.delay_ms), Ordering::Relaxed);
     }
 
     fn event_loop(
@@ -233,11 +215,7 @@ mod platform {
                             // every key. It used to publish only the thread flag;
                             // the delay was passed by value at startup, so `+`/`-`
                             // changed nothing until the next run.
-                            options.store(
-                                encode_options(app.scan_options()),
-                                Ordering::Relaxed,
-                            );
-                            delay_ms.store(clamp_delay_ms(app.config.delay_ms), Ordering::Relaxed);
+                            publish_settings(app, options, delay_ms);
                         }
                     }
                     Event::Resize(_, _) => {
@@ -264,6 +242,68 @@ mod platform {
         terminal::disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()
+    }
+
+    #[cfg(test)]
+    mod sampler_tests {
+        use super::*;
+
+        struct RunningSampler(std::thread::JoinHandle<()>, Arc<AtomicBool>);
+
+        impl RunningSampler {
+            fn stop(self) {
+                self.1.store(true, Ordering::Relaxed);
+                self.0.join().expect("sampler thread");
+            }
+        }
+
+        fn wait_for_threads(slot: &Slot, expected: bool) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                let sample = slot.swap(Arc::new(None));
+                if let Some(sample) = sample.as_ref() {
+                    if sample
+                        .rows
+                        .iter()
+                        .any(|r| r.pid == std::process::id() && !r.is_thread)
+                        && sample.rows.iter().any(|r| r.is_thread) == expected
+                    {
+                        return true;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            false
+        }
+
+        #[test]
+        fn h_updates_the_running_sampler_in_both_directions() {
+            let mut app = App::new(gander_config::Config {
+                delay_ms: 100,
+                ..Default::default()
+            });
+            let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
+            let delay = Arc::new(AtomicU64::new(100));
+            let options = Arc::new(AtomicU64::new(encode_options(app.scan_options())));
+            let (handle, stop) = spawn_sampler(slot.clone(), delay.clone(), options.clone());
+            let running = RunningSampler(handle, stop);
+            let initially_off = wait_for_threads(&slot, false);
+            app.handle_key(crate::app::Key::Char('H'));
+            publish_settings(&app, &options, &delay);
+            let turned_on = wait_for_threads(&slot, true);
+            app.handle_key(crate::app::Key::Char('H'));
+            publish_settings(&app, &options, &delay);
+            let turned_off = wait_for_threads(&slot, false);
+            running.stop();
+            assert!(initially_off && turned_on && turned_off);
+        }
+
+        #[test]
+        fn every_scan_option_round_trips() {
+            for bits in 0..16 {
+                assert_eq!(encode_options(decode_options(bits)), bits);
+            }
+        }
     }
 }
 

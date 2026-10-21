@@ -145,7 +145,8 @@ Configuration is TOML at `$GANDER_CONFIG`, otherwise
 `$XDG_CONFIG_HOME/gander/config.toml` (fallback:
 `~/.config/gander/config.toml`). Each tab keeps its own columns and sort order;
 header meters and their display modes are configurable. Settings are saved on a
-clean exit.
+clean exit. A missing file uses defaults; unreadable, malformed or invalid settings
+produce an error without overwriting the file. Saves replace the file atomically.
 
 Search and filter history is stored under `$XDG_STATE_HOME/gander/` (fallback:
 `~/.local/state/gander/`).
