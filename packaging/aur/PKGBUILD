@@ -1,0 +1,38 @@
+# Maintainer: gander contributors <https://github.com/pandasir/gander>
+pkgname=gander
+pkgver=0.6.2
+pkgrel=1
+pkgdesc="Cross-platform interactive process viewer"
+arch=('x86_64' 'aarch64')
+url="https://github.com/pandasir/gander"
+license=('GPL-2.0-or-later')
+depends=('gcc-libs')
+makedepends=('cargo' 'rust')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('TO_BE_FILLED')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked --package gander-bin
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --locked --workspace
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 "$srcdir/target/release/gander" "$pkgdir/usr/bin/gander"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

@@ -14,9 +14,9 @@ htop 不同 —— 一个把空间花在进程列表上、而不是花在横向�
 [Releases 页面](https://github.com/pandasir/gander/releases)：
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.1-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.6.1-aarch64-apple-darwin.tar.gz
-./gander-0.6.1-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.6.2-aarch64-apple-darwin.tar.gz
+./gander-0.6.2-aarch64-apple-darwin/gander
 ```
 
 按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
@@ -30,10 +30,27 @@ ncurses 开发头文件，也不需要 `rustc` 之外的 C 编译器。
 直接编译失败。CI 会按 `Cargo.toml` 声明的版本构建，因此这个数字不会在无人察觉的
 情况下与现实脱节。
 
+**Homebrew**（macOS 和 Linux）：
+
+```bash
+brew install pandasir/tap/gander
+```
+
+**crates.io** — 需要 Rust 1.89+：
+
+```bash
+cargo install gander-bin
+```
+
+registry 名称是 `gander-bin`，因为 `gander` 已被一个无关的 crate 占用；安装后的命令仍然是
+`gander`。
+
+**从源码安装**：
+
 ```bash
 git clone https://github.com/pandasir/gander
 cd gander
-cargo install --path crates/bin
+cargo install --locked --path crates/bin
 ```
 
 这会把 `gander` 装到 `~/.cargo/bin`。如果你用 rustup 装的 Rust，该目录已在 `PATH` 里。
@@ -44,7 +61,7 @@ cargo install --path crates/bin
 cargo run --release              # 启动 TUI
 ```
 
-目前还没有发行版软件包；从源码构建或下载 release 二进制是当下受支持的安装方式。
+Arch Linux 用户可以通过 AUR 安装：`yay -S gander`。
 
 ## 用法
 

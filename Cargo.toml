@@ -8,17 +8,21 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 rust-version = "1.89"
 license = "GPL-2.0-or-later"
 authors = ["gander contributors"]
 repository = "https://github.com/pandasir/gander"
+homepage = "https://github.com/pandasir/gander"
+readme = "README.md"
+keywords = ["process", "monitor", "tui", "system"]
+categories = ["command-line-utilities", "os"]
 
 [workspace.dependencies]
-gander-core = { path = "crates/core" }
-gander-config = { path = "crates/config" }
-gander-tui = { path = "crates/tui" }
+gander-core = { version = "0.6.2", path = "crates/core" }
+gander-config = { version = "0.6.2", path = "crates/config" }
+gander-tui = { version = "0.6.2", path = "crates/tui" }
 
 # core
 memchr = "2"

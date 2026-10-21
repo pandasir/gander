@@ -17,9 +17,9 @@ instead of on horizontal bars.
 source — it needs no headers beyond what the base system ships:
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.1-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.6.1-aarch64-apple-darwin.tar.gz
-./gander-0.6.1-aarch64-apple-darwin/gander
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-aarch64-apple-darwin.tar.gz
+tar -xzf gander-0.6.2-aarch64-apple-darwin.tar.gz
+./gander-0.6.2-aarch64-apple-darwin/gander
 ```
 
 Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
@@ -33,10 +33,27 @@ The floor is not decorative: `ratatui` 0.30 needs 1.88 and `uuid` needs 1.89, an
 building on an older toolchain fails. CI builds against whatever `Cargo.toml`
 declares, so this number cannot drift away from reality unnoticed.
 
+**Homebrew** (macOS and Linux):
+
+```bash
+brew install pandasir/tap/gander
+```
+
+**crates.io** — requires Rust 1.89+:
+
+```bash
+cargo install gander-bin
+```
+
+The registry name is `gander-bin` because `gander` is already taken by an
+unrelated crate; the installed command is still `gander`.
+
+**From source**:
+
 ```bash
 git clone https://github.com/pandasir/gander
 cd gander
-cargo install --path crates/bin
+cargo install --locked --path crates/bin
 ```
 
 That puts `gander` in `~/.cargo/bin`, so it is on your `PATH` if you installed
@@ -48,8 +65,7 @@ Prefer to run it without installing:
 cargo run --release              # the TUI
 ```
 
-There are no distro packages yet; building from source or grabbing a release
-binary are the supported ways to install today.
+Arch Linux users can install from the AUR with `yay -S gander`.
 
 ## Usage
 

@@ -29,7 +29,10 @@ release body is *built*, both by scripts in `.github/scripts/`.
 # 2. Bump, and keep the four places in step.
 $EDITOR Cargo.toml                       # [workspace.package] version
 grep -n '0\.[0-9]*\.[0-9]*' README.md README.zh-CN.md
-#    Cargo.lock is gitignored. The three README occurrences point at
+#    Cargo.lock is committed, and the internal workspace dependencies carry both
+#    a version and a path so the crates can be published in dependency order.
+#    Run `cargo update -w` after the bump, and keep `packaging/` in step.
+#    The three README occurrences point at
 #    releases/latest/download/<version>-<target>.tar.gz, so a stale version is a
 #    404 for anyone copy-pasting the install command.
 
