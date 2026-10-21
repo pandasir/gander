@@ -155,7 +155,7 @@ jobs:
           tagged="${GITHUB_REF_NAME#v}"
           if [[ "$declared" != "$tagged" ]]; then
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $declared"
-            echo "Bump [workspace.package] version, the three README occurrences, and re-tag."
+            echo "Bump [workspace.package] version and packaging, then re-tag."
             exit 1
           fi
           echo "tag $GITHUB_REF_NAME matches Cargo.toml $declared"

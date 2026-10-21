@@ -26,15 +26,13 @@ release body is *built*, both by scripts in `.github/scripts/`.
 #    Never move a tag that has shipped a good release. Moving one that shipped a
 #    broken release is correct — see "When a release is wrong" below.
 
-# 2. Bump, and keep the four places in step.
+# 2. Bump, and keep Cargo.lock and packaging in step.
 $EDITOR Cargo.toml                       # [workspace.package] version
-grep -n '0\.[0-9]*\.[0-9]*' README.md README.zh-CN.md
 #    Cargo.lock is committed, and the internal workspace dependencies carry both
 #    a version and a path so the crates can be published in dependency order.
 #    Run `cargo update -w` after the bump, and keep `packaging/` in step.
-#    The three README occurrences point at
-#    releases/latest/download/<version>-<target>.tar.gz, so a stale version is a
-#    404 for anyone copy-pasting the install command.
+#    The READMEs link to the latest release rather than a pinned archive, so they
+#    do not need editing for a version bump.
 
 # 3. Update docs/ROADMAP.md: mark the milestone released, and set the ship
 #    version on the next one.

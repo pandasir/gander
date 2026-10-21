@@ -2,68 +2,82 @@
 
 [English](README.md) | **简体中文**
 
-> 用 Rust 写的跨平台交互式进程查看器 —— 对你的系统 `take a gander`（瞧一眼）。
+> 用 Rust 编写的跨平台交互式进程查看器。
 
-gander 展示你的机器上正在运行什么、各自花了多少资源。它支持 **Linux 和 macOS**，
-沿用 htop 的绝大部分按键（不同的两个列在[下文](#与-htop-不同的按键)），但屏幕布局与
-htop 不同 —— 一个把空间花在进程列表上、而不是花在横向进度条上的布局。
+gander 展示系统中正在运行的进程及其资源消耗。它支持 **Linux、macOS 和
+FreeBSD**，沿用大部分 htop 按键，并提供以进程列表为中心、带常驻检视面板的布局。
+
+## 特性
+
+- **以进程列表为中心。** 默认的 `panels` 布局由紧凑的系统栏、宽进程表和实时检视
+  面板组成。按 `L` 可切换到经典的 `htop` 布局。
+- **无需离开列表即可查看详情。** 命令行、状态、内存和运行时间会随选中进程更新。
+- **采样不阻塞界面。** 采样在后台线程运行，渲染端读取快照。
+- **可脚本化输出。** `--json`、`-n`、`--sort`、`--filter` 和 `--limit` 无需 TUI
+  即可使用。
+- **Linux 深度功能。** PSS/EPSS、PSI、zram/zswap、GPU、延迟统计和容器识别可作为
+  可选列或表头 meter 使用。
+- **原生后端。** Linux 使用 `/proc`，macOS 使用 `sysctl`/Mach/libproc，FreeBSD
+  使用 `sysctl`/`libkvm`。
+
+## 平台支持
+
+| 能力 | Linux | macOS | FreeBSD |
+|---|:---:|:---:|:---:|
+| 进程、CPU 和内存视图 | 支持 | 支持 | 支持 |
+| 主机网络吞吐 | 支持 | 支持 | 支持 |
+| 主机磁盘吞吐（`DiskIO`） | 支持 | - | 支持 |
+| 容器列 | 支持 | - | - |
+| PSS / GPU / 延迟列 | 支持 | - | - |
+| CPU 亲和性编辑 | 支持 | 仅提示 | 支持 |
+
+其他 Unix 目标可能可以编译，但没有可用的实时后端。详见
+[docs/PORTABILITY.md](docs/PORTABILITY.md)。
 
 ## 安装
 
-**预编译二进制**（macOS、Linux 和 FreeBSD）在
-[Releases 页面](https://github.com/pandasir/gander/releases)：
+### 预编译二进制
 
-macOS（Apple Silicon）：
+从 [GitHub Releases](https://github.com/pandasir/gander/releases) 下载对应平台的
+压缩包。
 
-```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-aarch64-apple-darwin.tar.gz
-tar -xzf gander-0.6.2-aarch64-apple-darwin.tar.gz
-./gander-0.6.2-aarch64-apple-darwin/gander
-```
-
-Linux（Ubuntu、Debian、CentOS、RHEL、Fedora 以及其他 x86_64 发行版）：
-
-```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
-tar -xzf gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
-sudo install -m755 gander-0.6.2-x86_64-unknown-linux-musl/gander /usr/local/bin/gander
-gander --version
-```
-
-这是静态 musl 二进制，不依赖宿主机的 glibc，也不需要通过发行版包管理器安装。
-已在 Ubuntu 22.04/24.04、CentOS 7 和 CentOS Stream 9 上验证。FreeBSD：
+| 平台 | Target |
+|---|---|
+| macOS，Apple Silicon | `aarch64-apple-darwin` |
+| macOS，Intel | `x86_64-apple-darwin` |
+| Linux，glibc | `x86_64-unknown-linux-gnu` |
+| Linux，静态链接 | `x86_64-unknown-linux-musl` |
+| FreeBSD | `x86_64-unknown-freebsd` |
 
 ```bash
-curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-freebsd.tar.gz
-tar -xzf gander-0.6.2-x86_64-unknown-freebsd.tar.gz
-./gander-0.6.2-x86_64-unknown-freebsd/gander
+tar -xzf gander-<version>-<target>.tar.gz
+./gander-<version>-<target>/gander
 ```
 
-Intel macOS 请使用 `x86_64-apple-darwin`。每个包旁边都有对应的 `.sha256` 校验文件。
-
-**从源码构建** — 需要 **Rust 1.89+**。不需要其他任何东西：不需要 libcurses，不需要
-ncurses 开发头文件，也不需要 `rustc` 之外的 C 编译器。
-
-这个下限不是装饰：`ratatui` 0.30 要求 1.88，`uuid` 要求 1.89，用更旧的工具链会
-直接编译失败。CI 会按 `Cargo.toml` 声明的版本构建，因此这个数字不会在无人察觉的
-情况下与现实脱节。
-
-**Homebrew**（macOS 和 Linux）：
+安装到 `PATH`：
 
 ```bash
-brew install pandasir/tap/gander
+mkdir -p ~/.local/bin
+install -m755 gander-<version>-<target>/gander ~/.local/bin/gander
 ```
 
-**crates.io** — 需要 Rust 1.89+：
+musl 版本为静态链接，不依赖宿主机的 glibc。每个压缩包旁都有对应的 `.sha256`
+校验文件。
 
-```bash
-cargo install gander-bin
-```
+### 包管理器
 
-registry 名称是 `gander-bin`，因为 `gander` 已被一个无关的 crate 占用；安装后的命令仍然是
-`gander`。
+| 方式 | 命令 |
+|---|---|
+| Homebrew | `brew install pandasir/tap/gander` |
+| crates.io | `cargo install gander-bin` |
+| Arch Linux（AUR） | `yay -S gander` |
 
-**从源码安装**：
+crates.io 上的包名是 `gander-bin`，因为 `gander` 已被一个无关的 crate 占用；
+安装后的命令仍然是 `gander`。
+
+### 从源码构建
+
+需要 **Rust 1.89+**，不需要 ncurses 或 libcurses 开发头文件。
 
 ```bash
 git clone https://github.com/pandasir/gander
@@ -71,325 +85,118 @@ cd gander
 cargo install --locked --path crates/bin
 ```
 
-这会把 `gander` 装到 `~/.cargo/bin`。如果你用 rustup 装的 Rust，该目录已在 `PATH` 里。
-
-不想安装、直接运行：
+也可以不安装，直接运行：
 
 ```bash
-cargo run --release              # 启动 TUI
+cargo run --release -p gander-bin
 ```
 
-**Arch Linux** 用户可以通过 AUR 安装：`yay -S gander`。
-
-## 用法
+## 快速开始
 
 ```bash
 gander                                     # 交互式 TUI
 gander --delay 500                         # 每 500 毫秒采样一次
-gander -n 5 -d 1000                        # 输出 5 次文本采样，每秒一次
-gander --json --limit 10                   # 输出一次 JSON，含 10 个进程
+gander -n 5 -d 1000                        # 输出 5 次文本采样
+gander --json --limit 10                   # 输出一次 JSON
 gander --sort PERCENT_MEM --limit 20       # 按内存排序取前 20
-gander --filter "python|node"              # 只显示匹配的命令行
+gander -F "python|node"                    # 过滤命令行
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
 
-完整参数见 `gander --help`；每个按键要么是 htop 的，要么列在
-[docs/KEYS.md](docs/KEYS.md) 里。
+过滤词是大小写不敏感的固定字符串，使用 `|` 分隔，不是正则表达式。完整参数见
+`gander --help`。
 
-## 与 htop 不同的按键
+## 界面与按键
 
-htop 有两个既有绑定在这里含义不同，htop 用户按下去会得到不一样的结果：
-
-| 按键 | htop | gander |
-|---|---|---|
-| `I` | 反转排序方向 | 切换当前选中表头 meter 的显示模式 |
-| `+` / `-` | 树状视图下展开 / 折叠子树 | 加快 / 放慢采样 |
-
-`+`/`-` 只在树状视图中有歧义；在别处 htop 并未绑定它们，因此常见场景不受影响。
-`I` 是实打实的冲突 —— 已经不再有反转排序的按键，要换顺序请用 `F6` / `<` `>` / `.`。
-
-真正新增的按键：
+`panels` 是默认布局：左侧系统栏、中间进程表、右侧检视面板。`htop` 是经典的全宽
+布局。按 `L` 切换，选择会被保存。
 
 | 按键 | 作用 |
 |---|---|
-| `L` | 切换布局：`panels` ⇄ `htop` |
-| `I` | 切换当前选中表头 meter 的模式（text / bar / graph） |
+| `F1` / `h` / `?` | 帮助 |
+| `F2` | 设置 |
+| `F3` / `/` | 搜索 |
+| `F4` / `\` | 过滤 |
+| `F5` / `t` | 树状视图 |
+| `F6` / `<` `>` | 切换排序列 |
+| `F9` / `k` | 发送信号 |
+| `F10` / `q` | 退出 |
+
+与 htop 不同的按键：
+
+| 按键 | gander |
+|---|---|
+| `I` | 切换当前选中表头 meter 的显示模式 |
+| `+` / `-` | 加快 / 放慢采样 |
+| `L` | 切换布局 |
 | `Shift+Left` / `Shift+Right` | 移动表头 meter 光标 |
 
-`H` **不是**新增按键 —— 它就是 htop 的"隐藏用户态线程"，且两个平台都支持，不只 Linux。
-
-## 相比 htop 的优势
-
-**把纵向空间留给进程列表。** htop 的 meter 是横向排列的，而它的高度随核数增长 ——
-每个核占一行。gander 把系统状态放在纵向侧栏里，高度基本不变，其中每核负载用网格
-显示，16 个核两行就能放下。
-
-在本机（10 核）的 120x24 终端实测，两者都是刚启动、经真实终端模拟器抓屏：htop
-显示 **11** 行进程，gander 显示 **21** 行 —— 接近两倍。核数越多差距越大，因为
-只有 htop 那一侧会随核数变高。
-
-**查看进程详情不必离开列表。** 在 htop 里，想知道某进程的命令行、确切内存占用、
-或是处于睡眠还是运行状态，都要打开一个模态界面（`w`、`e`、`l`），从而丢失滚动
-位置、已打的标记，以及你正在对比的上下文。gander 在列表旁常驻一个检视面板，
-随选择移动而更新：折行后的完整命令行、用单词拼出的状态、以及窄列被四舍五入掉的
-精确数值。模态界面依然保留，用于确实需要独立空间的功能 —— 环境变量、打开的文件、
-文件锁、调用栈。
-
-**排序结果是可见的。** `CPU%` 和 `MEM%` 列的数字背后画有比例条，比例基准是
-**全表最大值**而非 100%。在机器空闲、最高进程只有 4% 时，按绝对比例画的条
-在每一行都会不可见 —— 而那恰恰是你最需要判断"这些里面哪个最大"的时候。
-
-**界面绝不卡住。** 采样在后台线程运行，渲染端读取快照，因此一次缓慢的扫描
-不会冻结界面。这在 htop 最吃力的地方最关键：跨数千个 PID 读取 `smaps_rollup`。
-
-**可以脚本化调用。** `--json`、`-n`、`--sort`、`--filter`、`--limit` 让它能用于
-监控和 shell 管道，这是 htop 做不到的。
-
-**在 macOS 上是正确的。** gander 通过 `sysctl(KERN_PROC_ALL)` 而不是
-`proc_pidinfo` 读取完整进程表 —— 后者以普通用户身份只能看到约 60%。
-运行状态取自 `proc_taskinfo`，因为当前 Darwin 的 `p_stat` 字段会把阻塞在
-`read(2)` 里的进程报告为"可运行"。
-
-**表头里有主机吞吐量。** htop 有按进程的 I/O 速率列，但没有主机级的网络或磁盘
-meter。gander 的 `NetworkIO` 和 `DiskIO` 以迄今见过的最大速率为标尺（而非固定
-上限），因此在 100 Mbit 和 10 Gbit 链路上都读得出来。
-
-**它会告诉你*是哪个*容器。** htop 的 `CONTAINER` 列只标记"是否在容器里"；gander
-显示 `docker:1f2e3d4c5b6a` 或 `kubepods:<pod-uid>`。识别同时用 cgroup 路径（给出
-运行时与 id）和 PID namespace（唯一可靠的成员判定 —— 自带 cgroup namespace 的
-容器会读到 `/`，只靠路径会把它当成宿主机）。
-
-## 两种布局
-
-gander 内置两套布局，按 `L` 切换，选择会被记住。
-
-**`panels`（默认）** —— 纵向系统栏、带比例条的进程表、常驻检视面板：
-
-```
-  CPU    21.5%│ PID  CPU%  MEM%   RES  COMMAND             2032 iTerm2
-  ████░░░░░░░░│ 2032  23.9  1.9   152M  /Applications/iTe…  /Applications/iTerm…
-  10 cores    │ 24087 11.4  0.1   5.9M  gander              USER   panda
-  ▂▂▂▂▃▂▁▁ ·  │ 6511   7.4  3.0   242M  Google Chrome       STATE  S sleeping
-  MEM  5.5G/16G│ …                     …                    CPU    23.9%
-  SWP  3.9G/5G│                                            MEM    1.9% 114M
-  LOAD 2.69…  │                                            TIME   30:09.95
-  UP     5h 3m│
-  TASKS  552  │
-  RUN      1  │
-  THR   3370  │
-```
-
-每核网格是一核一格、按负载分色带，其下方的 sparkline 是聚合 CPU 的时间曲线。
-
-**`htop`** —— 经典布局，完整支持。在配置里写 `layout = "htop"` 可设为默认。
-
-设计理由（包括比例条为何按全表取值、窄终端上如何降级）见
-[docs/LAYOUT.md](docs/LAYOUT.md)。
+htop 的 `I` 用于反转排序；在 gander 中请使用 `F6` / `<` `>` / `.`。完整按键表见
+[docs/KEYS.md](docs/KEYS.md)。
 
 ## 配置
 
-TOML 格式，位于 `$XDG_CONFIG_HOME/gander/config.toml`（可用 `$GANDER_CONFIG` 覆盖）。
-每个屏幕标签页各自保留自己的列与排序，表头 meter 及其显示模式也可配置。
-仅在正常退出时写入，与 htop 一致。
+配置为 TOML 格式，路径优先使用 `$GANDER_CONFIG`，否则为
+`$XDG_CONFIG_HOME/gander/config.toml`（回退到 `~/.config/gander/config.toml`）。
+每个标签页各自保留列与排序，表头 meter 及其显示模式也可配置。设置仅在正常退出时
+写入。
 
-已有的 htop 配置可以导入：
+搜索与过滤历史存放在 `$XDG_STATE_HOME/gander/`（回退到
+`~/.local/state/gander/`）。
+
+可用主题：`gander`、`default`、`monochrome`、`midnight`、`classic`、`verdant`、
+`paper`、`quiet`。可在 `F2` -> Colors 中选择，或在配置中设置 `color_scheme`。
+
+## Linux 深度功能
+
+- `M_PSS`、`M_EPSS`、`M_PRIVATE`、`M_SWAP`：按需读取 `smaps_rollup`；未测量的
+  值显示 `-`，而不是 `0`。
+- `GPU%`、`GPU_TIME`：从 `drm-usage-stats` 读取，无需厂商 SDK。
+- `CPUD%`、`IOD%`、`SWPD%`：TASKSTATS 延迟统计，需要 `CAP_NET_ADMIN`。
+- `CONTAINER`、`CGROUP`：结合 cgroup 路径与 PID namespace 进行识别。
+- `PSI`、`Zram`、`Zswap`、`HugePages`：可选表头 meter。
+
+可在 `F2` -> Columns 或 `F2` -> Header 中启用。实现细节见
+[docs/DESIGN.md](docs/DESIGN.md) 和 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
+
+## 开发
+
+工作区分为四个 crate：
+
+| Crate | 职责 |
+|---|---|
+| `gander-core` | 平台采样、解析、进程模型与操作 |
+| `gander-config` | TOML 设置、历史记录与 `htoprc` 导入 |
+| `gander-tui` | 渲染、布局、输入与运行时 |
+| `gander-bin` | 命令行、批量输出与可执行文件 |
 
 ```bash
-gander --import-htoprc ~/.config/htop/htoprc --save
+cargo build --locked
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo bench -p gander-core
 ```
 
-搜索与过滤历史单独存放于 `$XDG_STATE_HOME/gander/{search,filter}_history`——
-配置是你会复制到另一台机器的*决定*，历史只是使用这台机器的*副产品*。在
-`F3` / `F4` 提示符里按 `Up` / `Down` 即可翻阅，重跑昨天的过滤只需要一个键。
+macOS 实时测试会读取系统进程表，可能需要在非受限沙箱中运行。完整开发与评审流程见
+[CONTRIBUTING.md](CONTRIBUTING.md)。
 
-### 身份列
+## 文档
 
-另有七列描述进程*是谁*，而不是*在做什么*。三平台全部可用。
-
-| 列 | 含义 |
+| 文档 | 内容 |
 |---|---|
-| `SESSION` | 登录会话 id（`SID`）；内核不说时显示 `-` |
-| `TTY` | 控制终端，解码为 `pts/3` 或 `tty1`；没有则显示 `?` |
-| `TPGID` | 该终端上前台作业的进程组 |
-| `STARTTIME` | 墙钟启动时间：boot 时间加上进程的 start ticks |
-| `TGID` | 线程组 id：线程行所属的进程 |
-| `SCHED_POLICY` | `other`、`fifo`、`rr`、`batch`、`idle`、`deadline` |
-| `PROC_COMM` | 内核持有的短命令名 |
-| `PROC_EXE` | 解析后的可执行文件路径 |
-| `CWD` | 工作目录 |
-
-`COMM` 与 `PROC_COMM` 不是同一列，这是有意的：`COMM` 是 htop 的 Command 列，
-显示*命令行*；`PROC_COMM` 是内核持有的可执行文件名。htop 也做同样的区分。
-
-`STARTTIME` 以快照的 boot 时间偏移，并按**本地时间**渲染，所以它与表头的 `Clock`
-一致，而不是悄悄使用 UTC。
-
-`TTY` 解码内核的 `tty_nr` 设备号而不是直接打印：`34816` 不是一个任何人能认出的终端，
-`pts/0` 才是。`TPGID` 对内核的 `-1` 渲染为 `-`，那表示“没有前台作业”，不是一个进程组。
-
-### 容器列（Linux）
-
-`F2` → Columns 在 Linux 上额外提供两列：
-
-- **`CONTAINER`** —— 进程所属容器，格式 `运行时:id`，例如
-  `docker:1f2e3d4c5b6a`、`kubepods:1a2b3c4d-...`、`lxc:web-1`。宿主进程显示 `-`。
-- **`CGROUP`** —— 完整 cgroup 路径，id 不够用时查看。
-
-识别同时使用 cgroup 路径**和** PID namespace，因为两者都不充分：路径能给出运行时
-和 id，但在自带 cgroup namespace 的容器里只会读到 `/`；namespace 能说明"在容器里"
-但说不出是哪个。namespace 判定为容器、路径又给不出名字时显示 `container:?`，而不是
-编造一个 id。
-
-按 `O` 可隐藏容器内的进程，只留宿主机的。macOS 没有容器检测，该键会直接说明，
-而不是拨动一个什么都不会发生的开关。
-
-### 表头 meter
-
-`F2` → Header 可增删与排序；`I` 切换选中 meter 的显示模式（text / bar /
-graph），每个 meter 的选择单独保存。除 htop 的整套（CPU、内存、swap、负载、
-uptime、任务、时钟、日期、主机名、空白）之外，还有两个吞吐量 meter：
-
-- **`NetworkIO`** —— 主机收发速率，已排除回环。
-- **`DiskIO`** —— 来自 `/proc/diskstats` 的主机读写速率，只统计整块磁盘
-  （分区与 `dm-*` 会被跳过，避免重复计数）。macOS 在没有 IOKit 的情况下没有
-  主机级对应计数器，因此该 meter 会直接说明，而不是长期显示 `0 B/s`。
-
-两者都是对累计计数器的*速率*，并以迄今见过的最大速率（而非固定上限）为标尺
-——固定在 1 Gbit 的进度条在 100 Mbit 链路上会细得看不见。
-
-另有四个 Linux 深度 meter。子系统不存在时它们一律显示 `n/a here`，而不是画一条
-永远空着的进度条：
-
-- **`PSI`** —— 压力失速信息：CPU、内存、IO、IRQ 各自的 `some`（至少有一个任务在
-  等待）与 `full`（没有任何任务能跑）。这是唯一能把"忙"和"卡"区分开的数字：90%
-  CPU 而运行队列为空是健康的，30% CPU 但 `io full` 均值 40% 则不是——后一种情况下
-  CPU% 和负载均值看起来都毫无异常。
-- **`Zram`** —— RAM 中的压缩 swap，显示为 `原始 → 压缩后 (压缩比)`。4:1 意味着
-  4 GB 的 swap 只占用 1 GB 内存。
-- **`Zswap`** —— swap 设备前面的压缩池，按它上限（`max_pool_percent` × 物理内存）
-  的比例显示。这个数字回答的是"下一个换出的页会不会落到磁盘上"。
-- **`HugePages`** —— 预保留的大页，`已用/总量`。保留的页无论有没有进程映射，都
-  不能被其他用途使用。
-
-### Linux 内存与 GPU 列
-
-在 Linux 上，`F2` → Columns 还会提供 PSS 系列与 GPU 列：
-
-| 列 | 含义 |
-|---|---|
-| `M_PSS` | 比例集大小：共享页在共享者之间均摊 |
-| `M_EPSS` | PSS 加上换出部分的等价量（htop 称之为 `M_PSSWP`） |
-| `M_PRIVATE` | `Private_Clean + Private_Dirty`：进程退出时会一并释放的部分 |
-| `M_SWAP` | 该进程换出到 swap 的内存量 |
-| `GPU%` | GPU 时间占比，来自 `drm-usage-stats` |
-| `GPU_TIME` | 累计 GPU 时间，对所有引擎类求和 |
-| `CPUD%` | 该任务生命中处于「可运行但在等 CPU」的比例 |
-| `IOD%` | 该任务生命中等待同步块 I/O 的比例 |
-| `SWPD%` | 该任务生命中等待换入页的比例 |
-
-**为什么用 PSS 而不是 RES。** RSS 对每个进程各算一次共享页，所以两个进程共享
-100 MB 库时各自都报 100 MB，`RES` 列加起来就是 200 MB 并不存在的内存。PSS 把每个
-共享页按共享者数量均摊，是唯一在整张表上相加仍然正确的每进程数字。
-
-**两组都是按需读取。** `smaps_rollup` 会让内核遍历进程的每一个 VMA；`fdinfo` 则是
-一次目录遍历加上每个描述符一次读取。任一项在整个桌面的进程表上跑一遍，都比其余
-扫描加起来还贵。所以只有当需要它的列真的在屏幕上时才读——`gander --sort M_PSS`
-也只为它真正需要的东西付费。没读到的行显示 `-` 而绝不是 `0`：别人的
-`smaps_rollup` 需要 `CAP_SYS_PTRACE`，"没测"不等于"零"。
-
-**不依赖任何厂商 SDK。** GPU 数字来自内核自己的 `drm-usage-stats` 键，所以
-`amdgpu`、`i915`/`xe` 和 `nouveau` 无需安装任何东西即可工作。不实现这些键的驱动
-显示短横线。
-
-**延迟列回答的是另一个问题。** `CPU%` 说的是进程做了多少活，`IOD%` 说的是它生命中
-有多少时间*做不了*活。一个 0.0% CPU 但 `IOD%` 为 40% 的进程不是空闲，是卡住了——
-表里没有别的列能区分这两者。数据来自 generic netlink 上的 `TASKSTATS`，直接说协议
-而不是链接 `libnl3`。
-
-它们需要 `CAP_NET_ADMIN`，普通进程没有：无特权的 `gander` 会拿到 `EPERM`，在第一次
-被拒后停止询问，三列全部显示 `-`。这是有意的——`0.0%` 会宣称该进程从不等待，而这个
-数字根本没取到。
-
-百分比是**生命周期平均值**而非区间速率：内核只保存累计计数器，所以一小时前的一次卡顿
-现在仍然显示。把它读作「这个进程的存在中有多少时间在等待」，而不是「它现在在干什么」。
-
-### 主题
-
-共八套，在 `F2` → Colors 里选（或配置里的 `color_scheme`）：
-
-| | |
-|---|---|
-| `gander`（默认） | 深海军蓝底上的青色，紫色点缀 |
-| `default` | htop 自己的配色 |
-| `monochrome` | 完全无彩色 |
-| `midnight` | 蓝上加蓝，低对比 |
-| `classic` | 深海军蓝，单一强调色，实心蓝选中行 |
-| `verdant` | 偏绿 |
-| `paper` | 浅色背景，适合亮色终端 |
-| `quiet` | 去饱和的灰阶 |
-
-`paper` 在结构上是关键的那一套：每个样式都设了前景色，而多数不设背景色 —— 这在
-深色主题下看不出来，在浅色主题下就是坏的。渲染器会先用主题背景铺满整帧，因此四条
-绘制路径（htop、panels、setup、对话框）都自动继承。
-
-## 平台支持
-
-| | Linux | macOS | FreeBSD |
-|---|---|---|---|
-| 进程列表 | `/proc` | `sysctl(KERN_PROC_ALL)` + `libproc` | `sysctl(KERN_PROC_PROC)` |
-| 进程详情 | `/proc/<pid>` | Mach + `proc_pidinfo` | `kinfo_proc` |
-| 容器列 | cgroup + PID namespace | 不可用 | 不可用 |
-| PSS / EPSS / private 列 | `smaps_rollup`，按需读取 | 不可用 | 不可用 |
-| PSI 压力（some/full） | `/proc/pressure` | 不可用 | 不可用 |
-| Zram / Zswap / HugePages meter | `/sys/block/zram*`、`meminfo` | 不可用 | 不可用 |
-| GPU 列（`GPU%`、`GPU_TIME`） | `fdinfo` 里的 `drm-usage-stats` | 不可用 | 不可用 |
-| 延迟列（`CPUD%`、`IOD%`、`SWPD%`） | `TASKSTATS` netlink（需 `CAP_NET_ADMIN`） | 不可用 | 不可用 |
-| 线程按行显示 | 支持（`H`） | 支持（`H`） | 支持（`H`） |
-| CPU 亲和性（`a`） | 可读可写 | 仅有调度器提示，面板会说明原因 | 可读可写（`cpuset`） |
-| I/O 优先级（`i`） | 可读可写 | 不可用，面板会说明原因 | 不可用，面板会说明原因 |
-| 主机磁盘吞吐（`DiskIO`） | `/proc/diskstats` | 不可用 | `devstat` |
-
-三个后端都针对真实操作系统验证过——FreeBSD 在 QEMU 里跑 14.5-RELEASE，整套测试在
-guest 内运行。其他 unix 目标可以编译 `/proc` 后端，但没有可用的数据源；此时 TUI 会
-拒绝启动，而不是显示一片空白。细节见 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
-
-## 构建与测试
-
-```bash
-cargo build --release      # target/release/gander
-cargo test                 # macOS 356 个，Linux 366 个
-cargo clippy --all-targets # 零警告
-cargo bench -p gander-core # 扫描耗时
-```
-
-`crates/core/tests/fixtures/proc/` 下的测试样例是真实的 `/proc` 快照，
-因此 Linux 读取路径可以在任何 unix 上测试。
-
-## 设计
-
-gander 把 htop 的*功能清单*当作需求文档，丢掉它的*代码结构*：htop 是基于 ncurses
-的保留模式控件工具箱，而 gander 是在与 UI 无关的 core 之上、用 ratatui 实现的
-立即模式前端。core crate 不依赖任何 UI，这正是 `--json` 几乎零成本的原因。
-
-| | htop（C） | gander（Rust） |
-|---|---|---|
-| 渲染 | ncurses，保留模式 Panel | ratatui + crossterm，立即模式 |
-| 控件 | `Object` 虚表 + 焦点栈 | `enum Screen` + 各屏独立的 `handle_key()` |
-| 数据 | 单线程扫描 | 并行扫描（rayon）+ 后台采样线程 |
-| 配置 | `htoprc`，手写解析器 | TOML，并提供 `htoprc` 导入器 |
-| 平台 | Linux、BSD、macOS | Linux、macOS、FreeBSD，共用 `PlatformSampler` trait |
-
-更多内容：设计见 [docs/DESIGN.md](docs/DESIGN.md)，已完成与后续计划见
-[docs/ROADMAP.md](docs/ROADMAP.md)，每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)，
-发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。
+| [docs/KEYS.md](docs/KEYS.md) | 完整按键表与批量模式 |
+| [docs/LAYOUT.md](docs/LAYOUT.md) | `panels` 布局与窄终端降级 |
+| [docs/PORTABILITY.md](docs/PORTABILITY.md) | 后端矩阵与平台限制 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 架构与数据模型 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 已完成里程碑与后续计划 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
 
 ## 参与贡献
 
-欢迎提交 bug 报告、平台观察结果和聚焦的 pull request。工作区结构、测试命令和评审标准见
-[CONTRIBUTING.md](CONTRIBUTING.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，
-不要开公开 issue。
+欢迎提交 bug 报告、平台观察结果和聚焦的 pull request。请先阅读
+[CONTRIBUTING.md](CONTRIBUTING.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 私下
+报告，不要开公开 issue。
 
 ## 许可证
 
-GPL-2.0-or-later，与 htop 保持一致。行为、按键绑定和列语义都源自 htop；
-请保持许可证兼容，并注明出处。
+GPL-2.0-or-later。行为、按键绑定和列语义源自 htop；请保持许可证兼容并注明出处。
