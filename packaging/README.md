@@ -49,6 +49,43 @@ Users install with:
 brew install pandasir/tap/gander
 ```
 
+Stable installs on macOS (Apple Silicon and Intel) and Linux x86_64 download
+checksum-pinned release binaries instead of compiling locally. They have no Rust,
+LLVM or other formula dependencies. Linux uses the static musl archive. Linux ARM
+has no release binary yet and continues to build from source; `--HEAD` also builds
+from source on every platform. Only those source builds depend on Rust.
+
+After changing the formula, check the platform/dependency matrix and test the
+installed tap formula:
+
+```bash
+brew ruby packaging/homebrew/test_formula.rb
+brew style packaging/homebrew/Formula/gander.rb
+# Copy the updated formula into the tap checkout before these commands.
+brew audit --strict pandasir/tap/gander
+brew deps --tree --include-build pandasir/tap/gander
+brew install pandasir/tap/gander
+brew test pandasir/tap/gander
+```
+
+The normal stable dependency tree on the binary platforms must contain only
+`gander`, not `rust` or `llvm`. Homebrew itself may still download metadata or
+update its own runtime; those are separate from gander's dependencies.
+
+When releasing a new version, wait for the release archives to be published,
+update all three binary URLs and SHA-256 values plus the Linux ARM source URL
+and checksum, and reset the formula revision to zero. For packaging-only changes
+to the same release, increment `revision` so existing users receive the update.
+Always sync and push `Formula/gander.rb` to `pandasir/homebrew-tap`; changing only
+the copy in this repository does not change users' installs.
+
+Users with the old source-build formula can update it with:
+
+```bash
+brew update
+brew upgrade pandasir/tap/gander
+```
+
 ## AUR
 
 `packaging/aur/` contains the `PKGBUILD` and `.SRCINFO` for the `gander` AUR

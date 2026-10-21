@@ -41,6 +41,11 @@ jobs:
       # plain process table is exercised anyway. Install nothing extra.
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
+      - name: Check Homebrew download and dependency matrix
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew ruby packaging/homebrew/test_formula.rb
 
   # FreeBSD has no GitHub-hosted runner, so the backend is checked two ways.
   #
