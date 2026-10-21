@@ -184,3 +184,59 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+
+  # The static musl archive is the install path for Ubuntu, CentOS and other
+  # distributions. Building it is not enough: the product is the archive after
+  # download, extraction and execution on a distribution with a different glibc
+  # from the build runner. CentOS 7 is the oldest target we claim to support;
+  # Ubuntu 24.04 is the current LTS.
+  linux-install:
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - "ubuntu:24.04"
+          - "centos:7"
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - name: Install download and checksum tools
+        if: matrix.image == 'ubuntu:24.04'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl coreutils tar
+      - name: Download, verify and run the release
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${VERSION#v}"
+          target=x86_64-unknown-linux-musl
+          asset="gander-${version}-${target}.tar.gz"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
+
+          if command -v curl >/dev/null; then
+            curl -fsSL -o "/tmp/${asset}" "${base}/${asset}"
+            curl -fsSL -o "/tmp/${asset}.sha256" "${base}/${asset}.sha256"
+          else
+            # CentOS 7's minimal image ships curl; fail clearly if that changes.
+            echo "::error::curl is required in ${IMAGE}"
+            exit 1
+          fi
+
+          cd /tmp
+          if command -v sha256sum >/dev/null; then
+            sha256sum -c "${asset}.sha256"
+          else
+            echo "::error::sha256sum is required in ${IMAGE}"
+            exit 1
+          fi
+          tar -xzf "${asset}"
+          "./gander-${version}-${target}/gander" --version
+          "./gander-${version}-${target}/gander" --json --limit 1 >/tmp/sample.json
+          test -s /tmp/sample.json
+          echo "${IMAGE}: ${asset} runs"

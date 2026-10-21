@@ -12,9 +12,10 @@ instead of on horizontal bars.
 
 ## Install
 
-**Prebuilt binaries** (macOS and Linux) are on the
-[Releases page](https://github.com/pandasir/gander/releases). FreeBSD builds from
-source — it needs no headers beyond what the base system ships:
+**Prebuilt binaries** (macOS, Linux and FreeBSD) are on the
+[Releases page](https://github.com/pandasir/gander/releases):
+
+macOS, Apple Silicon:
 
 ```bash
 curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-aarch64-apple-darwin.tar.gz
@@ -22,8 +23,26 @@ tar -xzf gander-0.6.2-aarch64-apple-darwin.tar.gz
 ./gander-0.6.2-aarch64-apple-darwin/gander
 ```
 
-Pick the archive for your platform (`aarch64`/`x86_64` Apple Silicon or Intel
-macOS; `x86_64-unknown-linux-musl` is a static binary that runs on any distro).
+Linux (Ubuntu, Debian, CentOS, RHEL, Fedora and other x86_64 distributions):
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
+tar -xzf gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
+sudo install -m755 gander-0.6.2-x86_64-unknown-linux-musl/gander /usr/local/bin/gander
+gander --version
+```
+
+That archive is a static musl binary, so it does not depend on the host's glibc
+or on a distro package. It is verified on Ubuntu 22.04/24.04 and CentOS 7, and
+on CentOS Stream 9. FreeBSD:
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-freebsd.tar.gz
+tar -xzf gander-0.6.2-x86_64-unknown-freebsd.tar.gz
+./gander-0.6.2-x86_64-unknown-freebsd/gander
+```
+
+Pick the matching archive for Intel macOS (`x86_64-apple-darwin`) or FreeBSD.
 Each archive has a `.sha256` checksum next to it.
 
 **From source** — requires **Rust 1.89+**. Nothing else: no libcurses, no ncurses
@@ -65,7 +84,7 @@ Prefer to run it without installing:
 cargo run --release              # the TUI
 ```
 
-Arch Linux users can install from the AUR with `yay -S gander`.
+**Arch Linux** users can install from the AUR with `yay -S gander`.
 
 ## Usage
 

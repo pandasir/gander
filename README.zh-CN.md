@@ -10,8 +10,10 @@ htop 不同 —— 一个把空间花在进程列表上、而不是花在横向�
 
 ## 安装
 
-**预编译二进制**（macOS 和 Linux）在
+**预编译二进制**（macOS、Linux 和 FreeBSD）在
 [Releases 页面](https://github.com/pandasir/gander/releases)：
+
+macOS（Apple Silicon）：
 
 ```bash
 curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-aarch64-apple-darwin.tar.gz
@@ -19,9 +21,25 @@ tar -xzf gander-0.6.2-aarch64-apple-darwin.tar.gz
 ./gander-0.6.2-aarch64-apple-darwin/gander
 ```
 
-按平台选择对应的包（`aarch64`/`x86_64` 分别是 Apple Silicon 和 Intel 的
-macOS；`x86_64-unknown-linux-musl` 是静态链接的二进制，任何发行版都能直接跑）。
-每个包旁边都有对应的 `.sha256` 校验文件。
+Linux（Ubuntu、Debian、CentOS、RHEL、Fedora 以及其他 x86_64 发行版）：
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
+tar -xzf gander-0.6.2-x86_64-unknown-linux-musl.tar.gz
+sudo install -m755 gander-0.6.2-x86_64-unknown-linux-musl/gander /usr/local/bin/gander
+gander --version
+```
+
+这是静态 musl 二进制，不依赖宿主机的 glibc，也不需要通过发行版包管理器安装。
+已在 Ubuntu 22.04/24.04、CentOS 7 和 CentOS Stream 9 上验证。FreeBSD：
+
+```bash
+curl -LO https://github.com/pandasir/gander/releases/latest/download/gander-0.6.2-x86_64-unknown-freebsd.tar.gz
+tar -xzf gander-0.6.2-x86_64-unknown-freebsd.tar.gz
+./gander-0.6.2-x86_64-unknown-freebsd/gander
+```
+
+Intel macOS 请使用 `x86_64-apple-darwin`。每个包旁边都有对应的 `.sha256` 校验文件。
 
 **从源码构建** — 需要 **Rust 1.89+**。不需要其他任何东西：不需要 libcurses，不需要
 ncurses 开发头文件，也不需要 `rustc` 之外的 C 编译器。
@@ -61,7 +79,7 @@ cargo install --locked --path crates/bin
 cargo run --release              # 启动 TUI
 ```
 
-Arch Linux 用户可以通过 AUR 安装：`yay -S gander`。
+**Arch Linux** 用户可以通过 AUR 安装：`yay -S gander`。
 
 ## 用法
 
