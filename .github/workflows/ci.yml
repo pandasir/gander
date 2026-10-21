@@ -17,8 +17,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
+      # The tree is not fully rustfmt-clean yet. Check only the Rust files this
+      # change touches, so contributors are not asked to reformat the whole
+      # workspace to land a two-line fix.
+      - name: Check formatting of changed Rust files
+        if: github.event_name == 'pull_request'
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.rs')
+          if [ -z "$changed" ]; then
+            echo "no Rust files changed"
+            exit 0
+          fi
+          echo "$changed"
+          rustfmt --edition 2021 --check $changed
       # The live Linux tests run in a container locally; on the runner the
       # plain process table is exercised anyway. Install nothing extra.
       - run: cargo test

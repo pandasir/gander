@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Installation and usage
+    url: https://github.com/pandasir/gander#install
+    about: Install commands, supported platforms, and the first-run guide.
+  - name: Keybindings and layout
+    url: https://github.com/pandasir/gander/blob/main/docs/KEYS.md
+    about: Check the keys that differ from htop before filing a UI bug.
+  - name: Security report
+    url: https://github.com/pandasir/gander/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.

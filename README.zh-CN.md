@@ -365,6 +365,12 @@ gander 把 htop 的*功能清单*当作需求文档，丢掉它的*代码结构*
 [docs/ROADMAP.md](docs/ROADMAP.md)，每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)，
 发布流程见 [docs/RELEASING.md](docs/RELEASING.md)。
 
+## 参与贡献
+
+欢迎提交 bug 报告、平台观察结果和聚焦的 pull request。工作区结构、测试命令和评审标准见
+[CONTRIBUTING.md](CONTRIBUTING.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，
+不要开公开 issue。
+
 ## 许可证
 
 GPL-2.0-or-later，与 htop 保持一致。行为、按键绑定和列语义都源自 htop；

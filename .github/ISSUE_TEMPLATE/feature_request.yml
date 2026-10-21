@@ -1,0 +1,67 @@
+name: Feature request
+description: Propose a capability, column, meter, or workflow improvement.
+title: "[feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before the implementation. gander deliberately
+        differs from htop in layout and defaults, so "htop does it this way" is
+        useful context but not a complete requirement.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the monitoring or maintainer workflow that is currently difficult.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the user see or be able to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Relevant platform
+      options:
+        - All platforms
+        - Linux
+        - macOS
+        - FreeBSD
+        - Packaging or distribution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing keys, columns, configuration, or scripts that almost solve it.
+    validations:
+      required: false
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Kernel APIs, screenshots, benchmarks, or links that show the data is available.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and the roadmap.
+          required: true
+        - label: I understand this may be declined if it conflicts with the project's scope.
+          required: true

@@ -1,0 +1,102 @@
+name: Bug report
+description: Report a reproducible crash, incorrect reading, or UI problem.
+title: "[bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove secrets, usernames, hostnames, and
+        private command-line arguments from pasted output.
+
+        Security vulnerabilities must be reported privately through the Security
+        tab, not here.
+
+  - type: input
+    id: version
+    attributes:
+      label: gander version
+      description: Output of `gander --version`.
+      placeholder: gander 0.6.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - FreeBSD
+        - Other unix
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS and kernel version
+      description: For example macOS 15.6, Ubuntu 24.04 with kernel 6.8, or FreeBSD 14.5.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Homebrew tap
+        - cargo install gander-bin
+        - GitHub release binary
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that reliably shows the problem.
+      placeholder: |
+        1. Run `gander ...`
+        2. Press ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error text or a screenshot. Redact private data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional evidence
+      description: Relevant output from `ps`, `sysctl`, `free`, `netstat`, or a comparison with htop.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets and unrelated personal data from this report.
+          required: true

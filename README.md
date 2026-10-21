@@ -405,6 +405,13 @@ More: [docs/DESIGN.md](docs/DESIGN.md) for the design,
 [CHANGELOG.md](CHANGELOG.md) for what changed in each release, and
 [docs/RELEASING.md](docs/RELEASING.md) for how a release is cut.
 
+## Contributing
+
+Bug reports, platform observations, and focused pull requests are welcome. Start
+with [CONTRIBUTING.md](CONTRIBUTING.md) for the workspace layout, test commands,
+and review expectations. Report vulnerabilities privately according to
+[SECURITY.md](SECURITY.md); do not open a public issue for one.
+
 ## License
 
 GPL-2.0-or-later, matching htop. Behaviour, keybindings and column semantics are
