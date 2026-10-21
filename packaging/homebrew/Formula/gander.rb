@@ -9,7 +9,7 @@ class Gander < Formula
   depends_on "rust" => :build
 
   def install
-    system "cargo", "install", "--locked", *std_cargo_args(path: "crates/bin")
+    system "cargo", "install", *std_cargo_args(path: "crates/bin")
   end
 
   test do
