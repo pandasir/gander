@@ -66,14 +66,20 @@ gh run list --limit 3                       # the Release run, not just CI
 gh release view v0.6.0 --json assets --jq '.assets[].name'
 ```
 
-- **Are all five archives attached?** v0.6.0 first shipped without the FreeBSD one
-  because `release` declared `needs: build` and `freebsd` is a sibling job, so
-  `download-artifact` could not see it. Nothing was red.
+- **Are all of them attached?** The release has seven archives (macOS arm64 and
+  Intel, Linux x86_64 and arm64 each in gnu and musl, FreeBSD) plus four packages
+  (`amd64`/`arm64` × `.deb`/`.rpm`) and a `SHA256SUMS`. v0.6.0 first shipped
+  without the FreeBSD archive because `release` declared `needs: build` and
+  `freebsd` is a sibling job, so `download-artifact` could not see it. Nothing was
+  red. The packages are attached by a separate job for the same reason: a job that
+  is not in the dependency chain does not run before the upload.
 - **Does the body say what changed?** If it opens with "Download the archive", the
   body is still the old static block or the script did not run.
 - **Download one and run it.** `shasum -a 256 -c`, then `--version`, then
   `--json --limit 1`. The archive is the product; the workflow passing means the
-  build survived, not that the binary works.
+  build survived, not that the binary works. Do this for the `.deb` and `.rpm` too:
+  `apt install ./gander_*.deb` in a container is a different code path from
+  `tar -xzf`, and it is the one most Linux users will take.
 
 ## When a release is wrong
 

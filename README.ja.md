@@ -50,9 +50,14 @@ gander は、システム上で実行中のプロセスとそのリソース使�
 |---|---|
 | macOS、Apple Silicon | `aarch64-apple-darwin` |
 | macOS、Intel | `x86_64-apple-darwin` |
-| Linux、glibc | `x86_64-unknown-linux-gnu` |
-| Linux、静的リンク | `x86_64-unknown-linux-musl` |
+| Linux、x86_64、glibc | `x86_64-unknown-linux-gnu` |
+| Linux、x86_64、静的リンク | `x86_64-unknown-linux-musl` |
+| Linux、arm64、glibc | `aarch64-unknown-linux-gnu` |
+| Linux、arm64、静的リンク | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
+
+Linux x86_64 と arm64 には `.deb` と `.rpm` パッケージも用意されています。
+[Debian/Ubuntu と Fedora/RHEL](#debianubuntu-と-fedorarhel) を参照してください。
 
 ```bash
 tar -xzf gander-<version>-<target>.tar.gz
@@ -69,10 +74,32 @@ install -m755 gander-<version>-<target>/gander ~/.local/bin/gander
 musl 版は静的リンクされているため、ホストの glibc に依存しません。
 各アーカイブには、対応する `.sha256` チェックサムファイルが付属しています。
 
+### Debian/Ubuntu と Fedora/RHEL
+
+リリースには x86_64 と arm64 の `.deb` / `.rpm` パッケージも含まれます。
+静的 musl バイナリから作成されているため、実行時の依存関係を宣言せず、
+アーキテクチャが一致する任意のディストリビューション（Debian 12、Ubuntu 24.04、
+Rocky 9、CentOS 7 など）にインストールできます。
+
+```bash
+# Debian、Ubuntu、Linux Mint など
+sudo apt install ./gander_<version>-1_amd64.deb      # ARM マシンでは arm64
+
+# Fedora、RHEL、Rocky、Alma、openSUSE など
+sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM マシンでは aarch64
+```
+
+隣の `SHA256SUMS` がすべてのパッケージを網羅します。これは**単発のインストール**で
+あり、リポジトリではありません。`apt install gander` も `apt upgrade` による
+更新経路もまだありません。新しいバージョンに移るには、新しいパッケージを
+ダウンロードして同じ手順でインストールしてください。
+
 ### パッケージマネージャー
 
 | 方法 | コマンド |
 |---|---|
+| Debian、Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
+| Fedora、RHEL、Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux（AUR） | `yay -S gander` |

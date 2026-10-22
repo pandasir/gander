@@ -49,9 +49,14 @@ Download the archive for your platform from
 |---|---|
 | macOS, Apple Silicon | `aarch64-apple-darwin` |
 | macOS, Intel | `x86_64-apple-darwin` |
-| Linux, glibc | `x86_64-unknown-linux-gnu` |
-| Linux, static | `x86_64-unknown-linux-musl` |
+| Linux, x86_64, glibc | `x86_64-unknown-linux-gnu` |
+| Linux, x86_64, static | `x86_64-unknown-linux-musl` |
+| Linux, arm64, glibc | `aarch64-unknown-linux-gnu` |
+| Linux, arm64, static | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
+
+`.deb` and `.rpm` packages are published beside the archives for Linux x86_64
+and arm64; see [Debian/Ubuntu and Fedora/RHEL](#debianubuntu-and-fedorarhel).
 
 ```bash
 tar -xzf gander-<version>-<target>.tar.gz
@@ -68,10 +73,31 @@ install -m755 gander-<version>-<target>/gander ~/.local/bin/gander
 The musl build is static and does not depend on the host's glibc. Each archive
 has a `.sha256` checksum file.
 
+### Debian/Ubuntu and Fedora/RHEL
+
+The release also ships `.deb` and `.rpm` packages for x86_64 and arm64. They are
+built from the static musl binary, so they declare no dependencies and install on
+any architecture-matched distribution — Debian 12, Ubuntu 24.04, Rocky 9,
+CentOS 7 and everything in between.
+
+```bash
+# Debian, Ubuntu, Linux Mint, …
+sudo apt install ./gander_<version>-1_amd64.deb      # arm64 on ARM machines
+
+# Fedora, RHEL, Rocky, Alma, openSUSE, …
+sudo dnf install ./gander-<version>-1.x86_64.rpm     # aarch64 on ARM machines
+```
+
+`SHA256SUMS` beside them covers every package. These are one-off installs, not a
+repository: there is no `apt install gander` yet, and no `apt upgrade` path — to
+move to a new version, download the new package and install it the same way.
+
 ### Package managers
 
 | Method | Command |
 |---|---|
+| Debian, Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
+| Fedora, RHEL, Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux (AUR) | `yay -S gander` |

@@ -45,9 +45,14 @@ FreeBSD**，沿用大部分 htop 按键，并提供以进程列表为中心、�
 |---|---|
 | macOS，Apple Silicon | `aarch64-apple-darwin` |
 | macOS，Intel | `x86_64-apple-darwin` |
-| Linux，glibc | `x86_64-unknown-linux-gnu` |
-| Linux，静态链接 | `x86_64-unknown-linux-musl` |
+| Linux，x86_64，glibc | `x86_64-unknown-linux-gnu` |
+| Linux，x86_64，静态链接 | `x86_64-unknown-linux-musl` |
+| Linux，arm64，glibc | `aarch64-unknown-linux-gnu` |
+| Linux，arm64，静态链接 | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
+
+Linux x86_64 与 arm64 还提供 `.deb` 和 `.rpm` 包，见
+[Debian/Ubuntu 与 Fedora/RHEL](#debianubuntu-与-fedorarhel)。
 
 ```bash
 tar -xzf gander-<version>-<target>.tar.gz
@@ -64,10 +69,30 @@ install -m755 gander-<version>-<target>/gander ~/.local/bin/gander
 musl 版本为静态链接，不依赖宿主机的 glibc。每个压缩包旁都有对应的 `.sha256`
 校验文件。
 
+### Debian/Ubuntu 与 Fedora/RHEL
+
+Release 还提供 x86_64 与 arm64 的 `.deb` 和 `.rpm` 包。它们由静态 musl 二进制打包，
+不声明任何运行时依赖，可在任意架构匹配的发行版上安装——Debian 12、Ubuntu 24.04、
+Rocky 9、CentOS 7 都可以。
+
+```bash
+# Debian、Ubuntu、Linux Mint 等
+sudo apt install ./gander_<version>-1_amd64.deb      # ARM 机器用 arm64
+
+# Fedora、RHEL、Rocky、Alma、openSUSE 等
+sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM 机器用 aarch64
+```
+
+旁边的 `SHA256SUMS` 覆盖所有安装包。这是**一次性安装**，不是软件源：目前还没有
+`apt install gander`，也没有 `apt upgrade` 升级路径——升级时下载新版本的包，用同样
+的命令安装即可。
+
 ### 包管理器
 
 | 方式 | 命令 |
 |---|---|
+| Debian、Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
+| Fedora、RHEL、Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux（AUR） | `yay -S gander` |
