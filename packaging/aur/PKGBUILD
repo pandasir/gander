@@ -1,6 +1,6 @@
 # Maintainer: gander contributors <https://github.com/pandasir/gander>
 pkgname=gander
-pkgver=0.6.2
+pkgver=0.6.3
 pkgrel=1
 pkgdesc="Cross-platform interactive process viewer"
 arch=('x86_64' 'aarch64')

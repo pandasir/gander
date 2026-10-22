@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "gander-bin"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "gander-config",
  "gander-core",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "gander-config"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "gander-core",
  "serde",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "gander-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "arrayvec",
  "libc",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "gander-tui"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "arc-swap",
  "crossterm",

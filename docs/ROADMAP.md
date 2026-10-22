@@ -641,9 +641,9 @@ last milestone's audit (see [Post-M3 fixes](#post-m3-fixes)) found four of those
 | Per-process I/O: `RCHAR` / `WCHAR` / `SYSCR` / `SYSCW` / `RBYTES` / `WBYTES` / `CNCLWB` | not started |
 | Per-process I/O rates: `IO_READ_RATE` / `IO_WRITE_RATE` / `IO_RATE` | not started |
 | `s` attaches a real tracer instead of explaining itself | not started |
-| `DESIGN.md` and `PORTABILITY.md` match the code that exists | **done in v0.6.x** |
+| `DESIGN.md` and `PORTABILITY.md` match the code that exists | **done in v0.6.1–v0.6.3** |
 | Per-release `CHANGELOG.md`, and release notes that say what changed | **done in v0.6.0** |
-| Dead `capability` constants and the `#[allow(dead_code)]` I/O fields | **done in v0.6.x** |
+| Dead `capability` constants and the `#[allow(dead_code)]` I/O fields | **done in v0.6.1–v0.6.3** |
 
 This milestone is **wanted, not required**. Nothing in `README.md` or `KEYS.md`
 names an I/O column, so its absence breaks no promise; `s` currently opens a panel
@@ -839,7 +839,7 @@ changed, at the moment they know it, and reviewers already read it through
 - [x] `capability::PROC_IO` deleted, along with five other unreferenced
       `capability` constants; the `#[allow(dead_code)]` fields in
       `darwin::system::PrevRow` removed together with the `proc_pid_rusage` call
-      that fed them (v0.6.x cleanup)
+      that fed them (v0.6.1 cleanup)
 - [ ] `ScanOptions` carries `proc_io`, derived from the visible columns, exercised
       by a fixture test that asserts an I/O column does *not* open
       `/proc/<pid>/io` when it is off screen
@@ -851,7 +851,7 @@ changed, at the moment they know it, and reviewers already read it through
       `row.rs` as the authority instead of restating a drifted enum, and lists all
       three `needs_*` gates rather than two; §3 covers the FreeBSD memory model.
       README says three platforms in both languages; the M0 checklist says three
-      backends. (v0.6.x)
+      backends. (v0.6.1)
 - [ ] `CHANGELOG.md` regenerated at release time (the mechanism exists; the item is
       the habit, not the script)
 - [ ] Tests on all three platforms, zero clippy warnings, and the Linux container
