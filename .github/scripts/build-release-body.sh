@@ -63,9 +63,15 @@ fi
 
 # The subject already reads "v0.6.0: M4 complete — …", so it becomes the title
 # rather than being repeated as the body's first line.
+#
+# Both separators have been used in this repository's tags: `v0.6.0:` with a
+# colon and `v0.6.3 — …` with an em dash. Stripping only the colon produced
+# "v0.6.3 — v0.6.3 — installable with…", so both forms are handled.
 title="$subject"
 case "$title" in
     "$tag:"*) title="${title#"$tag: "}" ;;
+    "$tag — "*) title="${title#"$tag — "}" ;;
+    "$tag - "*) title="${title#"$tag - "}" ;;
     *) title="$tag — $title" ;;
 esac
 
