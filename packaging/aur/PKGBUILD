@@ -1,6 +1,6 @@
 # Maintainer: gander contributors <https://github.com/pandasir/gander>
 pkgname=gander
-pkgver=0.6.3
+pkgver=0.6.4
 pkgrel=1
 pkgdesc="Cross-platform interactive process viewer"
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ license=('GPL-2.0-or-later')
 depends=('gcc-libs')
 makedepends=('cargo' 'rust')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('b3fa52cd57a81c9f86124ee01bfb426bac9903127f5bc4bf3348ac8aae06081e')
+sha256sums=('1b1759f8afb4bdc8625c4aecd28bf4e7780d476b61d8f85bf7f0ee10c48f8ec1')
 
 prepare() {
   cd "$pkgname-$pkgver"
