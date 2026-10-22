@@ -94,7 +94,13 @@ check_rpm() {
   mkdir -p "$dir"
   # rpm2cpio|cpio avoids needing the package installed, and works on any host
   # that has the two tools (the Ubuntu runner installs rpm for this).
-  (cd "$dir" && rpm2cpio "$package" | cpio -idm --quiet)
+  #
+  # The package path is made absolute before the `cd`: a relative path like
+  # `dist/gander.rpm` resolves against the extraction directory and fails with
+  # "No such file or directory" after the chdir.
+  local abs
+  abs=$(cd "$(dirname "$package")" && pwd)/$(basename "$package")
+  (cd "$dir" && rpm2cpio "$abs" | cpio -idm --quiet)
   local needed
   needed=$(needed_entries "$dir")
   [ -z "$needed" ] || fail "$package: payload is dynamically linked: $needed"
