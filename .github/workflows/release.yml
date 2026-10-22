@@ -491,9 +491,16 @@ jobs:
           git commit -m "repo: ${GITHUB_REF_NAME}"
           git push origin HEAD:repo
 
-  # GitHub Pages serves the repository. Kept separate from the push so a Pages
-  # failure is visible as its own red job rather than looking like a broken
-  # repository.
+  # GitHub Pages serves the repository *and* the landing page.
+  #
+  # Kept separate from the push so a Pages failure is visible as its own red job
+  # rather than looking like a broken repository.
+  #
+  # Two checkouts, on purpose. `repo` is the published artifact tree (packages and
+  # their indexes); `main` is where site/ and assets/ live. The landing page is
+  # assembled here rather than committed to the repo branch, so editing it does
+  # not mean hand-editing a generated branch, and the screenshots have exactly one
+  # copy in git.
   deploy-pages:
     needs: publish-repo
     runs-on: ubuntu-latest
@@ -511,10 +518,41 @@ jobs:
           # .git directory in the served tree, and Pages would happily serve it.
           fetch-depth: 1
           persist-credentials: false
+          path: repo-tree
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+          path: site-src
+
+      - name: Assemble the landing page
+        # The page links the screenshots by bare filename (`screenshot-panels.png`)
+        # so the same <img src> works from the README, from Pages, and from a
+        # local `python3 -m http.server` in site/. Copying them to the root of the
+        # published tree is what keeps that true without a second set of paths.
+        run: |
+          set -eu
+          cp -f site-src/site/index.html repo-tree/index.html
+          cp -f site-src/site/robots.txt repo-tree/robots.txt
+          cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
+          cp -f site-src/assets/*.png repo-tree/
+          cp -f site-src/assets/demo.gif repo-tree/
+          # A build that silently published nothing would leave the old page up,
+          # which looks like a deploy that worked. Check the files are there and
+          # that the version in the page matches the tag being released.
+          for f in index.html robots.txt sitemap.xml screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
+            test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
+          done
+          grep -q "softwareVersion\": \"${GITHUB_REF_NAME#v}\"" repo-tree/index.html \
+            || echo "::warning::index.html does not declare ${GITHUB_REF_NAME#v}; bump site/index.html"
+          ls -la repo-tree | head -20
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: repo-tree
       - id: deployment
         uses: actions/deploy-pages@v4
 

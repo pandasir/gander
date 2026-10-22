@@ -1,0 +1,20 @@
+# The landing page and the signed package repository share this host.
+#
+# The apt/dnf trees are crawled by package clients, not by people, so they are
+# kept out of the index: a search result that lands someone in dists/stable/ is
+# a dead end. The landing page itself is explicitly allowed.
+
+User-agent: *
+Allow: /$
+Allow: /index.html
+Allow: /screenshot-
+Allow: /demo.gif
+Disallow: /dists/
+Disallow: /pool/
+Disallow: /repodata/
+Disallow: /*.deb$
+Disallow: /*.rpm$
+Disallow: /*.gpg$
+Disallow: /*.asc$
+
+Sitemap: https://pandasir.github.io/gander/sitemap.xml

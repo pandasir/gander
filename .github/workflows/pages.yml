@@ -1,0 +1,85 @@
+name: Pages
+
+# Publish the landing page when it changes.
+#
+# The release workflow also deploys Pages, because every release copies packages
+# into the same tree; that path is triggered by a tag. This one exists for the
+# other case: a change to site/ or to a screenshot, with no release. Without it,
+# the page would only ever be rebuilt at tag time, so a typo fix would sit
+# unpublished for however long the next release takes.
+#
+# Both workflows publish the same artifact shape (the `repo` branch tree plus the
+# landing page), and GitHub Pages keeps the newest deployment, so they cannot
+# fight over the result: whichever ran last is the tree that is live.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "assets/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. A queued page build is fine; two racing ones would
+# publish in an order nobody chose.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: repo
+          fetch-depth: 1
+          persist-credentials: false
+          path: repo-tree
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+          path: site-src
+
+      - name: Assemble the landing page
+        # Same assembly as the release workflow, and for the same reason: the page
+        # refers to the screenshots by bare filename, so they have to sit next to
+        # index.html in the published tree.
+        run: |
+          set -eu
+          cp -f site-src/site/index.html repo-tree/index.html
+          cp -f site-src/site/robots.txt repo-tree/robots.txt
+          cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
+          cp -f site-src/assets/*.png repo-tree/
+          cp -f site-src/assets/demo.gif repo-tree/
+          for f in index.html robots.txt sitemap.xml screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
+            test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
+          done
+          # The version in the page is a fact, not decoration: it is what a search
+          # result shows. Compare it to Cargo.toml rather than to a tag, because
+          # this workflow does not run on a tag.
+          declared=$(grep -m1 '^version' site-src/Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          if ! grep -q "softwareVersion\": \"${declared}\"" repo-tree/index.html; then
+            echo "::error::site/index.html declares a different version than Cargo.toml (${declared})"
+            exit 1
+          fi
+          echo "publishing gander ${declared}"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo-tree
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,5 @@
+# Files copied in for a local preview. The published page gets these from
+# assets/ at deploy time (see .github/workflows/pages.yml), because index.html
+# refers to them by bare filename so the same markup works from the Pages root.
+*.png
+*.gif
