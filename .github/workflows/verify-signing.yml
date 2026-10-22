@@ -1,0 +1,89 @@
+name: Verify signing key
+
+# Prove the repository signing key and its passphrase work, without cutting a
+# release.
+#
+# Why this exists: the passphrase is a repository secret, so the only way to know
+# it is right used to be to push a tag and watch `publish-repo`. That is a bad
+# way to find out -- by then the tag exists, and the fix in docs/RELEASING.md is
+# to delete and re-tag, which is exactly the churn this workflow avoids.
+#
+# It does not publish anything and does not touch the `repo` branch. It decrypts
+# the key, imports it, signs a throwaway file, and verifies that signature with
+# the public key, which is the whole chain the release depends on.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnupg
+
+      - name: Decrypt and import the key
+        env:
+          GANDER_GPG_PRIVATE_KEY_ENC: ${{ secrets.GANDER_GPG_PRIVATE_KEY_ENC }}
+          GANDER_GPG_PASSPHRASE: ${{ secrets.GANDER_GPG_PASSPHRASE }}
+          GANDER_GPG_KEY_ID: ${{ secrets.GANDER_GPG_KEY_ID }}
+        run: |
+          set -eu
+          # Name the missing secret rather than letting `set -u` inside the script
+          # produce a bare parameter error: which one is absent is the whole
+          # question when this fails.
+          missing=""
+          [ -n "${GANDER_GPG_PRIVATE_KEY_ENC:-}" ] || missing="$missing GANDER_GPG_PRIVATE_KEY_ENC"
+          [ -n "${GANDER_GPG_PASSPHRASE:-}" ] || missing="$missing GANDER_GPG_PASSPHRASE"
+          [ -n "${GANDER_GPG_KEY_ID:-}" ] || missing="$missing GANDER_GPG_KEY_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secret(s):$missing"
+            echo "See docs/SIGNING.md."
+            exit 1
+          fi
+
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          .github/scripts/gpg-setup.sh setup "$RUNNER_TEMP/tree"
+
+          # Confirm the published public key matches, which catches a key that
+          # decrypts but is not the one users have imported.
+          .github/scripts/gpg-setup.sh verify "$RUNNER_TEMP/tree"
+
+      - name: Sign something and check the signature
+        run: |
+          set -eu
+          . "$RUNNER_TEMP/gander-signing.env"
+          echo "signing key: $GPG_KEY_ID"
+
+          printf 'verification\n' > "$RUNNER_TEMP/payload"
+          gpg --batch --yes --local-user "$GPG_KEY_ID" --armor \
+            --detach-sign -o "$RUNNER_TEMP/payload.asc" "$RUNNER_TEMP/payload"
+
+          # Verify from a *separate* keyring holding only the public key, which is
+          # what a client has. Verifying in the keyring that holds the secret key
+          # would pass even if the public half were wrong.
+          verify_home="$RUNNER_TEMP/verify"
+          mkdir -p "$verify_home"
+          chmod 700 "$verify_home"
+          GNUPGHOME="$verify_home" gpg --batch --quiet \
+            --import "$RUNNER_TEMP/tree/gander.gpg" 2>/dev/null
+          GNUPGHOME="$verify_home" gpg --batch --verify \
+            "$RUNNER_TEMP/payload.asc" "$RUNNER_TEMP/payload" 2>&1 |
+            grep -E "Good signature|BAD signature"
+
+      - name: Report
+        run: |
+          {
+            echo "### Signing key verified"
+            echo ""
+            echo 'The encrypted key decrypts with `GANDER_GPG_PASSPHRASE`, imports,'
+            echo "and produces a signature that verifies against the published public key."
+            echo ""
+            echo "A release can be cut. Nothing was published by this run."
+          } >> "$GITHUB_STEP_SUMMARY"
