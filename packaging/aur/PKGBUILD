@@ -9,7 +9,7 @@ license=('GPL-2.0-or-later')
 depends=('gcc-libs')
 makedepends=('cargo' 'rust')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('b7b71b63af46c91313b7f53306dc7caa0f689358d6ac5008cc8ac5a757e7a4de')
+sha256sums=('b3fa52cd57a81c9f86124ee01bfb426bac9903127f5bc4bf3348ac8aae06081e')
 
 prepare() {
   cd "$pkgname-$pkgver"

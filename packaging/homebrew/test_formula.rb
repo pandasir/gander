@@ -15,9 +15,7 @@ platforms = [
   [:macos, :arm, "aarch64-apple-darwin", false],
   [:macos, :intel, "x86_64-apple-darwin", false],
   [:linux, :intel, "x86_64-unknown-linux-musl", false],
-  # Linux ARM still compiles for v0.6.2; flip the last flag when the formula
-  # points at the aarch64 musl archive.
-  [:linux, :arm, "aarch64-unknown-linux-musl", true],
+  [:linux, :arm, "aarch64-unknown-linux-musl", false],
 ]
 
 platforms.each do |os, arch, target, source_platform|

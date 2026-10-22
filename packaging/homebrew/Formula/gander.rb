@@ -2,35 +2,30 @@ class Gander < Formula
   desc "Cross-platform interactive process viewer"
   homepage "https://github.com/pandasir/gander"
   license "GPL-2.0-or-later"
-  revision 1
 
   stable do
     on_macos do
       on_arm do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.2/gander-0.6.2-aarch64-apple-darwin.tar.gz"
-        sha256 "621e1246cd513743db1d1d8dde5109f35e424266df5d678abd70925325c10783"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.3/gander-0.6.3-aarch64-apple-darwin.tar.gz"
+        sha256 "c3e2e65e41c035a8be7be49428045013432446287ae095e65036fbd61abf6c9e"
       end
       on_intel do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.2/gander-0.6.2-x86_64-apple-darwin.tar.gz"
-        sha256 "8017e5134d32f2af861e16b9494e7792183eec503accd1ef111acdf4a4618f05"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.3/gander-0.6.3-x86_64-apple-darwin.tar.gz"
+        sha256 "37e4b65d76397e9c93165a2cc10dab0cac36f573c4d3257ef83b24f274146780"
       end
     end
 
     on_linux do
       on_intel do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.2/gander-0.6.2-x86_64-unknown-linux-musl.tar.gz"
-        sha256 "b81f232dd27ba9bf9c391103c5bee31cfeaaff416b3da009941d63b83e6c0fcc"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.3/gander-0.6.3-x86_64-unknown-linux-musl.tar.gz"
+        sha256 "f1f598fa606167de544d565f99be4d00697fef27faa994e76bc6723128febc3b"
       end
       on_arm do
-        # No aarch64 Linux archive was published for v0.6.2 (the arm64 matrix
-        # entry landed afterwards), so this platform still compiles. When the
-        # formula is bumped to the first release that ships
-        # `gander-<version>-aarch64-unknown-linux-musl.tar.gz`, replace this block
-        # with that URL plus its SHA-256 and drop `depends_on "rust"`; the check
-        # in packaging/homebrew/test_formula.rb will then expect no dependencies.
-        url "https://github.com/pandasir/gander/archive/refs/tags/v0.6.2.tar.gz"
-        sha256 "b7b71b63af46c91313b7f53306dc7caa0f689358d6ac5008cc8ac5a757e7a4de"
-        depends_on "rust" => :build
+        # v0.6.3 is the first release with an arm64 Linux archive, so this is a
+        # prebuilt download like the others. Before that the formula compiled
+        # from source here, which is the one platform that needed Rust.
+        url "https://github.com/pandasir/gander/releases/download/v0.6.3/gander-0.6.3-aarch64-unknown-linux-musl.tar.gz"
+        sha256 "b9f0aef3ac14cd2b48975573d750d26f9397811ab4c9ddc226986471ea8aed65"
       end
     end
   end
@@ -41,9 +36,8 @@ class Gander < Formula
   end
 
   def install
-    # Stable installs download a prebuilt archive on macOS and on Linux x86_64;
-    # Linux ARM and --HEAD compile from source.
-    if build.head? || (OS.linux? && Hardware::CPU.arm?)
+    # Every stable install is a prebuilt archive; only --HEAD compiles.
+    if build.head?
       system "cargo", "install", *std_cargo_args(path: "crates/bin")
     else
       bin.install "gander"

@@ -84,7 +84,8 @@ sudo apt update && sudo apt install gander
 
 # Fedora、RHEL、Rocky、Alma、openSUSE 等
 sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
-sudo dnf config-manager --add-repo https://pandasir.github.io/gander/gander.repo
+sudo curl -fsSL https://pandasir.github.io/gander/gander.repo \
+  -o /etc/yum.repos.d/gander.repo
 sudo dnf install gander
 ```
 

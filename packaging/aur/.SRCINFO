@@ -10,6 +10,6 @@ pkgbase = gander
 	makedepends = rust
 	depends = gcc-libs
 	source = gander-0.6.3.tar.gz::https://github.com/pandasir/gander/archive/refs/tags/v0.6.3.tar.gz
-	sha256sums = b7b71b63af46c91313b7f53306dc7caa0f689358d6ac5008cc8ac5a757e7a4de
+	sha256sums = b3fa52cd57a81c9f86124ee01bfb426bac9903127f5bc4bf3348ac8aae06081e
 
 pkgname = gander

@@ -49,13 +49,17 @@ Users install with:
 brew install pandasir/tap/gander
 ```
 
-Stable installs on macOS (Apple Silicon and Intel) and Linux x86_64 download
-checksum-pinned release binaries instead of compiling locally. They have no Rust,
-LLVM or other formula dependencies. Linux uses the static musl archive. Linux ARM
-still has no release binary for v0.6.2 and continues to build from source; the
-first release that ships `aarch64-unknown-linux-musl` should move it to a prebuilt
-URL. `--HEAD` also builds from source on every platform. Only those source builds
-depend on Rust.
+Stable installs on macOS (Apple Silicon and Intel) and on Linux (x86_64 and
+arm64) download checksum-pinned release binaries instead of compiling locally.
+They have no Rust, LLVM or other formula dependencies. Linux uses the static musl
+archive on both architectures. `--HEAD` builds from source on every platform, and
+is the only path that depends on Rust.
+
+Linux arm64 became a prebuilt download in v0.6.3, the first release that shipped
+`aarch64-unknown-linux-musl`; before that it was the one stable platform that
+compiled. `test_formula.rb` carries a per-platform flag for this, so a future
+release that drops an archive fails the check instead of silently reverting to a
+source build.
 
 After changing the formula, check the platform/dependency matrix and test the
 installed tap formula:
@@ -75,13 +79,11 @@ The normal stable dependency tree on the binary platforms must contain only
 update its own runtime; those are separate from gander's dependencies.
 
 When releasing a new version, wait for the release archives to be published,
-update all four binary URLs and SHA-256 values (macOS arm64/Intel, Linux x86_64,
-and Linux arm64 once that archive exists) plus the source URL and checksum for any
-platform still compiling, and reset the formula revision to zero. For
-packaging-only changes to the same release, increment `revision` so existing users
-receive the update. Always sync and push `Formula/gander.rb` to
-`pandasir/homebrew-tap`; changing only the copy in this repository does not change
-users' installs.
+update all four binary URLs and SHA-256 values (macOS arm64 and Intel, Linux
+x86_64 and arm64), and reset the formula revision to zero. For packaging-only
+changes to the same release, increment `revision` so existing users receive the
+update. Always sync and push `Formula/gander.rb` to `pandasir/homebrew-tap`;
+changing only the copy in this repository does not change users' installs.
 
 Users with the old source-build formula can update it with:
 
