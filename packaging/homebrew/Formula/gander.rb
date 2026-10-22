@@ -22,6 +22,12 @@ class Gander < Formula
         sha256 "b81f232dd27ba9bf9c391103c5bee31cfeaaff416b3da009941d63b83e6c0fcc"
       end
       on_arm do
+        # No aarch64 Linux archive was published for v0.6.2 (the arm64 matrix
+        # entry landed afterwards), so this platform still compiles. When the
+        # formula is bumped to the first release that ships
+        # `gander-<version>-aarch64-unknown-linux-musl.tar.gz`, replace this block
+        # with that URL plus its SHA-256 and drop `depends_on "rust"`; the check
+        # in packaging/homebrew/test_formula.rb will then expect no dependencies.
         url "https://github.com/pandasir/gander/archive/refs/tags/v0.6.2.tar.gz"
         sha256 "b7b71b63af46c91313b7f53306dc7caa0f689358d6ac5008cc8ac5a757e7a4de"
         depends_on "rust" => :build
@@ -35,6 +41,8 @@ class Gander < Formula
   end
 
   def install
+    # Stable installs download a prebuilt archive on macOS and on Linux x86_64;
+    # Linux ARM and --HEAD compile from source.
     if build.head? || (OS.linux? && Hardware::CPU.arm?)
       system "cargo", "install", *std_cargo_args(path: "crates/bin")
     else
