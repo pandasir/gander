@@ -1,0 +1,51 @@
+delay_ms = 1000
+active_tab = 0
+tree_mode = false
+show_kernel_threads = false
+show_userland_threads = false
+show_containerised = true
+layout = "panels"
+highlight_base_name = false
+highlight_deleted_exe = true
+color_scheme = "gander"
+system_cores_max = 0
+
+[[tabs]]
+name = "Main"
+columns = [
+    "PID",
+    "USER",
+    "PERCENT_CPU",
+    "PERCENT_MEM",
+    "RES",
+    "TIME",
+    "COMM",
+]
+
+[tabs.sort]
+field = "PERCENT_MEM"
+desc = true
+
+[[meters_left]]
+name = "LeftCPUs"
+mode = "bar"
+
+[[meters_left]]
+name = "Memory"
+mode = "bar"
+
+[[meters_left]]
+name = "Swap"
+mode = "bar"
+
+[[meters_right]]
+name = "Tasks"
+mode = "text"
+
+[[meters_right]]
+name = "LoadAverage"
+mode = "text"
+
+[[meters_right]]
+name = "Uptime"
+mode = "text"

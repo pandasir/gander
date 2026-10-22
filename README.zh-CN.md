@@ -1,8 +1,26 @@
 # gander
 
+[![CI](https://github.com/pandasir/gander/actions/workflows/ci.yml/badge.svg)](https://github.com/pandasir/gander/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pandasir/gander?label=release)](https://github.com/pandasir/gander/releases)
+[![Downloads](https://img.shields.io/github/downloads/pandasir/gander/total?label=downloads)](https://github.com/pandasir/gander/releases)
+[![crates.io](https://img.shields.io/crates/v/gander-bin?label=crates.io)](https://crates.io/crates/gander-bin)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20FreeBSD-lightgrey)](#平台支持)
+
 [English](README.md) | **简体中文** | [日本語](README.ja.md) | [한국어](README.ko.md)
 
-> 用 Rust 编写的跨平台交互式进程查看器。
+> **gander** 是一个用 Rust 编写的跨平台交互式进程查看器，支持 Linux、macOS 和
+> FreeBSD。可以理解成 htop，但布局的重点是「一个进程」而不是「所有进程」。
+
+![gander 的 panels 布局，选中了一个进程](assets/screenshot-panels.png)
+
+```bash
+brew install pandasir/tap/gander     # macOS
+cargo install gander-bin             # 任何有 Rust 的平台
+yay -S gander                        # Arch Linux
+```
+
+![录屏：选中进程、树状视图，然后按 L 切到 htop 布局](assets/demo.gif)
 
 gander 展示系统中正在运行的进程及其资源消耗。它支持 Linux、macOS 和 FreeBSD，
 并沿用大部分 htop 按键。
@@ -33,6 +51,25 @@ Linux 上能看的内容更多：PSS/EPSS、PSI、zram/zswap、GPU、延迟统�
 
 其他 Unix 目标可能可以编译，但没有可用的实时后端。详见
 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
+
+## 和其他工具比
+
+如果你在挑 htop 的替代品，一句话版本：
+
+| | gander | htop | btop | bottom |
+|---|:---:|:---:|:---:|:---:|
+| 终端界面 | 有 | 有 | 有 | 有 |
+| Linux / macOS / FreeBSD | 全支持 | 全支持 | 部分 | 全支持 |
+| 沿用 htop 按键 | 是 | - | 否 | 否 |
+| 导入现有 `htoprc` | 是 | - | 否 | 否 |
+| 选中的进程始终留在屏幕上 | 是 | 否 | 否 | 否 |
+| 不是 htop 那种布局 | `panels` | - | 有 | 有 |
+| `--json` 批处理模式 | 有 | 无 | 无 | 无 |
+
+日常使用里真正有差别的是最后两行。htop、btop 和 bottom 回答「现在在跑什么」的
+方式是先把所有进程铺开，你关心的那个进程的细节要么在另一个界面，要么没有。
+gander 把检视面板放在进程表旁边，选中一行就直接得到答案，不用离开列表。如果你
+本来就是冲着 htop 的排布来的，按 `L` 就切过去，按键也还在 htop 原来的位置。
 
 ## 安装
 
@@ -150,6 +187,10 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 `panels` 是默认布局，`htop` 是经典的全宽布局。按 `L` 切换，gander 会记住你的
 选择。
 
+| `panels`（默认） | `htop`（`L`） | `t` 树状视图 |
+|---|---|---|
+| ![panels 布局](assets/screenshot-panels.png) | ![htop 布局](assets/screenshot-htop.png) | ![树状视图](assets/screenshot-tree.png) |
+
 | 按键 | 作用 |
 |---|---|
 | `F1` / `h` / `?` | 帮助 |
@@ -229,12 +270,38 @@ macOS 实时测试会读取系统进程表，可能需要在非受限沙箱中�
 
 | 文档 | 内容 |
 |---|---|
+| [assets/README.md](assets/README.md) | 截图和重新生成它们的方法 |
 | [docs/KEYS.md](docs/KEYS.md) | 完整按键表与批量模式 |
 | [docs/LAYOUT.md](docs/LAYOUT.md) | `panels` 布局与窄终端降级 |
 | [docs/PORTABILITY.md](docs/PORTABILITY.md) | 后端矩阵与平台限制 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 架构与数据模型 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 已完成里程碑与后续计划 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
+
+## 常见问题
+
+**gander 能替代 htop 吗？**
+能，也不能。它读的是同一份 `/proc` 数据，按键也照 htop 摆，所以你现在的工作方式
+不用改；`--import-htoprc` 能把你的 htop 设置直接搬过来。但默认布局故意不是 htop
+那种，因为「全宽表格 + 第二个界面看细节」并不是读进程列表的唯一方式。
+
+**支持 Windows 吗？**
+不支持。三个后端分别是 `/proc`（Linux）、`sysctl`/Mach/libproc（macOS）和
+`sysctl`/`libkvm`（FreeBSD），没有 Windows 后端。依赖 Linux 内核接口的列（PSS、
+PSI、zram、延迟统计、容器）也只在 Linux 上有。
+
+**为什么 crates.io 上的包叫 `gander-bin`？**
+因为 crates.io 上的 `gander` 是一个无关的、早已 yank 的包。装完命令仍然是
+`gander`。
+
+**为什么不用 ncurses？**
+渲染用的是 [ratatui](https://ratatui.rs) 和
+[crossterm](https://github.com/crossterm-rs/crossterm)，编译前不需要装 ncurses
+开发头文件。
+
+**能用在脚本里吗？**
+能。`gander --json`、`-n`、`--sort`、`--filter` 和 `--limit` 不启动 TUI，直接
+输出每个进程一行。
 
 ## 参与贡献
 

@@ -1,8 +1,27 @@
 # gander
 
+[![CI](https://github.com/pandasir/gander/actions/workflows/ci.yml/badge.svg)](https://github.com/pandasir/gander/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pandasir/gander?label=release)](https://github.com/pandasir/gander/releases)
+[![Downloads](https://img.shields.io/github/downloads/pandasir/gander/total?label=downloads)](https://github.com/pandasir/gander/releases)
+[![crates.io](https://img.shields.io/crates/v/gander-bin?label=crates.io)](https://crates.io/crates/gander-bin)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20FreeBSD-lightgrey)](#対応プラットフォーム)
+
 [English](README.md) | [简体中文](README.zh-CN.md) | **日本語** | [한국어](README.ko.md)
 
-> Rust で書かれた、クロスプラットフォームの対話型プロセスビューア。
+> **gander** は Rust で書かれた、Linux・macOS・FreeBSD 向けの対話型プロセス
+> ビューアです。htop のようなものですが、レイアウトの主役は「すべてのプロセス」
+> ではなく「選んだ 1 つのプロセス」です。
+
+![gander の panels レイアウトでプロセスを選択しているところ](assets/screenshot-panels.png)
+
+```bash
+brew install pandasir/tap/gander     # macOS
+cargo install gander-bin             # Rust が入っている任意のプラットフォーム
+yay -S gander                        # Arch Linux
+```
+
+![録画: プロセスの選択、ツリー表示、そして L で htop レイアウトへ](assets/demo.gif)
 
 gander は、システム上で実行中のプロセスとそのリソース使用量を表示します。
 Linux、macOS、FreeBSD に対応し、htop のキーバインドの多くを引き継いでいます。
@@ -38,6 +57,26 @@ macOS では `sysctl`/Mach/libproc、FreeBSD では `sysctl`/`libkvm` です。
 その他の Unix ターゲットでもコンパイルできる場合がありますが、実際のシステム情報を
 取得するバックエンドはありません。詳細は
 [docs/PORTABILITY.md](docs/PORTABILITY.md) を参照してください。
+
+## 他のツールとの比較
+
+htop の代替を探しているなら、短くまとめるとこうなります。
+
+| | gander | htop | btop | bottom |
+|---|:---:|:---:|:---:|:---:|
+| ターミナル UI | あり | あり | あり | あり |
+| Linux / macOS / FreeBSD | すべて | すべて | 一部 | すべて |
+| htop のキーバインドを継承 | する | - | しない | しない |
+| 既存の `htoprc` を取り込む | できる | - | できない | できない |
+| 選択中のプロセスが画面に残る | 残る | 残らない | 残らない | 残らない |
+| htop ではないレイアウト | `panels` | - | あり | あり |
+| `--json` バッチモード | あり | なし | なし | なし |
+
+日常的に差が出るのは下 2 行です。htop、btop、bottom は「今何が動いているか」を
+すべてのプロセスを並べて答えますが、気になっているプロセスの詳細は別画面にある
+か、そもそもありません。gander はインスペクタを表の隣に置いているので、行を
+選んだ時点で答えがそこにあり、一覧から離れる必要はありません。htop の並びが
+目的なら `L` で切り替えられ、キーも htop の位置のままです。
 
 ## インストール
 
@@ -158,6 +197,10 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 `panels` がデフォルトのレイアウトで、`htop` が従来の全幅レイアウトです。
 `L` で切り替えられ、gander は選択を覚えます。
 
+| `panels`（既定） | `htop`（`L`） | `t` ツリー表示 |
+|---|---|---|
+| ![panels レイアウト](assets/screenshot-panels.png) | ![htop レイアウト](assets/screenshot-htop.png) | ![ツリー表示](assets/screenshot-tree.png) |
+
 | キー | 操作 |
 |---|---|
 | `F1` / `h` / `?` | ヘルプ |
@@ -239,12 +282,40 @@ macOS の実システムを使うテストはシステムのプロセステー�
 
 | ドキュメント | 内容 |
 |---|---|
+| [assets/README.md](assets/README.md) | スクリーンショットと再生成の手順 |
 | [docs/KEYS.md](docs/KEYS.md) | 全キーバインドとバッチモード |
 | [docs/LAYOUT.md](docs/LAYOUT.md) | `panels` レイアウトと狭い端末での表示調整 |
 | [docs/PORTABILITY.md](docs/PORTABILITY.md) | バックエンドの対応表とプラットフォームの制限 |
 | [docs/DESIGN.md](docs/DESIGN.md) | アーキテクチャとデータモデル |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 完了したマイルストーンと今後の計画 |
 | [CHANGELOG.md](CHANGELOG.md) | リリース履歴 |
+
+## よくある質問
+
+**gander は htop の代わりになりますか？**
+はい、そして「いいえ」でもあります。同じ `/proc` を読み、キーも htop の位置に
+あるので、今の使い方はそのまま通ります。`--import-htoprc` で htop の設定を
+そのまま持ち込めます。ただし既定のレイアウトは意図的に htop と違います。
+「全幅の表 + 別画面の詳細」がプロセス一覧の読み方の唯一の正解ではないからです。
+
+**Windows では動きますか？**
+動きません。バックエンドは `/proc`（Linux）、`sysctl`/Mach/libproc（macOS）、
+`sysctl`/`libkvm`（FreeBSD）の 3 つで、Windows 向けはありません。Linux の
+カーネルインターフェースに依存する列（PSS、PSI、zram、遅延アカウンティング、
+コンテナ）も Linux 専用です。
+
+**crates.io のパッケージ名が `gander-bin` なのはなぜですか？**
+crates.io の `gander` は無関係な、とうに yank されたクレートだからです。
+インストールされるコマンド名は `gander` のままです。
+
+**なぜ ncurses を使わないのですか？**
+描画は [ratatui](https://ratatui.rs) と
+[crossterm](https://github.com/crossterm-rs/crossterm) で行うので、ビルド前に
+ncurses の開発ヘッダを入れる必要はありません。
+
+**スクリプトから使えますか？**
+使えます。`gander --json`、`-n`、`--sort`、`--filter`、`--limit` は TUI を
+起動せず、プロセスごとに 1 行を出力します。
 
 ## コントリビュート
 

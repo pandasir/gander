@@ -1,8 +1,27 @@
 # gander
 
+[![CI](https://github.com/pandasir/gander/actions/workflows/ci.yml/badge.svg)](https://github.com/pandasir/gander/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pandasir/gander?label=release)](https://github.com/pandasir/gander/releases)
+[![Downloads](https://img.shields.io/github/downloads/pandasir/gander/total?label=downloads)](https://github.com/pandasir/gander/releases)
+[![crates.io](https://img.shields.io/crates/v/gander-bin?label=crates.io)](https://crates.io/crates/gander-bin)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20FreeBSD-lightgrey)](#platform-support)
+
 **English** | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
-> A cross-platform interactive process viewer written in Rust.
+> **gander** is a cross-platform interactive process viewer for Linux, macOS and
+> FreeBSD, written in Rust. Think htop, with a layout that shows you one process
+> instead of all of them at once.
+
+![gander in the panels layout, with a process selected](assets/screenshot-panels.png)
+
+```bash
+brew install pandasir/tap/gander     # macOS
+cargo install gander-bin             # any platform with Rust
+yay -S gander                        # Arch Linux
+```
+
+![Recording: selecting a process, tree view, then L for the htop layout](assets/demo.gif)
 
 gander shows what is running on your system and how much it costs. It runs on
 Linux, macOS and FreeBSD and keeps most of htop's keybindings.
@@ -35,6 +54,27 @@ macOS and `sysctl`/`libkvm` on FreeBSD.
 
 Other Unix targets may compile but have no live backend. See
 [docs/PORTABILITY.md](docs/PORTABILITY.md) for details.
+
+## How it compares
+
+If you are shopping for an htop alternative, the short version:
+
+| | gander | htop | btop | bottom |
+|---|:---:|:---:|:---:|:---:|
+| Terminal UI | Yes | Yes | Yes | Yes |
+| Linux / macOS / FreeBSD | Yes | Yes | Partial | Yes |
+| Reads htop's keybindings | Yes | - | No | No |
+| Imports an existing `htoprc` | Yes | - | No | No |
+| Keeps the selected process on screen | Yes | No | No | No |
+| Layout that is not htop's | `panels` | - | Yes | Yes |
+| `--json` batch mode | Yes | No | No | No |
+
+The difference that matters in daily use is the last two rows. htop, btop and
+bottom all answer "what is running" by showing you every process at once, and
+then the details of the one you care about in a separate screen or not at all.
+gander puts the inspector beside the table, so selecting a row answers the
+question without leaving the list. `L` gives you htop's arrangement if that is
+what you came for, and the keybindings stay where htop put them.
 
 ## Install
 
@@ -156,6 +196,10 @@ regular expressions. Run `gander --help` for all options.
 `panels` is the default layout and `htop` is the classic full-width one. `L`
 switches between them, and gander remembers the choice.
 
+| `panels` (default) | `htop` (`L`) | `t` tree view |
+|---|---|---|
+| ![panels layout](assets/screenshot-panels.png) | ![htop layout](assets/screenshot-htop.png) | ![tree view](assets/screenshot-tree.png) |
+
 | Key | Action |
 |---|---|
 | `F1` / `h` / `?` | Help |
@@ -240,6 +284,7 @@ development and review workflow.
 
 | Document | Contents |
 |---|---|
+| [assets/README.md](assets/README.md) | The screenshots and how to regenerate them |
 | [docs/KEYS.md](docs/KEYS.md) | Complete keymap and batch mode |
 | [docs/LAYOUT.md](docs/LAYOUT.md) | `panels` layout and terminal degradation |
 | [docs/PORTABILITY.md](docs/PORTABILITY.md) | Backend matrix and platform limits |
@@ -247,6 +292,32 @@ development and review workflow.
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Completed milestones and future work |
 | [docs/SIGNING.md](docs/SIGNING.md) | The repository signing key and its rotation |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+## FAQ
+
+**Is gander an htop replacement?**
+Yes and no. It reads the same `/proc` data and keeps htop's keys, so it is a drop-in
+for the way you already work; `--import-htoprc` copies your htop settings over.
+But the default layout is deliberately not htop's, because a full-width table with
+the details on a second screen is not the only way to read a process list.
+
+**Does it work on Windows?**
+No. The three backends are `/proc` (Linux), `sysctl`/Mach/libproc (macOS) and
+`sysctl`/`libkvm` (FreeBSD). There is no Windows backend, and the columns that
+depend on Linux kernel interfaces (PSS, PSI, zram, delay accounting, containers)
+are Linux only.
+
+**Why is the crates.io package called `gander-bin`?**
+Because `gander` on crates.io is an unrelated, long-yanked crate. The installed
+command is still `gander`.
+
+**Why does it not use ncurses?**
+It renders with [ratatui](https://ratatui.rs) and [crossterm](https://github.com/crossterm-rs/crossterm),
+so there is no ncurses development header to install before building.
+
+**Can I use it in scripts?**
+Yes. `gander --json`, `-n`, `--sort`, `--filter` and `--limit` run without the TUI
+and print one row per process.
 
 ## Contributing
 
