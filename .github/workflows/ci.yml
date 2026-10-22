@@ -47,6 +47,70 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: brew ruby packaging/homebrew/test_formula.rb
 
+  # The .deb and .rpm packages are sold on two claims: they declare no runtime
+  # dependencies, and their payload links against nothing. Both are cheap to
+  # check and expensive to get wrong, because the failure mode is a package that
+  # installs on the build machine and refuses to start on a user's.
+  #
+  # The release workflow rebuilds and rechecks these against the published
+  # archives; this job exists so a broken spec or script fails on the pull
+  # request instead of at tag time.
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: packages-musl
+
+      - name: Install packaging tools
+        # musl-tools supplies the musl-gcc the musl target needs; rpm and cpio
+        # are for building and unpacking the RPM.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools rpm cpio binutils
+
+      - name: Build the static binary
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Build and check the packages
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          binary=target/x86_64-unknown-linux-musl/release/gander
+          packaging/deb/build-deb.sh "$binary" "$version" amd64 dist
+          packaging/rpm/build-rpm.sh "$binary" "$version" x86_64 dist
+          packaging/check-packages.sh dist/*.deb dist/*.rpm
+
+      - name: Install the packages in clean containers
+        # The point is not that the archive unpacks but that the distribution's
+        # own resolver accepts it with nothing else installed, and that the
+        # binary it lands runs. `apt install ./file.deb` and `dnf install
+        # ./file.rpm` both consult dependencies, so a stale `Depends`/`Requires`
+        # line shows up here as an install failure.
+        run: |
+          set -eu
+          deb=$(ls dist/*.deb)
+          rpm=$(ls dist/*.rpm)
+          docker run --rm -v "$PWD/dist:/dist:ro" debian:12 sh -ec '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /dist/*.deb
+            gander --version
+            gander --json --limit 1 >/tmp/sample.json
+            test -s /tmp/sample.json
+            echo "debian:12 installed and ran $(gander --version)"
+          '
+          docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -ec '
+            dnf -y -q install /dist/*.rpm
+            gander --version
+            gander --json --limit 1 >/tmp/sample.json
+            test -s /tmp/sample.json
+            echo "rockylinux:9 installed and ran $(gander --version)"
+          '
+          echo "checked $deb and $rpm"
+
   # FreeBSD has no GitHub-hosted runner, so the backend is checked two ways.
   #
   # This job only *compiles* it, which is cheap and catches the common
