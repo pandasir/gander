@@ -82,6 +82,7 @@ jobs:
           {
             echo "### Signing key verified"
             echo ""
+            # shellcheck disable=SC2016 # backticks are literal markdown here
             echo 'The encrypted key decrypts with `GANDER_GPG_PASSPHRASE`, imports,'
             echo "and produces a signature that verifies against the published public key."
             echo ""
