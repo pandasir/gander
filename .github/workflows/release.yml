@@ -260,11 +260,14 @@ jobs:
         # signature as well as repo_gpgcheck, so the RPMs are signed here and the
         # signature is checked before the package is allowed into the repository.
         env:
-          GANDER_GPG_PRIVATE_KEY: ${{ secrets.GANDER_GPG_PRIVATE_KEY }}
+          # The encrypted form of the key, so the secret is useless without the
+          # passphrase. See docs/SIGNING.md.
+          GANDER_GPG_PRIVATE_KEY_ENC: ${{ secrets.GANDER_GPG_PRIVATE_KEY_ENC }}
+          GANDER_GPG_PASSPHRASE: ${{ secrets.GANDER_GPG_PASSPHRASE }}
           GANDER_GPG_KEY_ID: ${{ secrets.GANDER_GPG_KEY_ID }}
         run: |
-          if [ -z "${GANDER_GPG_PRIVATE_KEY:-}" ]; then
-            echo "::error::GANDER_GPG_PRIVATE_KEY is not configured; see docs/SIGNING.md"
+          if [ -z "${GANDER_GPG_PRIVATE_KEY_ENC:-}" ] || [ -z "${GANDER_GPG_PASSPHRASE:-}" ]; then
+            echo "::error::GANDER_GPG_PRIVATE_KEY_ENC and GANDER_GPG_PASSPHRASE must be configured; see docs/SIGNING.md"
             exit 1
           fi
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
@@ -389,11 +392,14 @@ jobs:
 
       - name: Sign and index
         env:
-          GANDER_GPG_PRIVATE_KEY: ${{ secrets.GANDER_GPG_PRIVATE_KEY }}
+          # The encrypted form of the key, so the secret is useless without the
+          # passphrase. See docs/SIGNING.md.
+          GANDER_GPG_PRIVATE_KEY_ENC: ${{ secrets.GANDER_GPG_PRIVATE_KEY_ENC }}
+          GANDER_GPG_PASSPHRASE: ${{ secrets.GANDER_GPG_PASSPHRASE }}
           GANDER_GPG_KEY_ID: ${{ secrets.GANDER_GPG_KEY_ID }}
         run: |
-          if [ -z "${GANDER_GPG_PRIVATE_KEY:-}" ]; then
-            echo "::error::GANDER_GPG_PRIVATE_KEY is not configured; see docs/SIGNING.md"
+          if [ -z "${GANDER_GPG_PRIVATE_KEY_ENC:-}" ] || [ -z "${GANDER_GPG_PASSPHRASE:-}" ]; then
+            echo "::error::GANDER_GPG_PRIVATE_KEY_ENC and GANDER_GPG_PASSPHRASE must be configured; see docs/SIGNING.md"
             exit 1
           fi
           export GNUPGHOME="$RUNNER_TEMP/gnupg"

@@ -31,18 +31,40 @@ root=$2
 
 case "$mode" in
   setup)
-    : "${GANDER_GPG_PRIVATE_KEY:?GANDER_GPG_PRIVATE_KEY must hold the armored private key}"
     : "${GANDER_GPG_KEY_ID:?GANDER_GPG_KEY_ID must hold the key fingerprint}"
 
-    mkdir -p "$GNUPGHOME"
+    mkdir -p "$GNUPGHOME" "$root"
     chmod 700 "$GNUPGHOME"
 
-    # --pinentry-mode loopback with an empty passphrase is what makes this
-    # non-interactive. The key is protected by being a repository secret, not by
-    # a passphrase, which is the usual trade for CI-held signing keys; a
-    # passphrase would have to be stored beside it and would add nothing.
-    printf '%s\n' "$GANDER_GPG_PRIVATE_KEY" |
-      gpg --batch --quiet --pinentry-mode loopback --passphrase '' --import
+    # Two ways to deliver the key, so the offline backup and the CI secret can be
+    # the same artifact:
+    #
+    #   GANDER_GPG_PRIVATE_KEY          armored private key (unprotected)
+    #   GANDER_GPG_PRIVATE_KEY_ENC      the same, symmetrically encrypted, plus
+    #                                   GANDER_GPG_PASSPHRASE to open it
+    #
+    # The encrypted form is what the backup holds. Storing the *encrypted* file as
+    # the secret means the key material is useless to anyone who reads the secret
+    # but not the passphrase, and there is one file to keep rather than two that
+    # can drift apart.
+    if [ -n "${GANDER_GPG_PRIVATE_KEY_ENC:-}" ]; then
+      : "${GANDER_GPG_PASSPHRASE:?GANDER_GPG_PASSPHRASE is required with GANDER_GPG_PRIVATE_KEY_ENC}"
+      printf '%s\n' "$GANDER_GPG_PRIVATE_KEY_ENC" |
+        gpg --batch --quiet --pinentry-mode loopback \
+          --passphrase "$GANDER_GPG_PASSPHRASE" --decrypt 2>/dev/null |
+        gpg --batch --quiet --pinentry-mode loopback --passphrase '' --import || {
+          echo "could not decrypt or import GANDER_GPG_PRIVATE_KEY_ENC" >&2
+          echo "check GANDER_GPG_PASSPHRASE and that the file is a symmetric export" >&2
+          exit 1
+        }
+    else
+      : "${GANDER_GPG_PRIVATE_KEY:?GANDER_GPG_PRIVATE_KEY (or GANDER_GPG_PRIVATE_KEY_ENC) must hold the private key}"
+      printf '%s\n' "$GANDER_GPG_PRIVATE_KEY" |
+        gpg --batch --quiet --pinentry-mode loopback --passphrase '' --import || {
+          echo "could not import GANDER_GPG_PRIVATE_KEY" >&2
+          exit 1
+        }
+    fi
 
     # Fail loudly if the configured id matches nothing: publishing a repository
     # signed by a key nobody has is worse than not publishing.
@@ -53,6 +75,17 @@ case "$mode" in
     fi
     GPG_KEY_ID=$GANDER_GPG_KEY_ID
     export GPG_KEY_ID
+
+    # The key itself must have no passphrase once imported: every later signature
+    # runs unattended, and a protected key would fail at the signing step with an
+    # error that reads like a missing key. Checked here rather than discovered
+    # there.
+    if gpg --batch --list-secret-keys --with-colons "$GPG_KEY_ID" |
+      awk -F: '/^sec/{print $2}' | grep -q '\+'; then
+      echo "the imported key is still passphrase-protected; signing would prompt" >&2
+      echo "export it with an empty passphrase before encrypting it for the backup" >&2
+      exit 1
+    fi
 
     # apt wants one armored key it can `gpg --dearmor`; dnf wants the same thing
     # under the name its documentation uses. Both are the public key only.

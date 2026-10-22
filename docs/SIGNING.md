@@ -38,23 +38,61 @@ publishing the new key beside the old one for a release, rather than by calendar
 Then:
 
 ```bash
-# The two secrets to store.
+# The key material, and the id that names it.
 gpg --armor --export-secret-keys > gander-private.asc
 gpg --list-keys --with-colons | awk -F: '/^fpr/{print $10; exit}'   # the key id
 ```
 
-Store them as repository secrets:
+### Encrypt it before it leaves the machine
+
+The private key is exported with **no passphrase**, because CI signs unattended and
+a protected key would prompt. That makes the exported file the most dangerous
+object in this project: anyone who holds it can sign packages that every
+configured machine will install. It is therefore encrypted at rest, and the
+encrypted file is the only copy kept.
+
+The same file is both the offline backup and the `GANDER_GPG_PRIVATE_KEY_ENC`
+secret — one artifact rather than two that can drift apart:
 
 ```bash
-gh secret set GANDER_GPG_PRIVATE_KEY < gander-private.asc
+gpg --batch --pinentry-mode loopback --passphrase env:GANDER_PASS \
+  --armor --symmetric --cipher-algo AES256 \
+  --s2k-mode 3 --s2k-digest-algo SHA512 --s2k-count 65011712 \
+  -o gander-private.asc.gpg gander-private.asc
+```
+
+AES-256 with PBKDF2 and a high iteration count, because this file has to stay
+expensive to guess for years. `gander-private.asc.gpg` is what you keep; the
+plaintext is deleted once the encrypted file has been decrypted again and proved
+to contain the same key.
+
+### The three secrets
+
+```bash
+gh secret set GANDER_GPG_PRIVATE_KEY_ENC < gander-private.asc.gpg
+gh secret set GANDER_GPG_PASSPHRASE          # gh prompts; not on the command line
 gh secret set GANDER_GPG_KEY_ID --body "<the fingerprint>"
 ```
 
-Delete `gander-private.asc` from the machine afterwards, and keep one offline
-copy somewhere you can still reach in a year. If the secret is lost the published
+The passphrase protects the secret store, not the workflow: anyone who can read
+both the secret and `release.yml` can sign. The boundary is GitHub's secret store
+and who has admin on the repository, and the passphrase is what keeps a leaked
+secret file from being immediately usable.
+
+`gpg-setup.sh` accepts either form — `GANDER_GPG_PRIVATE_KEY_ENC` with
+`GANDER_GPG_PASSPHRASE`, or a plaintext `GANDER_GPG_PRIVATE_KEY` — and refuses to
+continue if the imported key is still passphrase-protected, since the later
+signing steps cannot prompt.
+
+Delete `gander-private.asc` from the machine afterwards, and keep the encrypted
+file somewhere you can still reach in a year. If it is lost the published
 repository keeps working — the public key is already imported by users — but no
 new release can be published until the same key is restored, because signing with
 a different key fails every client.
+
+**The passphrase matters as much as the file.** An encrypted backup whose
+passphrase is forgotten is a backup nobody can open, and it looks exactly like a
+working one until the day it is needed.
 
 ## How CI uses it
 
