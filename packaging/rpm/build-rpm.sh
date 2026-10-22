@@ -62,7 +62,17 @@ install -m755 "$binary" "$topdir/SOURCES/gander"
 install -m644 "$root/LICENSE" "$topdir/SOURCES/LICENSE"
 install -m644 "$root/README.md" "$topdir/SOURCES/README.md"
 
+# --target is what makes a cross-architecture build work. Without it rpmbuild
+# compares the spec's BuildArch against the *host* and refuses with
+# "No compatible architectures found for build", which is exactly what the arm64
+# packages job hit on its x86_64 runner. The macro alone is not enough: rpmbuild
+# also checks that the target is one it can build for.
+#
+# --define _target_cpu keeps the recorded architecture matching the flag, so a
+# cross-built package does not claim to be x86_64.
 rpmbuild --define "_topdir $topdir" \
+  --define "_target_cpu $arch" \
+  --target "$arch" \
   --define "_binary_payload w2.xzdio" \
   -bb "$topdir/SPECS/gander.spec"
 

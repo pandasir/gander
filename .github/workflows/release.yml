@@ -205,13 +205,19 @@ jobs:
   # proves it came from here.
   packages:
     needs: release
-    runs-on: ubuntu-latest
+    # Built on a runner of the same architecture as the package. `rpmbuild` from
+    # Debian and Ubuntu refuses to build for a foreign architecture at all
+    # ("No compatible architectures found for build") -- not even with
+    # `--target` and `_target_cpu` set, which is what the first attempt tried.
+    # Building natively sidesteps that entirely, and the arm64 runners are free
+    # for public repositories.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: amd64, rpm_arch: x86_64, target: x86_64-unknown-linux-musl }
-          - { arch: arm64, rpm_arch: aarch64, target: aarch64-unknown-linux-musl }
+          - { runner: ubuntu-latest, arch: amd64, rpm_arch: x86_64, target: x86_64-unknown-linux-musl }
+          - { runner: ubuntu-24.04-arm, arch: arm64, rpm_arch: aarch64, target: aarch64-unknown-linux-musl }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -235,6 +241,10 @@ jobs:
           tar -xzf "dist/${asset}" -C dist
           echo "BINARY=dist/gander-${version}-${{ matrix.target }}/gander" >> "$GITHUB_ENV"
           echo "VERSION=${version}" >> "$GITHUB_ENV"
+          # Report what the runner actually is, so a package built on the wrong
+          # architecture is visible in the log rather than in the artifact.
+          echo "runner arch: $(uname -m), package arch: ${{ matrix.arch }}"
+          file "$PWD/dist/gander-${version}-${{ matrix.target }}/gander" | cut -c1-120
 
       - name: Build the packages
         run: |
@@ -496,6 +506,12 @@ jobs:
       - name: Download, verify and run the release
         env:
           VERSION: ${{ github.ref_name }}
+          # The image name is used in the messages below, including the failure
+          # paths. It used to be `${IMAGE}`, which is not defined anywhere: under
+          # `set -u` the *success* path then died with "IMAGE: parameter not set"
+          # after the archive had downloaded, verified and run -- a green check
+          # away from passing, failing on the last line.
+          IMAGE: ${{ matrix.image }}
         run: |
           set -eu
           version="${VERSION#v}"
