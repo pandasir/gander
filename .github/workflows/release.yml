@@ -402,6 +402,15 @@ jobs:
           .github/scripts/merge-repo.sh dist repo-tree 5
           .github/scripts/gpg-setup.sh verify repo-tree
 
+      - name: Register QEMU for foreign-architecture clients
+        # The runner is x86_64, so `--platform linux/arm64` fails with "exec
+        # format error" without binfmt handlers registered. That error is
+        # indistinguishable from a broken arm64 package, which is the one thing
+        # this step exists to rule out.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Verify the repository as a client would
         # A repository that builds is not a repository that installs. Each client
         # checks the signature chain end to end here, which is the only place it
