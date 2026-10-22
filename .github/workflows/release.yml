@@ -29,6 +29,13 @@ jobs:
           # that runs on any distribution regardless of glibc version.
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          # The same two for arm64. `ubuntu-24.04-arm` is a GitHub-hosted arm64
+          # runner (GA for public repositories), so this needs no emulation and
+          # no self-hosted machine. The musl archive is what the arm64 .deb and
+          # .rpm are built from, and what lets Homebrew stop compiling on Linux
+          # ARM; the gnu archive is for ARM machines whose glibc is new enough.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +47,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Install musl toolchain
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
@@ -184,6 +191,110 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+
+  # Linux packages: .deb and .rpm built from the *published* musl archives.
+  #
+  # This is a separate job, after `release`, on purpose. Building the packages in
+  # the `build` matrix would mean the same crate is compiled twice and the
+  # package could be made from a binary that never became an asset; downloading
+  # the asset it ships in means the package and the tarball cannot disagree.
+  #
+  # Nothing here is signed. A signed .deb/.rpm only matters for a repository that
+  # users `apt install` from by name (see packaging/README.md); for
+  # `apt install ./gander.deb` the checksum published beside the file is what
+  # proves it came from here.
+  packages:
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, rpm_arch: x86_64, target: x86_64-unknown-linux-musl }
+          - { arch: arm64, rpm_arch: aarch64, target: aarch64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm cpio binutils
+
+      - name: Download the release archive
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${VERSION#v}"
+          asset="gander-${version}-${{ matrix.target }}.tar.gz"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
+          mkdir -p dist
+          curl -fsSL -o "dist/${asset}" "${base}/${asset}"
+          curl -fsSL -o "dist/${asset}.sha256" "${base}/${asset}.sha256"
+          (cd dist && sha256sum -c "${asset}.sha256")
+          tar -xzf "dist/${asset}" -C dist
+          echo "BINARY=dist/gander-${version}-${{ matrix.target }}/gander" >> "$GITHUB_ENV"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Build the packages
+        run: |
+          packaging/deb/build-deb.sh "$BINARY" "$VERSION" ${{ matrix.arch }} dist
+          packaging/rpm/build-rpm.sh "$BINARY" "$VERSION" ${{ matrix.rpm_arch }} dist
+
+      - name: Check dependencies, linkage and layout
+        run: packaging/check-packages.sh dist/*.deb dist/*.rpm
+
+      - name: Install the packages in clean containers
+        # The archive being correct is not the product; the distribution's own
+        # resolver accepting the package and the installed binary running is.
+        run: |
+          set -eu
+          docker run --rm -v "$PWD/dist:/dist:ro" --platform linux/${{ matrix.arch }} \
+            debian:12 sh -ec '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /dist/*.deb
+              gander --version
+              gander --json --limit 1 >/tmp/sample.json
+              test -s /tmp/sample.json
+              echo "debian:12/${{ matrix.arch }} installed and ran $(gander --version)"
+            '
+          docker run --rm -v "$PWD/dist:/dist:ro" --platform linux/${{ matrix.arch }} \
+            rockylinux:9 sh -ec '
+              dnf -y -q install /dist/*.rpm
+              gander --version
+              gander --json --limit 1 >/tmp/sample.json
+              test -s /tmp/sample.json
+              echo "rockylinux:9/${{ matrix.arch }} installed and ran $(gander --version)"
+            '
+
+      - name: Write checksums
+        run: |
+          cd dist
+          sha256sum ./*.deb ./*.rpm > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/SHA256SUMS
+
+  # Attach the packages to the release that `packages` was built against.
+  publish-packages:
+    needs: packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: packages-*
+          merge-multiple: true
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/*.deb dist/*.rpm dist/SHA256SUMS --clobber
 
   # The static musl archive is the install path for Ubuntu, CentOS and other
   # distributions. Building it is not enough: the product is the archive after
