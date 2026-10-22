@@ -1,0 +1,13 @@
+# gander — https://github.com/pandasir/gander
+#
+# Install with:
+#   sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+#   sudo dnf config-manager --add-repo https://pandasir.github.io/gander/gander.repo
+#   sudo dnf install gander
+[gander]
+name=gander
+baseurl=https://pandasir.github.io/gander/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pandasir.github.io/gander/RPM-GPG-KEY-gander

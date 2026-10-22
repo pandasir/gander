@@ -1,0 +1,32 @@
+Architectures: amd64 arm64
+Codename: stable
+Components: main
+Date: Thu, 22 Oct 2026 07:00:37 +0000
+Description: gander packages
+Label: gander
+Origin: gander
+Suite: stable
+MD5Sum:
+ 412f8a2e63dfbeac7a77ddf4ea0032e7              171 Release
+ ab30f1aa86107b1865abafe03e4d8b35             2040 main/binary-amd64/Packages
+ 1434f14c687ca30eb2a4bbc790d0b4ce              881 main/binary-amd64/Packages.gz
+ ab30f1aa86107b1865abafe03e4d8b35             2040 main/binary-arm64/Packages
+ 1434f14c687ca30eb2a4bbc790d0b4ce              881 main/binary-arm64/Packages.gz
+SHA1:
+ fd7d77303400941108f7e9b247d73327ad2e1d65              171 Release
+ dacd4a9f577017e94e0ed2962b5d9c1f1c642475             2040 main/binary-amd64/Packages
+ 92a7028bd69f07c5e3dff31f93262510778a0464              881 main/binary-amd64/Packages.gz
+ dacd4a9f577017e94e0ed2962b5d9c1f1c642475             2040 main/binary-arm64/Packages
+ 92a7028bd69f07c5e3dff31f93262510778a0464              881 main/binary-arm64/Packages.gz
+SHA256:
+ 6f6d67e268e9fa17892c25403d28e46c19326a0d2644afc00a9efd90cb7f6afd              171 Release
+ fd9054627411d4295d7408897eb20fabe9d18f5246c730e6340a20b507a4b50c             2040 main/binary-amd64/Packages
+ a552c49729ebbf4b710e4aa5d992dd6fc1dfa624acc7b60a0027f07e6f38defa              881 main/binary-amd64/Packages.gz
+ fd9054627411d4295d7408897eb20fabe9d18f5246c730e6340a20b507a4b50c             2040 main/binary-arm64/Packages
+ a552c49729ebbf4b710e4aa5d992dd6fc1dfa624acc7b60a0027f07e6f38defa              881 main/binary-arm64/Packages.gz
+SHA512:
+ f97b870c9f87020220275774386611aa8bc66f527a039b9322602d612e61e63ccecbb193c3f24e2e191e21542d36de4710b3800edf6153682b1c6e8eaaac9b3c              171 Release
+ 8265bbfd5877c804b186dc3b48840996f6fa89b3e755a61630192c03dd2c9dc366934618452c9fde70231065dd72372a623878d14b50e328e45643eeb982fba6             2040 main/binary-amd64/Packages
+ 63d29cb8ba89a2d610a27bcae3ce45e4340037c6be71ff5dcaeaf11db6f4bdc0d66b278dcd079ebe87cabd9dacd31d5713de0b293c96aab5ca3f875103d63589              881 main/binary-amd64/Packages.gz
+ 8265bbfd5877c804b186dc3b48840996f6fa89b3e755a61630192c03dd2c9dc366934618452c9fde70231065dd72372a623878d14b50e328e45643eeb982fba6             2040 main/binary-arm64/Packages
+ 63d29cb8ba89a2d610a27bcae3ce45e4340037c6be71ff5dcaeaf11db6f4bdc0d66b278dcd079ebe87cabd9dacd31d5713de0b293c96aab5ca3f875103d63589              881 main/binary-arm64/Packages.gz

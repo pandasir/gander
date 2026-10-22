@@ -1,0 +1,44 @@
+Package: gander
+Architecture: amd64
+Version: 0.6.3-1
+Priority: optional
+Section: utils
+Maintainer: gander contributors <gander-maintainers@users.noreply.github.com>
+Installed-Size: 1728
+Filename: pool/main/g/gander/gander_0.6.3-1_amd64.deb
+Size: 644308
+MD5sum: 60f0c625afb505abe4c208844abcc68c
+SHA1: e3eef30f1dd841c94f730da66dec533b131b5fbb
+SHA256: c104ff7b0d2e1866ef0a1e8bb1043c80365da344701dd63083caa434846362e6
+SHA512: ff6c3c42874260e5655c619fc54271107f10e45ae51fb79238496bd443c5cb02ef49fb940667991831916f268748a0de339da64fc94cf30bd49caadf36806987
+Homepage: https://github.com/pandasir/gander
+Description: cross-platform interactive process viewer
+ gander is an interactive process viewer for Linux, macOS and FreeBSD in the
+ spirit of htop: a process table with sorting, filtering, tree view, per-process
+ signals, CPU affinity and I/O priority, plus header meters and a batch mode.
+ .
+ This package contains the statically linked binary, so it has no runtime
+ dependencies and does not depend on the host's glibc.
+
+Package: gander
+Architecture: arm64
+Version: 0.6.3-1
+Priority: optional
+Section: utils
+Maintainer: gander contributors <gander-maintainers@users.noreply.github.com>
+Installed-Size: 1532
+Filename: pool/main/g/gander/gander_0.6.3-1_arm64.deb
+Size: 560632
+MD5sum: bca16a15cf1a6489dce472756197a53b
+SHA1: 88c523c6e1d0f293dda6247e314f5f17f6811b96
+SHA256: abc94eeb75d09d18e138c34dd1ad922b59c44beb67e408fcdeaca8cf91ee5ffc
+SHA512: 89b6b77e56bdcaa9a2cc9685eb8e51476058febd41b1ed4f873a6b1f16cfe7a58d0475970eef3e0874ec4982c214efcdee1ddd3545205471f07ced730c6aa476
+Homepage: https://github.com/pandasir/gander
+Description: cross-platform interactive process viewer
+ gander is an interactive process viewer for Linux, macOS and FreeBSD in the
+ spirit of htop: a process table with sorting, filtering, tree view, per-process
+ signals, CPU affinity and I/O priority, plus header meters and a batch mode.
+ .
+ This package contains the statically linked binary, so it has no runtime
+ dependencies and does not depend on the host's glibc.
+
