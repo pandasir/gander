@@ -16,7 +16,11 @@ authors = ["gander contributors"]
 repository = "https://github.com/pandasir/gander"
 homepage = "https://github.com/pandasir/gander"
 readme = "README.md"
-keywords = ["process", "monitor", "tui", "system"]
+# Keywords are what crates.io search and the docs.rs page read. `htop` is the
+# word people actually type when they are looking for this category, and
+# `process-viewer` / `system-monitor` are the crates.io categories that exist;
+# five is the registry's limit, so these are the five that carry traffic.
+keywords = ["htop", "process-viewer", "system-monitor", "tui", "terminal"]
 categories = ["command-line-utilities", "os"]
 
 [workspace.dependencies]

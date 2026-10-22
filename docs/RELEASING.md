@@ -33,6 +33,9 @@ $EDITOR Cargo.toml                       # [workspace.package] version
 #    Run `cargo update -w` after the bump, and keep `packaging/` in step.
 #    The READMEs link to the latest release rather than a pinned archive, so they
 #    do not need editing for a version bump.
+#    site/index.html does: it names the version in the JSON-LD block and in the
+#    <h1>, because that is what a search result shows. The Pages workflow fails
+#    if the two disagree, so this is a one-line edit, not a thing to remember.
 
 # 3. Update docs/ROADMAP.md: mark the milestone released, and set the ship
 #    version on the next one.

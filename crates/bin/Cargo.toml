@@ -9,7 +9,7 @@ homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Executable entry point for gander."
+description = "Executable entry point for gander, a cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD."
 
 [[bin]]
 name = "gander"
