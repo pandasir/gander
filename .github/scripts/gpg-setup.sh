@@ -49,14 +49,31 @@ case "$mode" in
     # can drift apart.
     if [ -n "${GANDER_GPG_PRIVATE_KEY_ENC:-}" ]; then
       : "${GANDER_GPG_PASSPHRASE:?GANDER_GPG_PASSPHRASE is required with GANDER_GPG_PRIVATE_KEY_ENC}"
-      printf '%s\n' "$GANDER_GPG_PRIVATE_KEY_ENC" |
+
+      # Decrypt and import as two steps, each with its own check.
+      #
+      # They used to be one pipeline with `2>/dev/null` on the decrypt half. A
+      # wrong passphrase made gpg write nothing and exit non-zero, the empty stream
+      # went into `--import`, and the only visible error was "no valid OpenPGP
+      # data found" -- which points at the *file* and hides the actual cause. The
+      # `||` after a pipeline also only observes the last command, so the decrypt
+      # failure was discarded outright.
+      decrypted="$GNUPGHOME/private-key.asc"
+      if ! printf '%s\n' "$GANDER_GPG_PRIVATE_KEY_ENC" |
         gpg --batch --quiet --pinentry-mode loopback \
-          --passphrase "$GANDER_GPG_PASSPHRASE" --decrypt 2>/dev/null |
-        gpg --batch --quiet --pinentry-mode loopback --passphrase '' --import || {
-          echo "could not decrypt or import GANDER_GPG_PRIVATE_KEY_ENC" >&2
-          echo "check GANDER_GPG_PASSPHRASE and that the file is a symmetric export" >&2
-          exit 1
-        }
+          --passphrase "$GANDER_GPG_PASSPHRASE" --decrypt -o "$decrypted" 2>"$GNUPGHOME/decrypt.err"; then
+        echo "could not decrypt GANDER_GPG_PRIVATE_KEY_ENC" >&2
+        sed 's/^/  /' "$GNUPGHOME/decrypt.err" >&2
+        echo "  the usual cause is a wrong GANDER_GPG_PASSPHRASE" >&2
+        exit 1
+      fi
+      if ! gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+        --import "$decrypted" 2>"$GNUPGHOME/import.err"; then
+        echo "decrypted the key but could not import it" >&2
+        sed 's/^/  /' "$GNUPGHOME/import.err" >&2
+        exit 1
+      fi
+      rm -f "$decrypted"
     else
       : "${GANDER_GPG_PRIVATE_KEY:?GANDER_GPG_PRIVATE_KEY (or GANDER_GPG_PRIVATE_KEY_ENC) must hold the private key}"
       printf '%s\n' "$GANDER_GPG_PRIVATE_KEY" |
