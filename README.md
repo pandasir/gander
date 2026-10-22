@@ -75,29 +75,44 @@ has a `.sha256` checksum file.
 
 ### Debian/Ubuntu and Fedora/RHEL
 
-The release also ships `.deb` and `.rpm` packages for x86_64 and arm64. They are
-built from the static musl binary, so they declare no dependencies and install on
-any architecture-matched distribution — Debian 12, Ubuntu 24.04, Rocky 9,
-CentOS 7 and everything in between.
+Both distributions have a signed repository, so `apt` and `dnf` install and
+upgrade gander like any other package.
 
 ```bash
 # Debian, Ubuntu, Linux Mint, …
-sudo apt install ./gander_<version>-1_amd64.deb      # arm64 on ARM machines
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update && sudo apt install gander
 
 # Fedora, RHEL, Rocky, Alma, openSUSE, …
+sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo dnf config-manager --add-repo https://pandasir.github.io/gander/gander.repo
+sudo dnf install gander
+```
+
+Upgrades then arrive with `apt upgrade` / `dnf upgrade`. The repositories are
+signed and the clients verify them: `apt` checks `InRelease`, and `dnf` runs with
+`gpgcheck=1` and `repo_gpgcheck=1`.
+
+If you would rather not add a repository, the release still ships the packages as
+files:
+
+```bash
+sudo apt install ./gander_<version>-1_amd64.deb      # arm64 on ARM machines
 sudo dnf install ./gander-<version>-1.x86_64.rpm     # aarch64 on ARM machines
 ```
 
-`SHA256SUMS` beside them covers every package. These are one-off installs, not a
-repository: there is no `apt install gander` yet, and no `apt upgrade` path — to
-move to a new version, download the new package and install it the same way.
+`SHA256SUMS` beside them covers every package.
 
 ### Package managers
 
 | Method | Command |
 |---|---|
-| Debian, Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
-| Fedora, RHEL, Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
+| Debian, Ubuntu | `sudo apt install gander` |
+| Fedora, RHEL, Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux (AUR) | `yay -S gander` |
@@ -226,6 +241,7 @@ development and review workflow.
 | [docs/PORTABILITY.md](docs/PORTABILITY.md) | Backend matrix and platform limits |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture and data model |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Completed milestones and future work |
+| [docs/SIGNING.md](docs/SIGNING.md) | The repository signing key and its rotation |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Contributing

@@ -65,7 +65,6 @@ at least once here:
 gh run list --limit 3                       # the Release run, not just CI
 gh release view v0.6.0 --json assets --jq '.assets[].name'
 ```
-
 - **Are all of them attached?** The release has seven archives (macOS arm64 and
   Intel, Linux x86_64 and arm64 each in gnu and musl, FreeBSD) plus four packages
   (`amd64`/`arm64` × `.deb`/`.rpm`) and a `SHA256SUMS`. v0.6.0 first shipped
@@ -80,6 +79,22 @@ gh release view v0.6.0 --json assets --jq '.assets[].name'
   build survived, not that the binary works. Do this for the `.deb` and `.rpm` too:
   `apt install ./gander_*.deb` in a container is a different code path from
   `tar -xzf`, and it is the one most Linux users will take.
+- **Did the repository actually update?** The `publish-repo` and `deploy-pages`
+  jobs are separate from the release, so a release can be green while
+  `https://pandasir.github.io/gander/dists/stable/InRelease` still advertises the
+  previous version. Check the version in the published index, not just the run:
+
+  ```bash
+  curl -fsSL https://pandasir.github.io/gander/dists/stable/Release | grep -E '^(Date|Components)'
+  curl -fsSL https://pandasir.github.io/gander/dists/stable/main/binary-amd64/Packages | grep '^Version:'
+  ```
+
+  Pages deployments can take a minute to propagate; if the index is stale but the
+  `repo` branch has the commit, wait and re-check before concluding it failed.
+- **Is the signing key still the same one?** If `GANDER_GPG_KEY_ID` was changed
+  without following `docs/SIGNING.md`, every client fails closed on the next
+  `apt update`. The `gpg-setup.sh verify` step catches the mismatch, but it is
+  worth knowing what the failure means when it appears.
 
 ## When a release is wrong
 

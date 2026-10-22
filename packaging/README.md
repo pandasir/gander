@@ -115,17 +115,89 @@ both halves — the control/`Requires` fields are empty *and* the payload's
 `readelf -d` shows no `NEEDED` entries — because either one alone can be made
 true while the other regresses.
 
-This is not a repository. There is no `apt install gander` and no `apt upgrade`
-path; users download the file and install it by path. That is deliberate for now:
-a repository means hosting and signing `Release`/`InRelease` (apt) and
-`repodata/` plus package signatures (dnf), a key that has to be kept alive across
-releases, and a publish order that has to be right or `apt update` sees a
-half-written index. Until there is a reason to pay that cost, the checksummed
-file is the honest product.
+These one-off files are not a repository. The signed repositories that provide
+`apt install gander` are described in the next section; the files remain because
+`apt install ./file.deb` is the only option on an air-gapped machine or in a
+`--no-network` container.
 
-The packages are unsigned for the same reason. For `apt install ./file.deb` the
-checksum published beside the file is what establishes provenance; a detached
-signature only becomes load-bearing once users trust a key by name.
+The .deb files are unsigned. For `apt install ./file.deb` the checksum published
+beside the file is what establishes provenance; a detached signature only becomes
+load-bearing once users trust a key by name. In the repository, apt authenticates
+the index instead, so the package needs no signature there either.
+
+## Signed repositories
+
+`https://pandasir.github.io/gander/` is a signed apt repository and a signed
+yum/dnf repository, both served from the `repo` branch by GitHub Pages. Users get
+`apt install gander` and `dnf install gander`, and upgrades arrive with the rest
+of their system.
+
+### Layout
+
+| Path | Format |
+|---|---|
+| `dists/stable/InRelease`, `Release.gpg`, `Release` | apt index, signed |
+| `dists/stable/main/binary-<arch>/Packages{,.gz}` | apt package index |
+| `pool/main/g/gander/*.deb` | apt packages |
+| `repodata/repomd.xml`, `repomd.xml.asc` | dnf metadata, signed |
+| `gander-<version>-<release>.<arch>.rpm` | dnf packages, flat layout |
+| `gander.gpg`, `RPM-GPG-KEY-gander` | the public key, under both names |
+| `gander.repo` | the dnf client configuration |
+
+`.deb` files are not signed individually: apt authenticates `InRelease`, which
+carries each package's SHA-256, so the chain is complete. RPMs are signed as well
+as the metadata, because `gpgcheck=1` is what dnf users expect.
+
+### Scripts
+
+| Script | Job |
+|---|---|
+| `.github/scripts/gpg-setup.sh` | import the key, publish its public halves, verify |
+| `.github/scripts/publish-apt-repo.sh` | rebuild `Packages`/`Release`/`InRelease`, prune old versions |
+| `.github/scripts/publish-rpm-repo.sh` | rebuild `repodata/`, sign `repomd.xml` |
+| `.github/scripts/merge-repo.sh` | copy one release's packages into the tree, then both of the above |
+| `packaging/sign-packages.sh` | sign RPMs with the repository key |
+| `packaging/test-repo.sh` | the whole chain with a throwaway key, on every pull request |
+
+Run the last one locally after touching any of the others:
+
+```bash
+packaging/test-repo.sh dist/*.deb dist/*.rpm
+```
+
+It builds a temporary key and asserts the layout, that `InRelease`,
+`Release.gpg` and `repomd.xml.asc` verify against the *published* public key,
+that the index records the right `Filename:`, that a key change is refused, and
+that pruning keeps `0.10.0` over `0.9.0` rather than the other way round.
+
+### The tree is carried, not regenerated
+
+The `repo` branch is read by the release workflow, one release added to it, and
+pushed back. Users pin versions; an `apt upgrade` that removes the package they
+are running is a bug. `merge-repo.sh` takes the keep-count (currently 5) and the
+format scripts prune anything older, so the index stays a size apt can fetch in
+one request without dropping a version someone is still running.
+
+### Publishing order
+
+1. `build` produces the archives; `release` attaches them.
+2. `packages` downloads the published `-musl` archives, builds and signs the
+   packages, and checks them.
+3. `publish-repo` merges them into the tree, verifies it *as a client* inside
+   `debian:12` and `rockylinux:9` containers of both architectures, and pushes
+   the `repo` branch.
+4. `deploy-pages` publishes that branch.
+
+Steps 3 and 4 are separate jobs so a Pages failure is visibly its own problem
+rather than looking like a broken repository.
+
+### Key management
+
+See [docs/SIGNING.md](../docs/SIGNING.md). The short version: the key is created
+once by a maintainer, stored as `GANDER_GPG_PRIVATE_KEY` and `GANDER_GPG_KEY_ID`,
+and never generated in CI. `gpg-setup.sh` refuses to overwrite a published key
+with a different one unless `GANDER_GPG_ALLOW_KEY_CHANGE=1`, because that silently
+breaks every user who already imported it.
 
 ### Version bumps
 
@@ -137,12 +209,26 @@ RPM `Release: 1` are the packaging revision: bump them for packaging-only change
 to an already-released upstream version, exactly like the Homebrew `revision`.
 
 When a release ships, the workflow downloads the published `-musl` archives,
-builds the four packages from those exact binaries, checks them, installs each one
-in `debian:12` and `rockylinux:9` containers of the matching architecture, and only
-then attaches them to the release with a `SHA256SUMS`. Verify with:
+builds the four packages from those exact binaries, signs the RPMs, checks them,
+installs each one in `debian:12` and `rockylinux:9` containers of the matching
+architecture, attaches them to the release with a `SHA256SUMS`, and then merges
+them into the signed repositories. Verify with:
 
 ```bash
 gh release view v0.6.2 --json assets --jq '.assets[].name' | grep -E 'deb|rpm|SHA256SUMS'
+```
+
+## Verifying a release end to end
+
+The archives and packages can be checked without installing anything:
+
+```bash
+# The release assets are what the repository will serve.
+sha256sum -c SHA256SUMS
+rpm -K gander-0.6.2-1.x86_64.rpm          # after importing RPM-GPG-KEY-gander
+
+# The repository index verifies against the published key.
+gpg --verify <(curl -fsSL https://pandasir.github.io/gander/dists/stable/InRelease)
 ```
 
 ## AUR

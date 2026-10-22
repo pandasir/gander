@@ -75,29 +75,43 @@ musl 빌드는 정적으로 링크되어 호스트의 glibc에 의존하지 않�
 
 ### Debian/Ubuntu 및 Fedora/RHEL
 
-릴리스에는 x86_64와 arm64용 `.deb` 및 `.rpm` 패키지도 포함됩니다.
-정적 musl 바이너리로 만들어지므로 런타임 의존성을 선언하지 않으며,
-아키텍처가 일치하는 어떤 배포판(Debian 12, Ubuntu 24.04, Rocky 9, CentOS 7 등)에도
-설치할 수 있습니다.
+두 배포판 모두 서명된 저장소가 있어 `apt`와 `dnf`로 일반 패키지처럼 설치하고
+업그레이드할 수 있습니다.
 
 ```bash
 # Debian, Ubuntu, Linux Mint 등
-sudo apt install ./gander_<version>-1_amd64.deb      # ARM 머신에서는 arm64
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update && sudo apt install gander
 
 # Fedora, RHEL, Rocky, Alma, openSUSE 등
+sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo dnf config-manager --add-repo https://pandasir.github.io/gander/gander.repo
+sudo dnf install gander
+```
+
+이후 업그레이드는 `apt upgrade` / `dnf upgrade`로 이루어집니다. 저장소는 서명되어
+있고 클라이언트가 이를 검증합니다(`apt`는 `InRelease`, `dnf`는 `gpgcheck=1`과
+`repo_gpgcheck=1`).
+
+저장소를 추가하고 싶지 않다면 릴리스에서 패키지를 직접 받을 수도 있습니다.
+
+```bash
+sudo apt install ./gander_<version>-1_amd64.deb      # ARM 머신에서는 arm64
 sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM 머신에서는 aarch64
 ```
 
-옆에 있는 `SHA256SUMS`가 모든 패키지를 포함합니다. 이것은 **일회성 설치**이며
-저장소가 아닙니다. 아직 `apt install gander`나 `apt upgrade` 업그레이드 경로는
-없습니다. 새 버전으로 옮기려면 새 패키지를 내려받아 같은 방식으로 설치하세요.
+옆에 있는 `SHA256SUMS`가 모든 패키지를 포함합니다.
 
 ### 패키지 관리자
 
 | 방법 | 명령 |
 |---|---|
-| Debian, Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
-| Fedora, RHEL, Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
+| Debian, Ubuntu | `sudo apt install gander` |
+| Fedora, RHEL, Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux (AUR) | `yay -S gander` |

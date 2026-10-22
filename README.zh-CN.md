@@ -71,28 +71,41 @@ musl 版本为静态链接，不依赖宿主机的 glibc。每个压缩包旁都
 
 ### Debian/Ubuntu 与 Fedora/RHEL
 
-Release 还提供 x86_64 与 arm64 的 `.deb` 和 `.rpm` 包。它们由静态 musl 二进制打包，
-不声明任何运行时依赖，可在任意架构匹配的发行版上安装——Debian 12、Ubuntu 24.04、
-Rocky 9、CentOS 7 都可以。
+两个发行版都有签名软件源，`apt` 和 `dnf` 可以像普通软件包一样安装和升级 gander。
 
 ```bash
 # Debian、Ubuntu、Linux Mint 等
-sudo apt install ./gander_<version>-1_amd64.deb      # ARM 机器用 arm64
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update && sudo apt install gander
 
 # Fedora、RHEL、Rocky、Alma、openSUSE 等
+sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo dnf config-manager --add-repo https://pandasir.github.io/gander/gander.repo
+sudo dnf install gander
+```
+
+之后用 `apt upgrade` / `dnf upgrade` 升级即可。软件源已签名并由客户端校验：
+`apt` 校验 `InRelease`，`dnf` 以 `gpgcheck=1` 和 `repo_gpgcheck=1` 运行。
+
+如果不想添加软件源，Release 仍然直接提供安装包：
+
+```bash
+sudo apt install ./gander_<version>-1_amd64.deb      # ARM 机器用 arm64
 sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM 机器用 aarch64
 ```
 
-旁边的 `SHA256SUMS` 覆盖所有安装包。这是**一次性安装**，不是软件源：目前还没有
-`apt install gander`，也没有 `apt upgrade` 升级路径——升级时下载新版本的包，用同样
-的命令安装即可。
+旁边的 `SHA256SUMS` 覆盖所有安装包。
 
 ### 包管理器
 
 | 方式 | 命令 |
 |---|---|
-| Debian、Ubuntu | `sudo apt install ./gander_<version>-1_amd64.deb` |
-| Fedora、RHEL、Rocky | `sudo dnf install ./gander-<version>-1.x86_64.rpm` |
+| Debian、Ubuntu | `sudo apt install gander` |
+| Fedora、RHEL、Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
 | Arch Linux（AUR） | `yay -S gander` |
