@@ -4,25 +4,23 @@
 
 > A cross-platform interactive process viewer written in Rust.
 
-gander shows what is running on your system and how much it costs. It supports
-**Linux, macOS and FreeBSD**, keeps most htop keybindings, and provides a
-process-focused layout with a persistent inspector.
+gander shows what is running on your system and how much it costs. It runs on
+Linux, macOS and FreeBSD and keeps most of htop's keybindings.
 
 ## Features
 
-- **Process-first layout.** The default `panels` layout combines a compact system
-  column, a wide process table and a live inspector. Press `L` to switch to the
-  classic `htop` layout.
-- **Inspect without leaving the list.** Command line, state, memory and runtime
-  update with the selected process.
-- **Responsive sampling.** Sampling runs in the background while the renderer
-  reads a snapshot.
-- **Scriptable output.** `--json`, `-n`, `--sort`, `--filter` and `--limit` work
-  without the TUI.
-- **Linux depth.** PSS/EPSS, PSI, zram/zswap, GPU, delay accounting and container
-  identity are available as optional columns or meters.
-- **Native backends.** Linux uses `/proc`, macOS uses `sysctl`/Mach/libproc, and
-  FreeBSD uses `sysctl`/`libkvm`.
+gander starts in the `panels` layout: a compact system column on the left, the
+process table in the middle and a live inspector on the right. The inspector
+follows the process you select, so its command line, state, memory and runtime are
+there without leaving the list. Press `L` for the classic full-width `htop` layout.
+
+Sampling runs in the background while the renderer reads a snapshot. For scripts,
+`--json`, `-n`, `--sort`, `--filter` and `--limit` work without the TUI.
+
+On Linux there is more to read: PSS/EPSS, PSI, zram/zswap, GPU, delay accounting
+and container identity are available as optional columns or meters. Each backend
+reads the platform's own interface: `/proc` on Linux, `sysctl`/Mach/libproc on
+macOS and `sysctl`/`libkvm` on FreeBSD.
 
 ## Platform support
 
@@ -55,8 +53,9 @@ Download the archive for your platform from
 | Linux, arm64, static | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
 
-`.deb` and `.rpm` packages are published beside the archives for Linux x86_64
-and arm64; see [Debian/Ubuntu and Fedora/RHEL](#debianubuntu-and-fedorarhel).
+The release also publishes `.deb` and `.rpm` packages next to the archives for
+Linux x86_64 and arm64; see
+[Debian/Ubuntu and Fedora/RHEL](#debianubuntu-and-fedorarhel).
 
 ```bash
 tar -xzf gander-<version>-<target>.tar.gz
@@ -154,9 +153,8 @@ regular expressions. Run `gander --help` for all options.
 
 ## Interface and keys
 
-`panels` is the default layout: a system column on the left, the process table in
-the center and an inspector on the right. `htop` is the classic full-width
-layout. `L` switches between them and the choice is saved.
+`panels` is the default layout and `htop` is the classic full-width one. `L`
+switches between them, and gander remembers the choice.
 
 | Key | Action |
 |---|---|
@@ -195,14 +193,14 @@ default, draws every core the column has room for; on a short terminal the grid
 stops early and the label reads `64/128 cores` so a truncated grid cannot be
 mistaken for a 64-core machine. `F2` -> Display cycles the same setting.
 
-Search and filter history is stored under `$XDG_STATE_HOME/gander/` (fallback:
-`~/.local/state/gander/`).
+gander stores search and filter history under `$XDG_STATE_HOME/gander/`
+(fallback: `~/.local/state/gander/`).
 
 Available themes: `gander`, `default`, `monochrome`, `midnight`, `classic`,
 `verdant`, `paper` and `quiet`. Choose one from `F2` -> Colors or set
 `color_scheme` in the config.
 
-## Linux depth
+## Linux-specific data
 
 - `M_PSS`, `M_EPSS`, `M_PRIVATE`, `M_SWAP`: read on demand from `smaps_rollup`;
   unmeasured values show `-`, not `0`.
@@ -258,5 +256,5 @@ privately according to [SECURITY.md](SECURITY.md); do not open a public issue.
 
 ## License
 
-GPL-2.0-or-later. Behaviour, keybindings and column semantics are derived from
-htop; keep the license compatible and credit it.
+GPL-2.0-or-later. gander takes its behaviour, keybindings and column semantics
+from htop; keep the license compatible and credit it.

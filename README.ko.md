@@ -5,24 +5,22 @@
 > Rust로 작성된 크로스 플랫폼 대화형 프로세스 뷰어.
 
 gander는 시스템에서 실행 중인 프로세스와 각 프로세스의 리소스 사용량을 보여 줍니다.
-**Linux, macOS, FreeBSD**를 지원하며, 대부분의 htop 키 바인딩을 유지하면서
-상세 정보 패널을 항상 표시하는 프로세스 목록 중심의 레이아웃을 제공합니다.
+Linux, macOS, FreeBSD에서 실행되며 대부분의 htop 키 바인딩을 그대로 씁니다.
 
 ## 주요 기능
 
-- **프로세스 목록 중심의 레이아웃.** 기본 `panels` 레이아웃은 간결한 시스템 정보 영역,
-  넓은 프로세스 표, 실시간 상세 정보 패널로 구성됩니다. `L`을 누르면 기존 `htop`
-  레이아웃으로 전환할 수 있습니다.
-- **목록을 벗어나지 않고 상세 정보 확인.** 선택한 프로세스에 따라 명령줄, 상태,
-  메모리 사용량, 실행 시간이 갱신됩니다.
-- **반응성을 유지하는 샘플링.** 샘플링은 백그라운드에서 실행되며,
-  렌더링 측에서는 스냅샷을 읽습니다.
-- **스크립트에서 활용할 수 있는 출력.** `--json`, `-n`, `--sort`, `--filter`,
-  `--limit`은 TUI 없이 사용할 수 있습니다.
-- **Linux 전용 상세 지표.** PSS/EPSS, PSI, zram/zswap, GPU, 지연 통계,
-  컨테이너 식별 정보를 선택적 열이나 미터로 표시할 수 있습니다.
-- **네이티브 백엔드.** Linux에서는 `/proc`, macOS에서는 `sysctl`/Mach/libproc,
-  FreeBSD에서는 `sysctl`/`libkvm`을 사용합니다.
+gander는 기본으로 `panels` 레이아웃을 사용합니다. 왼쪽에 간결한 시스템 정보 영역,
+가운데에 프로세스 표, 오른쪽에 실시간 상세 정보 패널을 둡니다. 상세 정보 패널은 선택한
+프로세스를 따라가므로 명령줄, 상태, 메모리 사용량, 실행 시간을 목록에서 벗어나지 않고
+볼 수 있습니다. `L`을 누르면 기존 전체 너비 `htop` 레이아웃으로 전환됩니다.
+
+샘플링은 백그라운드에서 실행되고 렌더링 측은 스냅샷을 읽습니다. 스크립트에서는
+`--json`, `-n`, `--sort`, `--filter`, `--limit`을 TUI 없이 사용할 수 있습니다.
+
+Linux에서는 볼 수 있는 항목이 더 많습니다. PSS/EPSS, PSI, zram/zswap, GPU, 지연 통계,
+컨테이너 식별 정보를 선택적 열이나 미터로 표시할 수 있습니다. 각 백엔드는 플랫폼
+자체의 인터페이스를 읽습니다. Linux는 `/proc`, macOS는 `sysctl`/Mach/libproc,
+FreeBSD는 `sysctl`/`libkvm`입니다.
 
 ## 플랫폼 지원
 
@@ -55,8 +53,9 @@ gander는 시스템에서 실행 중인 프로세스와 각 프로세스의 리�
 | Linux, arm64, 정적 링크 | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
 
-Linux x86_64와 arm64에는 `.deb` 및 `.rpm` 패키지도 제공됩니다.
-[Debian/Ubuntu 및 Fedora/RHEL](#debianubuntu-및-fedorarhel)을 참고하세요.
+릴리스는 Linux x86_64와 arm64용 `.deb` 및 `.rpm` 패키지도 압축 파일 옆에 함께
+제공합니다. [Debian/Ubuntu 및 Fedora/RHEL](#debianubuntu-및-fedorarhel)을
+참고하세요.
 
 ```bash
 tar -xzf gander-<version>-<target>.tar.gz
@@ -153,9 +152,8 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 
 ## 화면과 키 조작
 
-기본 `panels` 레이아웃은 왼쪽에 시스템 정보, 가운데에 프로세스 표,
-오른쪽에 상세 정보 패널을 표시합니다. `htop`은 기존의 전체 너비 레이아웃입니다.
-`L`로 전환할 수 있으며 선택한 레이아웃은 저장됩니다.
+`panels`가 기본 레이아웃이고 `htop`이 기존 전체 너비 레이아웃입니다.
+`L`로 전환할 수 있으며 gander는 선택을 기억합니다.
 
 | 키 | 동작 |
 |---|---|
@@ -190,14 +188,14 @@ htop의 `I`는 정렬 순서를 반전합니다. gander에서는 대신 `F6` / `
 파일을 읽을 수 없거나 형식 또는 설정값이 잘못된 경우, 원본 파일을 덮어쓰지 않고
 오류를 알립니다. 저장 시에는 파일을 원자적으로 교체합니다.
 
-검색 및 필터 기록은 `$XDG_STATE_HOME/gander/`에 저장됩니다.
+검색 및 필터 기록은 gander가 `$XDG_STATE_HOME/gander/`에 저장합니다.
 설정되지 않은 경우 `~/.local/state/gander/`을 사용합니다.
 
 사용 가능한 테마는 `gander`, `default`, `monochrome`, `midnight`, `classic`,
 `verdant`, `paper`, `quiet`입니다. `F2` -> Colors에서 선택하거나
 설정 파일의 `color_scheme`으로 지정할 수 있습니다.
 
-## Linux 전용 상세 기능
+## Linux 전용 데이터
 
 - `M_PSS`, `M_EPSS`, `M_PRIVATE`, `M_SWAP`: 필요할 때 `smaps_rollup`에서 읽습니다.
   측정하지 않은 값은 `0`이 아닌 `-`로 표시됩니다.
@@ -252,5 +250,5 @@ macOS의 실제 시스템을 사용하는 테스트는 시스템 프로세스 �
 
 ## 라이선스
 
-GPL-2.0-or-later. 동작, 키 바인딩, 열의 의미는 htop에서 가져왔습니다.
+GPL-2.0-or-later. gander의 동작, 키 바인딩, 열의 의미는 htop에서 가져왔습니다.
 라이선스 호환성을 유지하고 출처를 명시해 주세요.

@@ -4,21 +4,21 @@
 
 > 用 Rust 编写的跨平台交互式进程查看器。
 
-gander 展示系统中正在运行的进程及其资源消耗。它支持 **Linux、macOS 和
-FreeBSD**，沿用大部分 htop 按键，并提供以进程列表为中心、带常驻检视面板的布局。
+gander 展示系统中正在运行的进程及其资源消耗。它支持 Linux、macOS 和 FreeBSD，
+并沿用大部分 htop 按键。
 
 ## 特性
 
-- **以进程列表为中心。** 默认的 `panels` 布局由紧凑的系统栏、宽进程表和实时检视
-  面板组成。按 `L` 可切换到经典的 `htop` 布局。
-- **无需离开列表即可查看详情。** 命令行、状态、内存和运行时间会随选中进程更新。
-- **采样不阻塞界面。** 采样在后台线程运行，渲染端读取快照。
-- **可脚本化输出。** `--json`、`-n`、`--sort`、`--filter` 和 `--limit` 无需 TUI
-  即可使用。
-- **Linux 深度功能。** PSS/EPSS、PSI、zram/zswap、GPU、延迟统计和容器识别可作为
-  可选列或表头 meter 使用。
-- **原生后端。** Linux 使用 `/proc`，macOS 使用 `sysctl`/Mach/libproc，FreeBSD
-  使用 `sysctl`/`libkvm`。
+gander 默认使用 `panels` 布局：左侧是紧凑的系统栏，中间是进程表，右侧是实时检视
+面板。检视面板跟随你选中的进程，命令行、状态、内存和运行时间不必离开列表就能看到。
+按 `L` 可切换到经典的全宽 `htop` 布局。
+
+采样在后台运行，渲染端读取快照。脚本场景下，`--json`、`-n`、`--sort`、`--filter`
+和 `--limit` 无需 TUI 即可使用。
+
+Linux 上能看的内容更多：PSS/EPSS、PSI、zram/zswap、GPU、延迟统计和容器识别可作为
+可选列或表头 meter 使用。各平台的后端读取各自的接口：Linux 用 `/proc`，macOS 用
+`sysctl`/Mach/libproc，FreeBSD 用 `sysctl`/`libkvm`。
 
 ## 平台支持
 
@@ -51,7 +51,7 @@ FreeBSD**，沿用大部分 htop 按键，并提供以进程列表为中心、�
 | Linux，arm64，静态链接 | `aarch64-unknown-linux-musl` |
 | FreeBSD | `x86_64-unknown-freebsd` |
 
-Linux x86_64 与 arm64 还提供 `.deb` 和 `.rpm` 包，见
+Release 还会在压缩包旁提供 Linux x86_64 与 arm64 的 `.deb` 和 `.rpm` 包，见
 [Debian/Ubuntu 与 Fedora/RHEL](#debianubuntu-与-fedorarhel)。
 
 ```bash
@@ -147,8 +147,8 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 
 ## 界面与按键
 
-`panels` 是默认布局：左侧系统栏、中间进程表、右侧检视面板。`htop` 是经典的全宽
-布局。按 `L` 切换，选择会被保存。
+`panels` 是默认布局，`htop` 是经典的全宽布局。按 `L` 切换，gander 会记住你的
+选择。
 
 | 按键 | 作用 |
 |---|---|
@@ -186,13 +186,13 @@ htop 的 `I` 用于反转排序；在 gander 中请使用 `F6` / `<` `>` / `.`�
 `64/128 cores`，不会把被截断的网格误报成 64 核机器。同一项也可在
 `F2` -> Display 中切换。
 
-搜索与过滤历史存放在 `$XDG_STATE_HOME/gander/`（回退到
+gander 将搜索与过滤历史存放在 `$XDG_STATE_HOME/gander/`（回退到
 `~/.local/state/gander/`）。
 
 可用主题：`gander`、`default`、`monochrome`、`midnight`、`classic`、`verdant`、
 `paper`、`quiet`。可在 `F2` -> Colors 中选择，或在配置中设置 `color_scheme`。
 
-## Linux 深度功能
+## Linux 专用数据
 
 - `M_PSS`、`M_EPSS`、`M_PRIVATE`、`M_SWAP`：按需读取 `smaps_rollup`；未测量的
   值显示 `-`，而不是 `0`。
@@ -244,4 +244,5 @@ macOS 实时测试会读取系统进程表，可能需要在非受限沙箱中�
 
 ## 许可证
 
-GPL-2.0-or-later。行为、按键绑定和列语义源自 htop；请保持许可证兼容并注明出处。
+GPL-2.0-or-later。gander 的行为、按键绑定和列语义取自 htop；请保持许可证兼容并
+注明出处。
