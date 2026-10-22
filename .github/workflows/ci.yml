@@ -67,11 +67,12 @@ jobs:
           key: packages-musl
 
       - name: Install packaging tools
-        # musl-tools supplies the musl-gcc the musl target needs; rpm and cpio
-        # are for building and unpacking the RPM.
+        # musl-tools supplies the musl-gcc the musl target needs; the rest build
+        # and verify the packages, and the repository scripts are exercised too.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools rpm cpio binutils
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools rpm cpio binutils apt-utils dpkg-dev gnupg createrepo-c
 
       - name: Build the static binary
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
@@ -83,6 +84,13 @@ jobs:
           packaging/deb/build-deb.sh "$binary" "$version" amd64 dist
           packaging/rpm/build-rpm.sh "$binary" "$version" x86_64 dist
           packaging/check-packages.sh dist/*.deb dist/*.rpm
+
+      - name: Test the repository scripts
+        # The real signing key only exists in the release workflow, which runs on
+        # a tag. Without this, a typo in publish-apt-repo.sh is found at the worst
+        # possible moment -- and a repository that fails to build is a repository
+        # users cannot install from.
+        run: packaging/test-repo.sh dist/*.deb dist/*.rpm
 
       - name: Install the packages in clean containers
         # The point is not that the archive unpacks but that the distribution's

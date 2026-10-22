@@ -244,9 +244,33 @@ jobs:
       - name: Check dependencies, linkage and layout
         run: packaging/check-packages.sh dist/*.deb dist/*.rpm
 
+      - name: Sign the RPMs
+        # apt authenticates the index and the index carries the package hash, so
+        # a .deb needs no signature of its own. dnf users expect a per-package
+        # signature as well as repo_gpgcheck, so the RPMs are signed here and the
+        # signature is checked before the package is allowed into the repository.
+        env:
+          GANDER_GPG_PRIVATE_KEY: ${{ secrets.GANDER_GPG_PRIVATE_KEY }}
+          GANDER_GPG_KEY_ID: ${{ secrets.GANDER_GPG_KEY_ID }}
+        run: |
+          if [ -z "${GANDER_GPG_PRIVATE_KEY:-}" ]; then
+            echo "::error::GANDER_GPG_PRIVATE_KEY is not configured; see docs/SIGNING.md"
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p dist/signing
+          .github/scripts/gpg-setup.sh setup dist/signing
+          . "$RUNNER_TEMP/gander-signing.env"
+          packaging/sign-packages.sh dist/*.rpm
+          # The key material must not travel with the artifacts.
+          rm -rf "$GNUPGHOME"
+
       - name: Install the packages in clean containers
         # The archive being correct is not the product; the distribution's own
         # resolver accepting the package and the installed binary running is.
+        # RPMs are signed by now, and the signing key is not imported here, so the
+        # signature is deliberately not verified at this step -- it is verified
+        # when a real client installs from the repository below.
         run: |
           set -eu
           docker run --rm -v "$PWD/dist:/dist:ro" --platform linux/${{ matrix.arch }} \
@@ -260,7 +284,7 @@ jobs:
             '
           docker run --rm -v "$PWD/dist:/dist:ro" --platform linux/${{ matrix.arch }} \
             rockylinux:9 sh -ec '
-              dnf -y -q install /dist/*.rpm
+              dnf -y -q install --nogpgcheck /dist/*.rpm
               gander --version
               gander --json --limit 1 >/tmp/sample.json
               test -s /tmp/sample.json
@@ -280,6 +304,8 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/SHA256SUMS
+            dist/signing/gander.gpg
+            dist/signing/RPM-GPG-KEY-gander
 
   # Attach the packages to the release that `packages` was built against.
   publish-packages:
@@ -295,6 +321,140 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${GITHUB_REF_NAME}" dist/*.deb dist/*.rpm dist/SHA256SUMS --clobber
+
+  # Publish the signed apt and rpm repositories at https://pandasir.github.io/gander/
+  #
+  # The tree is carried on the `repo` branch rather than regenerated: users pin
+  # versions, and an `apt upgrade` that removes the package they are running is a
+  # bug. Each release copies its packages in and rebuilds the indexes around
+  # everything present.
+  #
+  # This is the only job that holds the signing key. It is scoped to one job so a
+  # compromised or misconfigured step elsewhere cannot read it.
+  publish-repo:
+    needs: packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            rpm apt-utils dpkg-dev gnupg createrepo-c
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: packages-*
+          merge-multiple: true
+
+      - name: Check out the existing repository tree
+        # Orphan branch on first use: the repository is a published artifact, not
+        # source, and a branch of its own keeps its history out of `main`.
+        run: |
+          if git fetch --depth=1 origin repo; then
+            git worktree add repo-tree FETCH_HEAD
+          else
+            echo "no repo branch yet; starting one"
+            mkdir repo-tree
+            git -C repo-tree init -q
+            git -C repo-tree checkout -q --orphan repo
+          fi
+
+      - name: Sign and index
+        env:
+          GANDER_GPG_PRIVATE_KEY: ${{ secrets.GANDER_GPG_PRIVATE_KEY }}
+          GANDER_GPG_KEY_ID: ${{ secrets.GANDER_GPG_KEY_ID }}
+        run: |
+          if [ -z "${GANDER_GPG_PRIVATE_KEY:-}" ]; then
+            echo "::error::GANDER_GPG_PRIVATE_KEY is not configured; see docs/SIGNING.md"
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          .github/scripts/gpg-setup.sh setup repo-tree
+          . "$RUNNER_TEMP/gander-signing.env"
+          .github/scripts/merge-repo.sh dist repo-tree 5
+          .github/scripts/gpg-setup.sh verify repo-tree
+
+      - name: Verify the repository as a client would
+        # A repository that builds is not a repository that installs. Each client
+        # checks the signature chain end to end here, which is the only place it
+        # is exercised before users do it.
+        run: |
+          set -eu
+          port=18080
+          docker run -d --rm --name repo-server -p "$port:80" \
+            -v "$PWD/repo-tree:/srv:ro" python:3-alpine \
+            sh -c 'cd /srv && python3 -m http.server 80' >/dev/null
+          trap 'docker rm -f repo-server >/dev/null 2>&1 || true' EXIT
+          sleep 3
+
+          # Client configuration, with the published URL swapped for the local
+          # one. Written here rather than inline so the heredoc is not nested in
+          # a `sh -c` string.
+          sed "s|https://pandasir.github.io/gander/|http://host.docker.internal:$port/|g" \
+            repo-tree/gander.repo > /tmp/gander.repo
+
+          for arch in amd64 arm64; do
+            docker run --rm --platform "linux/$arch" \
+              -v /tmp/gander.repo:/etc/yum.repos.d/gander.repo:ro \
+              debian:12 sh -ec "
+                apt-get update -qq >/dev/null 2>&1
+                apt-get install -y -qq gnupg curl >/dev/null 2>&1
+                curl -fsSL http://host.docker.internal:$port/gander.gpg | gpg --dearmor -o /usr/share/keyrings/gander.gpg
+                echo 'deb [signed-by=/usr/share/keyrings/gander.gpg] http://host.docker.internal:$port stable main' > /etc/apt/sources.list.d/gander.list
+                apt-get update
+                apt-get install -y -qq gander
+                gander --version
+                gander --json --limit 1 >/tmp/s.json
+                test -s /tmp/s.json
+                echo \"apt install gander works on $arch\"
+              "
+            docker run --rm --platform "linux/$arch" \
+              -v /tmp/gander.repo:/etc/yum.repos.d/gander.repo:ro \
+              rockylinux:9 sh -ec "
+                rpm --import http://host.docker.internal:$port/RPM-GPG-KEY-gander
+                dnf -y -q install gander
+                gander --version
+                gander --json --limit 1 >/tmp/s.json
+                test -s /tmp/s.json
+                echo \"dnf install gander works on $arch\"
+              "
+          done
+
+      - name: Publish to the repo branch
+        run: |
+          cd repo-tree
+          git add -A
+          # `--allow-empty` is not used: a release that changed nothing in the
+          # repository means the merge step silently did nothing.
+          git -c user.name='gander release' -c user.email='gander-maintainers@users.noreply.github.com' \
+            commit -m "repo: ${GITHUB_REF_NAME}"
+          git push origin HEAD:repo
+
+  # GitHub Pages serves the repository. Kept separate from the push so a Pages
+  # failure is visible as its own red job rather than looking like a broken
+  # repository.
+  deploy-pages:
+    needs: publish-repo
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: repo
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
 
   # The static musl archive is the install path for Ubuntu, CentOS and other
   # distributions. Building it is not enough: the product is the archive after
