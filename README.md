@@ -190,6 +190,11 @@ header meters and their display modes are configurable. Settings are saved on a
 clean exit. A missing file uses defaults; unreadable, malformed or invalid settings
 produce an error without overwriting the file. Saves replace the file atomically.
 
+`system_cores_max` caps the per-core grid in the `panels` system column. `0`, the
+default, draws every core the column has room for; on a short terminal the grid
+stops early and the label reads `64/128 cores` so a truncated grid cannot be
+mistaken for a 64-core machine. `F2` -> Display cycles the same setting.
+
 Search and filter history is stored under `$XDG_STATE_HOME/gander/` (fallback:
 `~/.local/state/gander/`).
 

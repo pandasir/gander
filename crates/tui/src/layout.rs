@@ -112,6 +112,28 @@ impl PanelWidths {
     }
 }
 
+/// Rows the system column keeps below the per-core grid.
+///
+/// MEM and SWP take two rows each, a blank separates the bars from the figures,
+/// and LOAD/UP/TASKS/RUN/THR take one each. Reserving them is what keeps a
+/// 128-core grid from consuming the whole column and pushing the memory and load
+/// figures off a short terminal.
+const RESERVED_BELOW_GRID: u16 = 10;
+
+/// `128 cores`, or `64/128 cores` when only part of the grid is on screen.
+///
+/// The number reported is the number of glyphs actually drawn. Reporting the
+/// truncated count on its own is what made a 128-core machine look like a
+/// 64-core one: the grid stopped at 64 while the label claimed the machine had
+/// 64 cores, so the only visible symptom was a wrong fact.
+fn cores_label(drawn: usize, total: usize) -> String {
+    if drawn >= total {
+        format!("{total} cores")
+    } else {
+        format!("{drawn}/{total} cores")
+    }
+}
+
 /// Draw the vertical system column.
 ///
 /// Returns nothing; the caller has already reserved the `Rect`.
@@ -127,7 +149,12 @@ pub fn draw_system_column(
     if area.width < 12 || area.height < 4 {
         return;
     }
-    let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), area.height);
+    let inner = Rect::new(
+        area.x + 1,
+        area.y,
+        area.width.saturating_sub(2),
+        area.height,
+    );
     if inner.width == 0 {
         return;
     }
@@ -136,38 +163,78 @@ pub fn draw_system_column(
 
     // --- CPU ---------------------------------------------------------------
     let usage = snapshot.cpu_usage();
-    let pct = if usage.is_finite() { usage * 100.0 } else { 0.0 };
+    let pct = if usage.is_finite() {
+        usage * 100.0
+    } else {
+        0.0
+    };
     y = draw_labelled_bar(
-        inner, buf, theme, y, bottom, "CPU", pct / 100.0,
+        inner,
+        buf,
+        theme,
+        y,
+        bottom,
+        "CPU",
+        pct / 100.0,
         percent_human(pct).as_ref(),
         &cpu_segments(theme, snapshot),
     );
 
-    // Per-core sparkline grid: one cell per core, coloured by load, four rows
-    // maximum so a 64-core machine still leaves room for the table. The cap is
-    // configurable (`Config::system_cores_max`); `0` renders every core so a
-    // 128-core box can still be inspected in full.
-    let cores = if cores_max == 0 {
-        snapshot.cpu_count()
+    // Per-core sparkline grid: one cell per core, coloured by load.
+    //
+    // The grid's shape comes from the terminal, not from a constant: `per_row`
+    // is the column width (capped at 16 so a wide terminal does not put sixty
+    // cores on one row, which reads as a single bar rather than a grid), and the
+    // rows are whatever is left after reserving room for the figures below. An
+    // earlier version capped the rows at four, so `system_cores_max = 0` —
+    // documented as "render every core" — still stopped at 16 × 4 = 64 glyphs on
+    // a 128-core box, under a label that claimed 128. The cap was never the only
+    // limit, which is why raising it appeared to do nothing.
+    let total_cores = snapshot.cpu_count();
+    let wanted = if cores_max == 0 {
+        total_cores
     } else {
-        snapshot.cpu_count().min(cores_max)
+        total_cores.min(cores_max)
     };
-    if cores > 0 && y + 1 < bottom {
-        y += 1;
-        put_str(buf, inner.x, y, &format!("{cores} cores"), theme.meter_label, inner.width);
-        y += 1;
-        let per_row = inner.width.clamp(4, 16);
-        let rows = ((cores as u16).div_ceil(per_row)).min(4);
+    if wanted > 0 && y + 1 < bottom {
+        // A blank separator, then the label, then the grid. Keeping these three
+        // rows distinct matters: the label sits on its own line, and the grid
+        // starts on the row below it.
+        let label_row = y + 1;
+        let grid_top = label_row + 1;
+        let per_row = inner.width.clamp(4, 16) as usize;
+        // The budget is what is left below the label after reserving room for the
+        // figures that follow the grid; at least one row is always drawn, so a
+        // short terminal shows the first cores instead of none.
+        let budget = bottom
+            .saturating_sub(grid_top)
+            .saturating_sub(RESERVED_BELOW_GRID)
+            .max(1);
+        let rows = wanted.div_ceil(per_row).min(budget as usize);
+        let drawn = wanted.min(rows.saturating_mul(per_row));
+        put_str(
+            buf,
+            inner.x,
+            label_row,
+            &cores_label(drawn, total_cores),
+            theme.meter_label,
+            inner.width,
+        );
+        y = grid_top;
         for r in 0..rows {
             if y >= bottom {
                 break;
             }
             for c in 0..per_row {
-                let core = (r * per_row + c) as usize;
-                if core >= cores || inner.x + c >= inner.right() {
+                let core = r * per_row + c;
+                if core >= drawn || inner.x + c as u16 >= inner.right() {
                     break;
                 }
-                let d = snapshot.cpu_delta.get(core + 1).copied().unwrap_or_default();
+                let d = snapshot
+                    .cpu_delta
+                    .get(core + 1)
+                    .copied()
+                    .unwrap_or_default();
                 let total = d.total();
                 let frac = if total == 0 {
                     0.0
@@ -192,7 +259,7 @@ pub fn draw_system_column(
                 };
                 put_str(
                     buf,
-                    inner.x + c,
+                    inner.x + c as u16,
                     y,
                     &ch.to_string(),
                     ratatui::style::Style::default().fg(color),
@@ -204,6 +271,10 @@ pub fn draw_system_column(
     }
 
     // --- memory / swap -----------------------------------------------------
+    // The grid may have run to the bottom of a short terminal on a many-core
+    // box. Continue from the last row rather than from wherever the grid wanted
+    // to end, so the bars below still get drawn instead of silently vanishing.
+    let mut y = y.min(bottom);
     let mem_frac = if snapshot.mem.total > 0 {
         snapshot.mem.used as f32 / snapshot.mem.total as f32
     } else {
@@ -225,7 +296,9 @@ pub fn draw_system_column(
             color: theme.memory_slot(class.color_slot),
         });
     }
-    y = draw_labelled_bar(inner, buf, theme, y, bottom, "MEM", mem_frac, &mem_text, &segs);
+    y = draw_labelled_bar(
+        inner, buf, theme, y, bottom, "MEM", mem_frac, &mem_text, &segs,
+    );
 
     let swap_frac = snapshot.swap_usage();
     let swap_text = format!(
@@ -243,7 +316,9 @@ pub fn draw_system_column(
             color: theme.swap_free,
         },
     ];
-    y = draw_labelled_bar(inner, buf, theme, y, bottom, "SWP", swap_frac, &swap_text, &swap_segs);
+    y = draw_labelled_bar(
+        inner, buf, theme, y, bottom, "SWP", swap_frac, &swap_text, &swap_segs,
+    );
 
     // --- load / uptime / tasks --------------------------------------------
     if y + 1 < bottom {
@@ -367,7 +442,12 @@ pub fn draw_inspector(
     if area.width < 16 || area.height < 4 {
         return;
     }
-    let inner = Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), area.height);
+    let inner = Rect::new(
+        area.x + 1,
+        area.y,
+        area.width.saturating_sub(2),
+        area.height,
+    );
     if inner.width == 0 {
         return;
     }
@@ -521,7 +601,14 @@ fn draw_labelled_bar(
     if y >= bottom {
         return y;
     }
-    put_str(buf, inner.x, y, label, theme.meter_label, label.chars().count() as u16);
+    put_str(
+        buf,
+        inner.x,
+        y,
+        label,
+        theme.meter_label,
+        label.chars().count() as u16,
+    );
 
     let text_w = text.chars().count() as u16;
     if text_w > 0 && inner.width > text_w + 1 {
@@ -626,7 +713,14 @@ fn draw_kv(
     }
     put_str(buf, inner.x, y, label, theme.meter_label, 6);
     if inner.width > 7 {
-        put_str(buf, inner.x + 7, y, value, theme.meter_value, inner.width - 7);
+        put_str(
+            buf,
+            inner.x + 7,
+            y,
+            value,
+            theme.meter_value,
+            inner.width - 7,
+        );
     }
     y + 1
 }
@@ -786,10 +880,138 @@ mod tests {
             let s = snap(8);
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| {
-                draw_system_column(f.area(), f.buffer_mut(), &Theme::default(), &s, &[0.1, 0.5], (10, 2, 30), 64)
+                draw_system_column(
+                    f.area(),
+                    f.buffer_mut(),
+                    &Theme::default(),
+                    &s,
+                    &[0.1, 0.5],
+                    (10, 2, 30),
+                    0,
+                )
             })
             .unwrap();
         }
+    }
+
+    /// Render the system column and return its text, row by row.
+    fn system_column_text(cores: usize, cores_max: usize, w: u16, h: u16) -> Vec<String> {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let s = snap(cores);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            draw_system_column(
+                f.area(),
+                f.buffer_mut(),
+                &Theme::default(),
+                &s,
+                &[0.1, 0.5],
+                (10, 2, 30),
+                cores_max,
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn core_glyphs(rows: &[String]) -> usize {
+        // `·` is the idle glyph and the only one an all-zero sample draws, so
+        // counting it counts the cells the grid actually filled in.
+        rows.iter()
+            .map(|r| r.chars().filter(|c| *c == '·').count())
+            .sum()
+    }
+
+    #[test]
+    fn a_128_core_machine_shows_128_cores() {
+        // Regression guard for the reported bug: a 128-core box displayed
+        // "64 cores". The grid was capped at 16 cells per row × 4 rows = 64,
+        // independently of `system_cores_max`, so raising the config did nothing
+        // and the label reported the truncated count as if it were the machine's
+        // core count.
+        let rows = system_column_text(128, 0, 24, 40);
+        assert!(
+            rows.iter().any(|r| r.contains("128 cores")),
+            "the column must say the machine has 128 cores: {rows:?}"
+        );
+        assert_eq!(core_glyphs(&rows), 128, "one glyph per core");
+    }
+
+    #[test]
+    fn a_tall_terminal_shows_every_core_of_a_big_machine() {
+        // The grid grows with the column's height, so the count is not fixed by
+        // the width alone. 16 cells per row × 8 rows is the 128-core case.
+        let rows = system_column_text(128, 0, 24, 40);
+        assert_eq!(core_glyphs(&rows), 128);
+        let rows = system_column_text(64, 0, 34, 40);
+        assert_eq!(core_glyphs(&rows), 64);
+    }
+
+    #[test]
+    fn a_short_terminal_says_how_many_cores_it_is_not_showing() {
+        // A 16-row terminal cannot fit 128 glyphs plus the figures below them.
+        // The truncation is allowed; reporting it as the machine's core count is
+        // not, because that is exactly the symptom of the original bug.
+        let rows = system_column_text(128, 0, 24, 16);
+        let label = rows
+            .iter()
+            .find(|r| r.contains("cores"))
+            .cloned()
+            .expect("a core label must be drawn");
+        assert!(label.contains('/'), "expected `N/128 cores`, got {label:?}");
+        assert!(label.contains("128"), "the machine's total must appear");
+        let drawn = core_glyphs(&rows);
+        assert!(
+            drawn > 0 && drawn < 128,
+            "a partial grid, not none: {drawn}"
+        );
+    }
+
+    #[test]
+    fn the_core_label_is_the_machine_total_when_nothing_is_truncated() {
+        assert_eq!(cores_label(128, 128), "128 cores");
+        assert_eq!(cores_label(64, 128), "64/128 cores");
+        assert_eq!(cores_label(0, 128), "0/128 cores");
+    }
+
+    #[test]
+    fn the_configured_cap_still_applies_and_is_reported() {
+        // `system_cores_max` remains a deliberate limit, but the label has to
+        // make clear that the machine has more cores than are drawn.
+        let rows = system_column_text(128, 64, 24, 40);
+        assert!(
+            rows.iter().any(|r| r.contains("64/128 cores")),
+            "a capped grid must not claim the machine has 64 cores: {rows:?}"
+        );
+        assert_eq!(core_glyphs(&rows), 64);
+    }
+
+    #[test]
+    fn the_figures_below_the_grid_survive_a_128_core_grid() {
+        // The grid used to run to the bottom of the column, pushing MEM/SWP/LOAD
+        // off a 24-row terminal. Reserving rows for them is the fix; this checks
+        // the reservation holds.
+        let rows = system_column_text(128, 0, 24, 24);
+        let text = rows.join("\n");
+        for label in ["MEM", "SWP", "LOAD", "TASKS"] {
+            assert!(text.contains(label), "{label} must still be drawn:\n{text}");
+        }
+    }
+
+    #[test]
+    fn a_small_machine_is_unchanged() {
+        let rows = system_column_text(8, 0, 24, 40);
+        assert!(rows.iter().any(|r| r.contains("8 cores")));
+        assert_eq!(core_glyphs(&rows), 8);
     }
 
     #[test]
@@ -823,10 +1045,8 @@ mod tests {
         }
         // No selection must also be safe.
         let mut term = Terminal::new(TestBackend::new(34, 10)).unwrap();
-        term.draw(|f| {
-            draw_inspector(f.area(), f.buffer_mut(), &Theme::default(), None, &s, None)
-        })
-        .unwrap();
+        term.draw(|f| draw_inspector(f.area(), f.buffer_mut(), &Theme::default(), None, &s, None))
+            .unwrap();
     }
 
     #[test]
@@ -865,7 +1085,10 @@ mod tests {
         assert!(text.contains("2971"), "the pid");
         assert!(text.contains("--serve"), "the command line");
         assert!(text.contains("panda"), "the user");
-        assert!(text.contains("sleeping"), "the state in words, not a letter");
+        assert!(
+            text.contains("sleeping"),
+            "the state in words, not a letter"
+        );
         assert!(text.contains("14"), "the thread count");
     }
 

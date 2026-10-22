@@ -421,10 +421,20 @@ impl Meter for CpuMeter {
             if y >= area.bottom() {
                 break;
             }
+            // Row 0 is the average. When the meter is squeezed below its full
+            // height, row 0 is the only row that gets drawn, and a row labelled
+            // `Avg` under a `CPU` legend is ambiguous on its own — so the label
+            // says what it is rather than leaving the reader to infer it from a
+            // core number that is no longer next to it.
+            let label = if i == 0 && self.rows.len() > 1 && area.height < self.rows.len() as u16 {
+                "CPU"
+            } else {
+                row.label.as_str()
+            };
             match mode {
                 MeterMode::Text => {
                     let text = gander_core::format::percent_human(row.usage * 100.0);
-                    put_str(buf, area.x, y, &row.label, theme.meter_label, area.width);
+                    put_str(buf, area.x, y, label, theme.meter_label, area.width);
                     put_str(
                         buf,
                         area.right().saturating_sub(text.len() as u16),
@@ -435,8 +445,8 @@ impl Meter for CpuMeter {
                     );
                 }
                 MeterMode::Bar => {
-                    let label_width = (row.label.len() as u16 + 1).min(area.width);
-                    put_str(buf, area.x, y, &row.label, theme.meter_label, label_width);
+                    let label_width = (label.len() as u16 + 1).min(area.width);
+                    put_str(buf, area.x, y, label, theme.meter_label, label_width);
                     let bar_x = area.x + label_width;
                     let bar_w = area.width.saturating_sub(label_width + 6);
                     let segs = Self::segments_for(theme, &row.delta);

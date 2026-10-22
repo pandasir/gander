@@ -79,6 +79,34 @@ impl SetupPage {
     }
 }
 
+/// Rows on the Display page: six toggles plus the per-core grid cap.
+const DISPLAY_ROWS: usize = 7;
+
+/// The ladder the Display page's per-core grid row cycles through.
+///
+/// `0` first, because "show every core" is the default and the answer most
+/// people want; the numbers after it are the round ones a large machine's
+/// operator is likely to pick when they want the grid smaller.
+const CORES_MAX_CHOICES: [usize; 5] = [0, 16, 32, 64, 128];
+
+/// The next value in `CORES_MAX_CHOICES` after `current`, wrapping.
+fn next_cores_max(current: usize) -> usize {
+    match CORES_MAX_CHOICES.iter().position(|v| *v == current) {
+        Some(i) => CORES_MAX_CHOICES[(i + 1) % CORES_MAX_CHOICES.len()],
+        // A hand-edited value that is not on the ladder: start over from "all".
+        None => 0,
+    }
+}
+
+/// How the Display page spells a `system_cores_max` value.
+fn describe_cores_max(value: usize) -> String {
+    if value == 0 {
+        "all cores".to_string()
+    } else {
+        format!("{value} cores max")
+    }
+}
+
 /// What the setup screen changed, so the caller knows what to redo.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Applied {
@@ -117,7 +145,7 @@ impl Setup {
             // Left column meters, a separator, the right column meters, then
             // the "add" row.
             SetupPage::Header => self.header_rows().len(),
-            SetupPage::Display => 6,
+            SetupPage::Display => DISPLAY_ROWS,
             SetupPage::Colors => Theme::available().len(),
             SetupPage::About => 0,
         }
@@ -194,8 +222,11 @@ impl Setup {
                     4 => {
                         self.draft.highlight_base_name = !self.draft.highlight_base_name;
                     }
-                    _ => {
+                    5 => {
                         self.draft.highlight_deleted_exe = !self.draft.highlight_deleted_exe;
+                    }
+                    _ => {
+                        self.draft.system_cores_max = next_cores_max(self.draft.system_cores_max);
                     }
                 }
                 Applied {
@@ -440,10 +471,9 @@ impl Setup {
             .cloned()
             .unwrap_or_else(|| self.draft.tabs[0].clone());
         let name = format!("Tab {}", self.draft.tabs.len() + 1);
-        self.draft.tabs.push(gander_config::TabConfig {
-            name,
-            ..source
-        });
+        self.draft
+            .tabs
+            .push(gander_config::TabConfig { name, ..source });
         self.draft.active_tab = self.draft.tabs.len() - 1;
         self.cursor = self.draft.active_tab;
     }
@@ -588,10 +618,7 @@ impl Setup {
                 let selected = i == self.cursor;
                 let text = match row {
                     HeaderRow::Meter {
-                        column,
-                        name,
-                        mode,
-                        ..
+                        column, name, mode, ..
                     } => {
                         let side = match column {
                             HeaderColumn::Left => "L",
@@ -660,11 +687,7 @@ impl Setup {
             theme.meter_label,
         ));
 
-        Widget::render(
-            Paragraph::new(lines).style(theme.row_normal),
-            area,
-            buf,
-        );
+        Widget::render(Paragraph::new(lines).style(theme.row_normal), area, buf);
     }
 
     fn draw_display(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -692,7 +715,7 @@ impl Setup {
                 self.draft.highlight_deleted_exe,
             ),
         ];
-        let lines: Vec<Line> = items
+        let mut lines: Vec<Line> = items
             .iter()
             .enumerate()
             .map(|(i, (label, on))| {
@@ -705,6 +728,22 @@ impl Setup {
                 }
             })
             .collect();
+
+        // The per-core grid cap. A number rather than a checkbox, because the
+        // useful values are a short ladder and cycling through them is faster
+        // than typing. It is on this page rather than the Header page because it
+        // shapes the `panels` system column, not the header.
+        let cores_row = lines.len();
+        let text = format!(
+            "    Per-core grid: {}",
+            describe_cores_max(self.draft.system_cores_max)
+        );
+        lines.push(if self.cursor == cores_row {
+            Line::styled(text, theme.panel_selected)
+        } else {
+            Line::styled(text, theme.row_kernel_thread)
+        });
+
         Widget::render(Paragraph::new(lines).style(theme.row_normal), area, buf);
     }
 
@@ -834,10 +873,7 @@ mod tests {
         assert_eq!(s.draft.tabs.len(), 2);
         assert_eq!(s.draft.active_tab, 1, "the new tab becomes active");
         // A copy is more useful than an empty tab: same columns, different sort.
-        assert_eq!(
-            s.draft.tabs[0].columns.len(),
-            s.draft.tabs[1].columns.len()
-        );
+        assert_eq!(s.draft.tabs[0].columns.len(), s.draft.tabs[1].columns.len());
     }
 
     #[test]
@@ -1001,11 +1037,27 @@ mod tests {
         let rows = s.header_rows();
         let left = rows
             .iter()
-            .filter(|r| matches!(r, HeaderRow::Meter { column: HeaderColumn::Left, .. }))
+            .filter(|r| {
+                matches!(
+                    r,
+                    HeaderRow::Meter {
+                        column: HeaderColumn::Left,
+                        ..
+                    }
+                )
+            })
             .count();
         let right = rows
             .iter()
-            .filter(|r| matches!(r, HeaderRow::Meter { column: HeaderColumn::Right, .. }))
+            .filter(|r| {
+                matches!(
+                    r,
+                    HeaderRow::Meter {
+                        column: HeaderColumn::Right,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(left, s.draft.meters_left.len());
         assert_eq!(right, s.draft.meters_right.len());
@@ -1072,10 +1124,7 @@ mod tests {
         while s.draft.meters_left.len() + s.draft.meters_right.len() > 1 {
             let before = s.draft.meters_left.len() + s.draft.meters_right.len();
             assert!(
-                matches!(
-                    s.header_rows().get(s.cursor),
-                    Some(HeaderRow::Meter { .. })
-                ),
+                matches!(s.header_rows().get(s.cursor), Some(HeaderRow::Meter { .. })),
                 "cursor {} is not on a meter: {:?}",
                 s.cursor,
                 s.header_rows().get(s.cursor)
@@ -1137,5 +1186,66 @@ mod tests {
         s.move_meter(false);
         assert_eq!(s.draft.meters_left.last().unwrap().name, last_left);
         assert_eq!(s.draft.meters_right[0].name, "RightCPUs");
+    }
+}
+
+#[cfg(test)]
+mod cores_max_tests {
+    use super::*;
+
+    #[test]
+    fn the_display_page_has_a_row_for_every_setting_it_draws() {
+        // `row_count` clamps the cursor and `draw_display` builds its own list;
+        // they have to agree or the last row becomes unreachable.
+        let mut s = Setup::new(&Config::default());
+        s.page = SetupPage::Display;
+        assert_eq!(s.row_count(), DISPLAY_ROWS);
+        for _ in 0..DISPLAY_ROWS * 2 {
+            s.cursor_down();
+        }
+        assert_eq!(s.cursor, DISPLAY_ROWS - 1, "the last row must be reachable");
+    }
+
+    #[test]
+    fn the_grid_cap_cycles_through_the_ladder_and_wraps() {
+        let mut s = Setup::new(&Config::default());
+        s.page = SetupPage::Display;
+        s.cursor = DISPLAY_ROWS - 1;
+
+        // The default is "all cores"; the first press makes it 16.
+        assert_eq!(s.draft.system_cores_max, 0);
+        s.activate();
+        assert_eq!(s.draft.system_cores_max, 16);
+        s.activate();
+        assert_eq!(s.draft.system_cores_max, 32);
+
+        // Walking the whole ladder returns to the start rather than sticking.
+        for _ in 0..CORES_MAX_CHOICES.len() - 2 {
+            s.activate();
+        }
+        assert_eq!(s.draft.system_cores_max, 0);
+    }
+
+    #[test]
+    fn a_hand_edited_cap_is_recoverable() {
+        // Someone writes `system_cores_max = 100` in the config. The row must
+        // still do something sensible instead of getting stuck.
+        let config = Config {
+            system_cores_max: 100,
+            ..Default::default()
+        };
+        let mut s = Setup::new(&config);
+        s.page = SetupPage::Display;
+        s.cursor = DISPLAY_ROWS - 1;
+        s.activate();
+        assert_eq!(s.draft.system_cores_max, 0);
+    }
+
+    #[test]
+    fn the_cap_is_described_in_words_not_as_a_bare_zero() {
+        // `0` is the "no cap" sentinel, and printing it as `0 cores` would read
+        // as "show no cores" — the opposite of what it does.
+        assert_eq!(describe_cores_max(0), "all cores");
+        assert_eq!(describe_cores_max(64), "64 cores max");
     }
 }

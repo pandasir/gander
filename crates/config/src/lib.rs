@@ -39,9 +39,16 @@ pub struct Config {
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
     /// Maximum number of cores rendered in the `panels` system column's
-    /// per-core grid. `0` means "no cap": render every core. Defaults to `64`,
-    /// enough for the grid no longer to dominate the column on machines we
-    /// tested on; raise it if you run gander on a box with 128 logical CPUs.
+    /// per-core grid. `0` means "no cap": render every core, as far as the
+    /// column has room for them. Defaults to `0`.
+    ///
+    /// The default used to be `64`, which on a 128-core machine reported the
+    /// machine as having 64 cores — the label printed the capped count, so the
+    /// only visible symptom was a wrong fact about the hardware, with nothing to
+    /// suggest a setting was responsible. A limit that quietly under-reports the
+    /// machine is worse than a limit that renders fewer glyphs, so the default is
+    /// now "show all of them" and the label says `64/128 cores` when the grid
+    /// really is truncated by the column's height.
     pub system_cores_max: usize,
 }
 
@@ -140,7 +147,7 @@ impl Default for Config {
             highlight_base_name: false,
             highlight_deleted_exe: true,
             color_scheme: "gander".into(),
-            system_cores_max: 64,
+            system_cores_max: 0,
         }
     }
 }

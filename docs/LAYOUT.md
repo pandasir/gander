@@ -60,9 +60,22 @@ Everything in it is vertical, and nothing in it is a process. A 24-row terminal
 on a 16-core box now keeps 22 rows for processes.
 
 - **One CPU bar**, not one per core. The aggregate is what you look at first.
-- **A per-core grid** underneath, one glyph per core, coloured by load. 16 cores
-  fit in one or two rows; 64 cores cap at four. `·` means idle, which keeps the
-  grid reading as a grid instead of a ragged line of blanks.
+- **A per-core grid** underneath, one glyph per core, coloured by load. The grid
+  takes its shape from the column: up to 16 cores per row, and as many rows as
+  the terminal's height leaves after reserving room for the figures below. So a
+  16-core box draws one or two rows, a 64-core box four, and a 128-core box eight
+  on a tall terminal. `·` means idle, which keeps the grid reading as a grid
+  instead of a ragged line of blanks.
+
+  The label above the grid is the number of cores **actually drawn**, and it
+  names the machine's total when they differ: `128 cores`, or `64/128 cores` when
+  a short terminal or a configured cap stops the grid early. A grid that stops at
+  64 and a label that says `64 cores` is how a 128-core machine came to look like
+  a 64-core one — the truncation was real, but reporting it as the hardware's
+  core count was the bug.
+
+  The cap is `system_cores_max` (`0`, the default, means "all of them"); cycle it
+  on `F2` -> Display rather than editing the file.
 - **Memory and swap as stacked bars**, using the platform's own class breakdown,
   so "how much is cache versus anonymous" is visible without a keypress. The
   track is `░` rather than a background colour, so the denominator is visible in a

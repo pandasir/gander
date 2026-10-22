@@ -1926,10 +1926,20 @@ impl App {
             let Some(meter) = self.meters.get_mut(i) else {
                 continue;
             };
-            let h = meter.rows().max(1);
-            if y + h > area.bottom() {
+            let wanted = meter.rows().max(1);
+            if y >= area.bottom() {
                 break;
             }
+            // Clip to what is left rather than skipping the meter entirely.
+            //
+            // `break` here meant a meter taller than the remaining rows was
+            // dropped *whole*: on a 128-core machine the CPU meter wants 65 rows,
+            // the header is clamped to the screen, and the first meter therefore
+            // failed the test — so the entire header rendered blank and the only
+            // thing left on screen was the table. A partially drawn meter is
+            // useful; no header at all is not. The renderers already stop at
+            // `area.bottom()`, so a shorter rect is all that is needed.
+            let h = wanted.min(area.bottom() - y);
             let rect = Rect::new(area.x, y, area.width, h);
             meter.render(rect, buf, theme, mode);
             // Mark the meter `I` will act on. Without this the cursor is
@@ -3687,6 +3697,80 @@ mod tests {
         assert_eq!(height_for(8), 9);
         assert!(height_for(8) > height_for(4), "8 cores must not be clipped");
         assert!(height_for(16) > height_for(8));
+    }
+
+    /// Render `app` into a `w`x`h` buffer and return the text, row by row.
+    fn render_rows(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_htop_header_is_not_blank_on_a_many_core_machine() {
+        // Regression guard: a 128-core machine wants 65 CPU rows per column. The
+        // header is clamped to the terminal's height, and the old
+        // `if y + h > area.bottom() { break; }` dropped the whole meter instead
+        // of clipping it - so on a 50-row terminal the entire header rendered
+        // blank and only the table was left.
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        for (cores, h) in [(128usize, 50u16), (128, 24), (64, 30), (16, 24)] {
+            let snapshot = SystemSnapshot {
+                cpu: vec![CpuTimes::default(); cores + 1],
+                cpu_delta: vec![CpuTimes::default(); cores + 1],
+                ..Default::default()
+            };
+            let config = Config {
+                layout: "htop".into(),
+                ..Default::default()
+            };
+            let mut app = App::new(config);
+            app.apply_sample(snapshot, Vec::new());
+
+            let rows = render_rows(&mut app, 100, h);
+            assert!(
+                rows[0].contains("CPU") || rows[0].contains("Avg"),
+                "cores={cores} h={h}: the header's first row must be a CPU meter, got {:?}",
+                rows[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_clipped_cpu_meter_still_names_itself_cpu() {
+        // A one-row slice of a split CPU meter used to keep the `Avg` label,
+        // which reads as "the average of what?" once the core rows are gone.
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 129],
+            cpu_delta: vec![CpuTimes::default(); 129],
+            ..Default::default()
+        };
+        let config = Config {
+            layout: "htop".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(config);
+        app.apply_sample(snapshot, Vec::new());
+
+        let rows = render_rows(&mut app, 100, 6);
+        assert!(
+            rows[0].contains("CPU"),
+            "a squeezed CPU meter must still label itself CPU, got {:?}",
+            rows[0]
+        );
     }
 
     fn app_with_n_rows(n: u32) -> App {

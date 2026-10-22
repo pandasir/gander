@@ -252,6 +252,13 @@ Two implementation notes that were bugs first:
    ordered `[left, mem, swap, right, tasks, ...]`, splitting at `Tasks` put the
    right-hand CPU block in the *left* column and duplicated it. Meters now declare
    `Meter::column()` explicitly, mirroring htop's `hColumns[0]` / `hColumns[1]`.
+3. **A meter taller than the rows left was dropped whole.** `draw_column_indices`
+   tested `y + h > area.bottom()` and `break`ed, so on a 128-core machine — where
+   the CPU meter wants 65 rows and the header is clamped to the terminal — the
+   *first* meter failed the test and the entire header rendered blank. It now
+   clips to the rows that remain; the renderers already stop at `area.bottom()`,
+   and a one-row slice of a split CPU meter relabels itself `CPU` instead of
+   keeping `Avg`, which would read as "the average of what?".
 
 Known difference from htop: htop interleaves cores across the two halves
 (`0,4,1,5,2,6,3,7`); gander splits them contiguously (`0,1,2,3` / `4,5,6,7`).
