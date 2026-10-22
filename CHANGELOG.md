@@ -11,6 +11,171 @@ The per-release notes below say what shipped; ROADMAP says why.
 
 ---
 
+## v0.6.4 — 2026-10-22
+
+A display bug, not a data bug. `snapshot.cpu_count()` read all 128 cores
+correctly all along — `linux_live.rs` asserts it against
+`sysconf(_SC_NPROCESSORS_ONLN)` — and then the system column drew 64 of them and
+printed "64 cores" next to the grid. The number was the grid's capacity
+presented as a fact about the hardware, so there was nothing on screen to suggest
+a setting was responsible, and nothing in the docs or in `F2` setup to change.
+
+Three limits, each of which hid the others
+
+  `Config::system_cores_max` defaulted to 64, and the label printed the capped
+  count rather than the machine's. Raising it to `0`, which its own doc comment
+  described as "render every core", changed nothing: the grid was also capped at
+  16 cells per row times four rows, so 64 glyphs was the ceiling no matter what
+  the config said. And under `layout = "htop"` the same machine rendered *no
+  header at all* — `draw_column_indices` skipped any meter taller than the rows
+  that were left, and 128 cores want 65 rows per column, so the first meter
+  failed the test and the entire header went blank.
+
+  Fixing any one of the three alone would have left the other two in place, which
+  is why the report read as "the core count is wrong" rather than as "the grid is
+  capped".
+
+What the column does now
+
+  The grid takes its shape from the terminal: up to 16 cores per row, and as many
+  rows as the height leaves after reserving room for MEM, SWP, LOAD, TASKS, RUN
+  and THR. A 128-core box draws eight rows on a 40-row terminal, and the figures
+  below the grid stay where they were.
+
+  The label reports what is actually drawn, and names the total when they differ:
+
+    128 cores          everything fits
+    64/128 cores       a short terminal or a configured cap stopped the grid
+
+  A truncated grid is fine. Reporting the truncation as the machine's core count
+  was the bug, and `64/128` is the difference between a limit and a lie.
+
+`system_cores_max` is now reachable, and defaults to "all"
+
+  Default 0. `F2` -> Display cycles `0 / 16 / 32 / 64 / 128`, which is how the
+  setting should have been reachable from the start: a config-file-only value
+  that silently changes a displayed figure is indistinguishable from a wrong
+  figure. `0` renders as "all cores" rather than "0 cores", because the sentinel
+  means the opposite of what it says.
+
+  An existing `config.toml` with `system_cores_max = 64` keeps its 64, and now
+  shows `64/128 cores` instead of `64 cores`. That is the honest reading of a
+  setting someone chose.
+
+The htop header clips instead of disappearing
+
+  A meter taller than the remaining rows is drawn as far as it goes. The
+  renderers already stopped at `area.bottom()`; only the caller's `break` was
+  discarding the whole thing. A one-row slice of a split CPU meter relabels
+  itself `CPU` instead of keeping `Avg`, which asks "the average of what?" once
+  the core rows are gone.
+
+Tests: 128 cores render 128 glyphs; a 16-row terminal labels itself `N/128`; a
+configured cap labels itself `64/128`; the figures below the grid survive; the
+htop header is non-blank at 128 cores on 50- and 24-row terminals; the grid-cap
+ladder wraps and recovers from a hand-edited value. 173 TUI, 146 core, 33 config
+tests, clippy `-D warnings` clean, and the release binary reports 0.6.4.
+
+<sub>[compare v0.6.3...v0.6.4](https://github.com/pandasir/gander/compare/v0.6.3...v0.6.4)</sub>
+
+## v0.6.3 — 2026-10-22
+
+A packaging release. Nothing about the process table changed; what changed is
+that installing gander no longer means downloading a tarball and copying a
+binary into ~/.local/bin by hand.
+
+Debian, Ubuntu, Fedora, RHEL and Rocky now have a real package manager path
+
+  https://pandasir.github.io/gander/ is a signed apt repository and a signed
+  yum/dnf repository, served from a `repo` branch by GitHub Pages:
+
+    sudo apt install gander
+    sudo dnf install gander
+
+  Upgrades arrive with the rest of the system. apt verifies InRelease, dnf runs
+  with gpgcheck=1 and repo_gpgcheck=1, and the RPMs are signed as well as the
+  metadata. The .deb files are not signed individually: apt authenticates the
+  index, which carries each package's SHA-256, so signing the package too would
+  protect nothing that the index does not.
+
+The packages declare no dependencies, and that is the whole product
+
+  Both are built from the static musl binary, so they install on Debian 12,
+  Ubuntu 24.04, Rocky 9 and CentOS 7 alike. check-packages.sh asserts both
+  halves of the claim -- the control/Requires fields are empty and readelf shows
+  no NEEDED entries -- because either one can be made true while the other
+  regresses. A package that quietly picked up libc6 >= 2.34 would install on the
+  build machine and refuse to start on the user's.
+
+Linux arm64, at last
+
+  aarch64-unknown-linux-gnu and aarch64-unknown-linux-musl are built on
+  GitHub's hosted arm64 runners, so the arm64 packages and the Homebrew Linux
+  ARM install both stop compiling from source. v0.6.2 shipped no arm64 archive,
+  which is why the formula still builds there; that becomes a prebuilt download
+  in the next formula update.
+
+What a live client taught the implementation
+
+  Every one of these was found by running the thing rather than by reading it,
+  and none would have been caught by a green CI run of the code alone. The
+  orphan-branch path in the publish job had no `origin` remote, so the *first*
+  release would have failed to push -- a path that runs once and is therefore
+  never exercised again. sign-packages.sh checked the SIGPGP/SIGGPG tags, but
+  rpm 4.14+ stores a header signature in RSAHEADER, so it reported "none" for a
+  correctly signed package and would have passed one whose signing silently
+  failed. check-packages.sh passed a relative RPM path through a chdir, which
+  every local run missed because local runs used absolute paths. rpmbuild from
+  Debian refuses to build for a foreign architecture at all, so each package is
+  now built on a runner of its own architecture. linux-install echoed an
+  undefined ${IMAGE} on its last line, failing after the archive had already
+  downloaded, verified and run. `gh release upload` failed with "not a git
+  repository" in a job with no checkout. The repository's client check could not
+  resolve `host.docker.internal`, a Docker Desktop convenience absent on a Linux
+  runner; and once it could, the arm64 client died with "exec format error"
+  because the x86_64 runner had no QEMU handlers registered.
+
+  Verified against a local HTTP server with real clients: apt install gander on
+  debian:12 amd64 and arm64, dnf install gander on rockylinux:9 amd64 and arm64,
+  a tampered .deb rejected with "Hash Sum mismatch", and a tampered repomd.xml
+  rejected with "Bad GPG signature".
+
+Signing key
+
+  docs/SIGNING.md is the key's whole lifecycle. It is created once by a
+  maintainer and stored as two repository secrets; nothing is generated in CI,
+  because a key that changed every release would invalidate every user's
+  imported copy. It has no expiry on purpose -- an expired key breaks every
+  `apt update` on the expiry date, which is a worse failure than a long-lived
+  key in a secret store.
+
+Tests: 146 core, 33 config, 160 TUI, plus integration and doc tests;
+cargo clippy --workspace --all-targets -- -D warnings is clean. The new packages
+job runs on every pull request, and packaging/test-repo.sh exercises the whole
+repository chain with a throwaway key.
+
+<sub>[compare v0.6.2...v0.6.3](https://github.com/pandasir/gander/compare/v0.6.2...v0.6.3)</sub>
+
+## v0.6.2 — 2026-10-21
+
+This is a packaging release: no behaviour changed, but the project can now be installed from a source tarball without resolving a moving dependency graph.
+
+crates.io-ready workspace
+
+  The internal gander dependencies now carry a version alongside their path, which cargo requires before it will package any of the four crates. The executable is published as gander-bin because the gander crate name was taken by an unrelated, yanked project in 2024; cargo install gander-bin still installs a binary named gander.
+
+  Cargo.lock is committed. The v0.6.1 source archive did not contain one, so cargo build --locked failed before compiling a line and Homebrew or AUR recipes could not pin the dependency graph. The same archive now builds reproducibly with the lockfile that CI and local tests use.
+
+  README and docs/RELEASING.md now describe the four-crate publish order and the lockfile rule, so the next release cannot silently regress either one.
+
+Packaging recipes
+
+  packaging/ contains a Homebrew formula, an AUR PKGBUILD with .SRCINFO, and the checksums and commands needed to submit them. All point at the annotated v0.6.2 tag; the distribution metadata lives with the source rather than only in a tap or an AUR repository.
+
+Tests: 145 core, 33 config, 151 TUI, plus integration and doc tests; cargo clippy --workspace --all-targets -- -D warnings is clean. The full suite runs outside the macOS sandbox, which denies KERN_PROC_ALL.
+
+<sub>[compare v0.6.1...v0.6.2](https://github.com/pandasir/gander/compare/v0.6.1...v0.6.2)</sub>
+
 ## v0.6.1 — 2026-10-20
 
 **cleanup — dead code deleted, docs corrected**
