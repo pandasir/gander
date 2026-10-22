@@ -330,6 +330,11 @@ jobs:
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          # `gh` resolves the repository from the working directory, and this job
+          # has no checkout, so it failed with "not a git repository". Naming the
+          # repository explicitly is the fix; a checkout would only be there to
+          # satisfy a lookup that does not need one.
+          GH_REPO: ${{ github.repository }}
         run: gh release upload "${GITHUB_REF_NAME}" dist/*.deb dist/*.rpm dist/SHA256SUMS --clobber
 
   # Publish the signed apt and rpm repositories at https://pandasir.github.io/gander/
@@ -401,29 +406,44 @@ jobs:
         # A repository that builds is not a repository that installs. Each client
         # checks the signature chain end to end here, which is the only place it
         # is exercised before users do it.
+        #
+        # `--network host` rather than a published port plus host.docker.internal:
+        # that name is a Docker Desktop convenience and does not resolve inside
+        # containers on a Linux runner, which is where this runs. With host
+        # networking the client reaches the server on the runner's own loopback.
         run: |
           set -eu
           port=18080
-          docker run -d --rm --name repo-server -p "$port:80" \
+          docker run -d --rm --name repo-server --network host \
             -v "$PWD/repo-tree:/srv:ro" python:3-alpine \
-            sh -c 'cd /srv && python3 -m http.server 80' >/dev/null
+            sh -c "cd /srv && python3 -m http.server $port" >/dev/null
           trap 'docker rm -f repo-server >/dev/null 2>&1 || true' EXIT
-          sleep 3
+
+          # Wait for the server rather than sleeping a fixed amount: a pulled
+          # image can take seconds to start, and the failure mode of guessing
+          # short is a confusing "could not resolve" rather than "not up yet".
+          for _ in $(seq 30); do
+            if curl -fsS "http://127.0.0.1:$port/dists/stable/Release" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$port/dists/stable/Release" >/dev/null
 
           # Client configuration, with the published URL swapped for the local
           # one. Written here rather than inline so the heredoc is not nested in
           # a `sh -c` string.
-          sed "s|https://pandasir.github.io/gander/|http://host.docker.internal:$port/|g" \
+          sed "s|https://pandasir.github.io/gander/|http://127.0.0.1:$port/|g" \
             repo-tree/gander.repo > /tmp/gander.repo
 
           for arch in amd64 arm64; do
-            docker run --rm --platform "linux/$arch" \
+            docker run --rm --platform "linux/$arch" --network host \
               -v /tmp/gander.repo:/etc/yum.repos.d/gander.repo:ro \
               debian:12 sh -ec "
                 apt-get update -qq >/dev/null 2>&1
                 apt-get install -y -qq gnupg curl >/dev/null 2>&1
-                curl -fsSL http://host.docker.internal:$port/gander.gpg | gpg --dearmor -o /usr/share/keyrings/gander.gpg
-                echo 'deb [signed-by=/usr/share/keyrings/gander.gpg] http://host.docker.internal:$port stable main' > /etc/apt/sources.list.d/gander.list
+                curl -fsSL http://127.0.0.1:$port/gander.gpg | gpg --dearmor -o /usr/share/keyrings/gander.gpg
+                echo 'deb [signed-by=/usr/share/keyrings/gander.gpg] http://127.0.0.1:$port stable main' > /etc/apt/sources.list.d/gander.list
                 apt-get update
                 apt-get install -y -qq gander
                 gander --version
@@ -431,10 +451,10 @@ jobs:
                 test -s /tmp/s.json
                 echo \"apt install gander works on $arch\"
               "
-            docker run --rm --platform "linux/$arch" \
+            docker run --rm --platform "linux/$arch" --network host \
               -v /tmp/gander.repo:/etc/yum.repos.d/gander.repo:ro \
               rockylinux:9 sh -ec "
-                rpm --import http://host.docker.internal:$port/RPM-GPG-KEY-gander
+                rpm --import http://127.0.0.1:$port/RPM-GPG-KEY-gander
                 dnf -y -q install gander
                 gander --version
                 gander --json --limit 1 >/tmp/s.json
@@ -472,6 +492,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: repo
+          # The tree is published verbatim; a checkout with history would put a
+          # .git directory in the served tree, and Pages would happily serve it.
+          fetch-depth: 1
+          persist-credentials: false
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
