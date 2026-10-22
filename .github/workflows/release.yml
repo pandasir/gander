@@ -350,17 +350,27 @@ jobs:
           merge-multiple: true
 
       - name: Check out the existing repository tree
-        # Orphan branch on first use: the repository is a published artifact, not
-        # source, and a branch of its own keeps its history out of `main`.
+        # The tree is a published artifact, not source, so it lives on its own
+        # branch rather than in `main`.
+        #
+        # A fresh `git init` in a subdirectory has no `origin` remote, so the
+        # push at the end of this job would fail on the very first release -- a
+        # path that only ever runs once and is therefore never exercised again.
+        # The remote is set explicitly instead of relying on inheritance.
         run: |
-          if git fetch --depth=1 origin repo; then
+          if git fetch --depth=1 origin repo 2>/dev/null; then
+            echo "repo branch exists; adding a worktree"
             git worktree add repo-tree FETCH_HEAD
           else
             echo "no repo branch yet; starting one"
             mkdir repo-tree
             git -C repo-tree init -q
             git -C repo-tree checkout -q --orphan repo
+            git -C repo-tree remote add origin \
+              "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
           fi
+          git -C repo-tree config user.name 'gander release'
+          git -C repo-tree config user.email 'gander-maintainers@users.noreply.github.com'
 
       - name: Sign and index
         env:
@@ -427,10 +437,13 @@ jobs:
         run: |
           cd repo-tree
           git add -A
-          # `--allow-empty` is not used: a release that changed nothing in the
-          # repository means the merge step silently did nothing.
-          git -c user.name='gander release' -c user.email='gander-maintainers@users.noreply.github.com' \
-            commit -m "repo: ${GITHUB_REF_NAME}"
+          # A release that changed nothing in the repository means the merge step
+          # silently did nothing, so an empty commit is a failure, not a no-op.
+          if git diff --cached --quiet; then
+            echo "::error::the repository tree did not change; merge-repo.sh did nothing"
+            exit 1
+          fi
+          git commit -m "repo: ${GITHUB_REF_NAME}"
           git push origin HEAD:repo
 
   # GitHub Pages serves the repository. Kept separate from the push so a Pages
