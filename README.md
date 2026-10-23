@@ -18,7 +18,7 @@
 ```bash
 brew install pandasir/tap/gander     # macOS
 cargo install gander-bin             # any platform with Rust
-yay -S gander                        # Arch Linux
+git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
 ![Recording: selecting a process, tree view, then L for the htop layout](assets/demo.gif)
@@ -155,10 +155,18 @@ sudo dnf install ./gander-<version>-1.x86_64.rpm     # aarch64 on ARM machines
 | Fedora, RHEL, Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
-| Arch Linux (AUR) | `yay -S gander` |
+| Arch Linux | `git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si` |
 
 The crates.io package is named `gander-bin` because `gander` is already taken by
 an unrelated crate; the installed command is still `gander`.
+
+There is no AUR package. AUR account registration has been closed since the
+[malicious-packages incident](https://archlinux.org/news/active-aur-malicious-packages-incident/)
+in June 2026, and Arch's DevOps team has said there is no manual process to
+create one, so the package cannot be pushed. The Arch build is the same
+`PKGBUILD` that would have been published, so `makepkg -si` above builds the
+identically packaged binary from source. When registration reopens, the package
+will be pushed and this section will name it.
 
 ### From source
 

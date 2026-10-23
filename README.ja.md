@@ -18,7 +18,7 @@
 ```bash
 brew install pandasir/tap/gander     # macOS
 cargo install gander-bin             # Rust が入っている任意のプラットフォーム
-yay -S gander                        # Arch Linux
+git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
 ![録画: プロセスの選択、ツリー表示、そして L で htop レイアウトへ](assets/demo.gif)
@@ -156,7 +156,15 @@ sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM マシンでは aarch
 | Fedora、RHEL、Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
-| Arch Linux（AUR） | `yay -S gander` |
+| Arch Linux | `git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si` |
+
+AUR パッケージはまだありません。2026 年 6 月の[悪意のあるパッケージの
+事案](https://archlinux.org/news/active-aur-malicious-packages-incident/)以降、AUR の
+アカウント登録は閉鎖されたままで、Arch の DevOps チームは手動で発行する手段も
+無いと明言しています。そのためパッケージを push できません。上記の Arch 向け
+手順は同じ `PKGBUILD` を使うため、AUR に公開されるはずだったものと同一の
+パッケージをソースからビルドします。登録が再開したら AUR に push し、ここに
+その名前を記載します。
 
 crates.io では、`gander` という名前が別の無関係な crate に使用されているため、
 パッケージ名は `gander-bin` です。インストール後のコマンド名は `gander` のままです。

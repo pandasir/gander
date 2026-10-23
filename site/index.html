@@ -219,7 +219,9 @@
 <pre><code>cargo install gander-bin   <span class="c"># the installed command is `gander`</span></code></pre>
 
   <h3>Arch Linux</h3>
-<pre><code>yay -S gander</code></pre>
+<pre><code>git clone https://github.com/pandasir/gander
+cd gander/packaging/aur &amp;&amp; makepkg -si</code></pre>
+  <p class="sub">There is no AUR package: AUR account registration has been closed since the <a href="https://archlinux.org/news/active-aur-malicious-packages-incident/">June 2026 malicious-packages incident</a>, and there is no manual process to create one. This builds the same <code>PKGBUILD</code> that would have been published.</p>
 
   <h3>Debian, Ubuntu, Fedora, RHEL</h3>
 <pre><code><span class="c"># Debian, Ubuntu, Linux Mint</span>

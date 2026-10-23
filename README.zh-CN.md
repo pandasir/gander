@@ -17,7 +17,7 @@
 ```bash
 brew install pandasir/tap/gander     # macOS
 cargo install gander-bin             # 任何有 Rust 的平台
-yay -S gander                        # Arch Linux
+git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
 ![录屏：选中进程、树状视图，然后按 L 切到 htop 布局](assets/demo.gif)
@@ -146,7 +146,12 @@ sudo dnf install ./gander-<version>-1.x86_64.rpm     # ARM 机器用 aarch64
 | Fedora、RHEL、Rocky | `sudo dnf install gander` |
 | Homebrew | `brew install pandasir/tap/gander` |
 | crates.io | `cargo install gander-bin` |
-| Arch Linux（AUR） | `yay -S gander` |
+| Arch Linux | `git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si` |
+
+目前没有 AUR 包。自 2026 年 6 月的[恶意包事件](https://archlinux.org/news/active-aur-malicious-packages-incident/)
+之后，AUR 账号注册一直关闭，Arch 的 DevOps 团队也说明目前没有人工开通的途径，
+所以这个包无法提交。上面的 Arch 安装方式用的是同一个 `PKGBUILD`，build 出来的
+包与本应发布到 AUR 的完全一致。等注册重新开放时会提交到 AUR，并在这里写明。
 
 crates.io 上的包名是 `gander-bin`，因为 `gander` 已被一个无关的 crate 占用；
 安装后的命令仍然是 `gander`。

@@ -126,21 +126,6 @@ http_ok() {
   return 0
 }
 
-check_aur() {
-  local url="https://aur.archlinux.org/rpc/v5/info?arg[]=gander"
-  local body
-  body=$(curl -fsSL --max-time 20 -A "gander-check-channels/1.0" "$url" 2>/dev/null) || {
-    echo "AUR RPC unreachable"
-    return 1
-  }
-  # resultcount is 0 for a name that was never pushed.
-  if printf '%s' "$body" | grep -q '"resultcount":0'; then
-    echo "AUR has no 'gander' package, but the docs say 'yay -S gander'"
-    return 1
-  fi
-  return 0
-}
-
 check_homebrew() {
   # The tap has to serve the formula, and the formula has to name a real archive.
   http_ok "https://raw.githubusercontent.com/pandasir/homebrew-tap/main/Formula/gander.rb" "class Gander" || return 1
@@ -156,6 +141,46 @@ check_dnf() {
 
 check_crates() {
   http_ok "https://crates.io/api/v1/crates/gander-bin" '"id":"gander-bin"' || return 1
+}
+
+# The Arch channel is a source build from the `PKGBUILD` in the repository, not an
+# AUR package: registration has been closed since the June 2026 incident and there
+# is no manual process to create an account. So the thing that can break is the
+# PKGBUILD being gone or losing the parts that make `makepkg -si` work, not a
+# remote package page. Check the file and the command it is invoked with.
+check_arch_source() {
+  local pkgbuild=packaging/aur/PKGBUILD
+  [ -f "$pkgbuild" ] || { echo "no $pkgbuild"; return 1; }
+  # The functions `makepkg -si` needs; a stub without them fails at build time.
+  for fn in prepare build check package; do
+    grep -q "^$fn()" "$pkgbuild" || { echo "$pkgbuild has no $fn()"; return 1; }
+  done
+  # The docs have to name this path, and the directory has to be reachable from
+  # the clone the reader is told to make.
+  grep -q "https://github.com/pandasir/gander" "$pkgbuild" || {
+    echo "$pkgbuild does not point at the upstream repository"
+    return 1
+  }
+  return 0
+}
+
+# A claimed AUR package must exist; an absent one is fine as long as nothing in
+# the docs tells a reader to install it from there. This is the check that would
+# have caught `yay -S gander` while the package did not exist, and it is the
+# check that will let the AUR claim come back when registration reopens.
+check_aur_absent_or_live() {
+  local body
+  body=$(curl -fsSL --max-time 20 -A "gander-check-channels/1.0" \
+    "https://aur.archlinux.org/rpc/v5/info?arg[]=gander" 2>/dev/null) || {
+    echo "AUR RPC unreachable"
+    return 1
+  }
+  if printf '%s' "$body" | grep -q '"resultcount":0'; then
+    echo "absent"
+  else
+    echo "live"
+  fi
+  return 0
 }
 
 check_channel() {
@@ -175,11 +200,11 @@ documented() {
 }
 
 for pair in \
-  "yay -S gander|check_aur" \
   "brew install pandasir/tap/gander|check_homebrew" \
   "apt install gander|check_apt" \
   "dnf install gander|check_dnf" \
-  "cargo install gander-bin|check_crates"
+  "cargo install gander-bin|check_crates" \
+  "makepkg -si|check_arch_source"
 do
   cmd=${pair%%|*}
   checker=${pair##*|}
@@ -187,6 +212,34 @@ do
     check_channel "$cmd" "$checker" "README.md / site/index.html"
   fi
 done
+
+# The AUR is a special case: it is a real channel the project intends to use, but
+# it is currently impossible to create an account. What matters is that the docs
+# and the AUR agree -- a live package with no docs is a missed channel, and docs
+# pointing at a package that does not exist is the bug this whole script exists
+# for. Either state is fine as long as both sides say the same thing.
+aur_state=$(check_aur_absent_or_live) || aur_state=unreachable
+case "$aur_state" in
+  live)
+    if grep -qsF "yay -S gander" README.md site/index.html; then
+      ok "yay -S gander (AUR package is live and documented)"
+    else
+      fail "the AUR package exists but the docs do not mention it"
+    fi
+    ;;
+  absent)
+    if grep -qsF "yay -S gander" README.md site/index.html; then
+      fail "the docs say 'yay -S gander' but the AUR has no such package"
+    else
+      ok "no AUR package, and no docs claim one"
+    fi
+    ;;
+  *)
+    # A network failure must not read as a pass: this is the check that catches a
+    # published-but-missing package, so an unreachable AUR is inconclusive.
+    fail "could not determine AUR state ($aur_state)"
+    ;;
+esac
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed" >&2

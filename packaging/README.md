@@ -19,10 +19,15 @@ The script fails when a command in `README.md` or `site/index.html` has no live
 channel behind it, and when `packaging/aur/.SRCINFO` disagrees with the
 `PKGBUILD` beside it. CI runs it in the `channels` job.
 
-It currently reports `yay -S gander` as a failure: the AUR package has not been
-pushed yet. That is the intended behaviour — the check exists so the gap cannot
-be forgotten — and it is why the README claim has to be made true or removed
-before the next release.
+The AUR is a special case. Registration has been closed since the [June 2026
+malicious-packages incident](https://archlinux.org/news/active-aur-malicious-packages-incident/),
+and Arch's DevOps team has said there is no manual process to create an account,
+so the package cannot be pushed. The check therefore accepts two states as long
+as the docs and the AUR agree: no AUR package and no `yay -S gander` in the docs
+(the current state, with Arch users building from `packaging/aur/` directly), or
+a live AUR package that the docs name. It fails on the mismatch in either
+direction, and it fails when the AUR cannot be reached, so an outage cannot read
+as a pass.
 
 ## crates.io
 
@@ -258,6 +263,31 @@ gpg --verify <(curl -fsSL https://pandasir.github.io/gander/dists/stable/InRelea
 
 `packaging/aur/` contains the `PKGBUILD` and `.SRCINFO` for the `gander` AUR
 package. `gander` was unclaimed on the AUR as of 2026-10-23.
+
+### It cannot be pushed yet
+
+AUR account registration has been closed since the [2026-06-12 malicious-packages
+incident](https://archlinux.org/news/active-aur-malicious-packages-incident/).
+Arch's DevOps team has stated there is no manual process and that registration
+requests on the mailing list will be ignored, so a new package cannot be
+published no matter how correct the PKGBUILD is. Registration was reopened
+briefly in July 2026 and closed again.
+
+Because of that, the READMEs and the landing page do **not** advertise
+`yay -S gander`. They tell Arch users to clone the repository and run
+`makepkg -si` in `packaging/aur/` instead, which builds the same package from the
+same PKGBUILD. That path is verified end to end:
+
+```bash
+git clone https://github.com/pandasir/gander
+cd gander/packaging/aur && makepkg -si
+```
+
+When registration reopens, push the package with the steps below and put
+`yay -S gander` back in the READMEs and the landing page.
+`packaging/check-channels.sh` enforces that pairing in both directions: it fails
+if the docs name an AUR package that does not exist, and it fails if the AUR
+package exists but the docs never mention it.
 
 ### Before pushing
 
