@@ -97,11 +97,12 @@ EOF
 # `make makesum` then fetches every crate and writes distinfo. Neither step has an
 # equivalent outside FreeBSD.
 echo "==> generating CARGO_CRATES"
-# Resolve to an absolute path before changing directory: the CI run passes a
-# relative ports tree (it clones into the workspace so the action syncs it back),
-# and `cd relative/dir` followed by `relative/dir/Makefile` resolves against the
-# new directory, not the original one. That is what broke the second run — the
-# crates were found (199 of them) and then written to a path that did not exist.
+# Resolve every path to an absolute one before any cd. The CI run passes a relative
+# ports tree (it clones into the workspace so the action syncs it back), and once
+# the script has cd'd into the port directory, a relative "ports-tree" no longer
+# resolves. That has now broken two different steps in two different ways, so both
+# are resolved here rather than where they happen to be used.
+portsdir=$(cd "${portsdir}" && pwd)
 portdir=$(cd "${portdir}" && pwd)
 cd "${portdir}"
 if ! make cargo-crates > /tmp/cargo-crates.txt 2>/tmp/cargo-crates.err; then
@@ -179,9 +180,6 @@ make -V PLIST_FILES
 # attachments are applied with `git am`, which needs the committer identity and a
 # commit message in the expected format.
 echo "==> generating the submission patch"
-# portsdir may be relative (CI clones into the workspace), and this subshell is a
-# separate cd. Resolve it, or `cd sysutils/gander` below is attempted twice.
-portsdir=$(cd "${portsdir}" && pwd)
 ( cd "${portsdir}" &&
   git add "sysutils/gander" &&
   git -c user.name="${GIT_AUTHOR_NAME:-gander port}" \
