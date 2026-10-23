@@ -1,6 +1,6 @@
 # Maintainer: panda <839027631@qq.com>
 pkgname=gander
-pkgver=0.6.6
+pkgver=0.6.7
 pkgrel=1
 pkgdesc="Cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD"
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ license=('GPL-2.0-or-later')
 depends=('gcc-libs')
 makedepends=('cargo' 'rust')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('5f24a9a9da63410c9df238c37ea784c5939b56772a920cb22ccdb7f4543879ca')
+sha256sums=('fd86744680b35cb12dc7fa4f4d05031ed68ce0ca52d9eda6439fad8dcf887b5f')
 
 prepare() {
   cd "$pkgname-$pkgver"

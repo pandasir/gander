@@ -6,26 +6,26 @@ class Gander < Formula
   stable do
     on_macos do
       on_arm do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.6/gander-0.6.6-aarch64-apple-darwin.tar.gz"
-        sha256 "cccb144aceb8f26d7525eff1b5bda2d9a30e64ab6588dab9a755d986ca959c18"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.7/gander-0.6.7-aarch64-apple-darwin.tar.gz"
+        sha256 "62234cb41c03becf734b4313af0f90a22736658bd88505462445dfef71f86167"
       end
       on_intel do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.6/gander-0.6.6-x86_64-apple-darwin.tar.gz"
-        sha256 "db19e99011a6251d530ee55d8b23af378b358202d8e2b4e9a7cf3feaa163603f"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.7/gander-0.6.7-x86_64-apple-darwin.tar.gz"
+        sha256 "bdef40db860149b7323403040b95f027c3165431223d3e24821b61719e45c081"
       end
     end
 
     on_linux do
       on_intel do
-        url "https://github.com/pandasir/gander/releases/download/v0.6.6/gander-0.6.6-x86_64-unknown-linux-musl.tar.gz"
-        sha256 "7e397574300f9e4f0874c30851a2df406f7dafed53a457ddcc2885c9f07c2a8a"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.7/gander-0.6.7-x86_64-unknown-linux-musl.tar.gz"
+        sha256 "7569654ed553dfe0fd8d29d8a1dfc7ab500771d82849ad014878a619304b1b64"
       end
       on_arm do
         # v0.6.3 was the first release with an arm64 Linux archive, so this is a
         # prebuilt download like the others. Before that the formula compiled
         # from source here, which is the one platform that needed Rust.
-        url "https://github.com/pandasir/gander/releases/download/v0.6.6/gander-0.6.6-aarch64-unknown-linux-musl.tar.gz"
-        sha256 "b63535580862c1365ef8536d7d7c1e884951d767770498d2997c6a3748533aa5"
+        url "https://github.com/pandasir/gander/releases/download/v0.6.7/gander-0.6.7-aarch64-unknown-linux-musl.tar.gz"
+        sha256 "573ecfe6a8e9179fb8d7cfddac33f799a62abcc50ad5b0ef40cd2ee2577f035f"
       end
     end
   end

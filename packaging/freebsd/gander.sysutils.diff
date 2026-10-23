@@ -1,6 +1,6 @@
-From 7fa4ce10009cc5222cb86ce58f1cfb7aa33c6751 Mon Sep 17 00:00:00 2001
+From 82bbd82da50b6dc7ce48a66dfe2d64ce6339ff15 Mon Sep 17 00:00:00 2001
 From: gander port <839027631@qq.com>
-Date: Fri, 23 Oct 2026 09:57:25 +0000
+Date: Fri, 23 Oct 2026 16:29:31 +0000
 Subject: [PATCH] [NEW PORT] sysutils/gander: Interactive process viewer for
  the terminal
 
@@ -24,13 +24,13 @@ WWW: https://github.com/pandasir/gander
 
 diff --git a/sysutils/gander/Makefile b/sysutils/gander/Makefile
 new file mode 100644
-index 000000000..7ce47cac7
+index 000000000..44af9de92
 --- /dev/null
 +++ b/sysutils/gander/Makefile
 @@ -0,0 +1,230 @@
 +PORTNAME=	gander
 +DISTVERSIONPREFIX=	v
-+DISTVERSION=	0.6.5
++DISTVERSION=	0.6.7
 +CATEGORIES=	sysutils
 +
 +MAINTAINER=	839027631@qq.com
@@ -260,11 +260,11 @@ index 000000000..7ce47cac7
 +.include <bsd.port.mk>
 diff --git a/sysutils/gander/distinfo b/sysutils/gander/distinfo
 new file mode 100644
-index 000000000..9104da65e
+index 000000000..c0fa4b8ad
 --- /dev/null
 +++ b/sysutils/gander/distinfo
 @@ -0,0 +1,403 @@
-+TIMESTAMP = 1792749384
++TIMESTAMP = 1792772908
 +SHA256 (rust/crates/aho-corasick-1.1.5.crate) = c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba
 +SIZE (rust/crates/aho-corasick-1.1.5.crate) = 184315
 +SHA256 (rust/crates/allocator-api2-0.2.21.crate) = 683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923
@@ -665,8 +665,8 @@ index 000000000..9104da65e
 +SIZE (rust/crates/winnow-0.7.15.crate) = 187092
 +SHA256 (rust/crates/wit-bindgen-0.57.1.crate) = 1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e
 +SIZE (rust/crates/wit-bindgen-0.57.1.crate) = 71227
-+SHA256 (pandasir-gander-v0.6.5_GH0.tar.gz) = 5f24a9a9da63410c9df238c37ea784c5939b56772a920cb22ccdb7f4543879ca
-+SIZE (pandasir-gander-v0.6.5_GH0.tar.gz) = 3589891
++SHA256 (pandasir-gander-v0.6.7_GH0.tar.gz) = fd86744680b35cb12dc7fa4f4d05031ed68ce0ca52d9eda6439fad8dcf887b5f
++SIZE (pandasir-gander-v0.6.7_GH0.tar.gz) = 3642753
 diff --git a/sysutils/gander/pkg-descr b/sysutils/gander/pkg-descr
 new file mode 100644
 index 000000000..fb4946d74

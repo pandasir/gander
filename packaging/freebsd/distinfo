@@ -1,4 +1,4 @@
-TIMESTAMP = 1792749384
+TIMESTAMP = 1792772908
 SHA256 (rust/crates/aho-corasick-1.1.5.crate) = c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba
 SIZE (rust/crates/aho-corasick-1.1.5.crate) = 184315
 SHA256 (rust/crates/allocator-api2-0.2.21.crate) = 683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923
@@ -399,5 +399,5 @@ SHA256 (rust/crates/winnow-0.7.15.crate) = df79d97927682d2fd8adb29682d1140b343be
 SIZE (rust/crates/winnow-0.7.15.crate) = 187092
 SHA256 (rust/crates/wit-bindgen-0.57.1.crate) = 1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e
 SIZE (rust/crates/wit-bindgen-0.57.1.crate) = 71227
-SHA256 (pandasir-gander-v0.6.5_GH0.tar.gz) = 5f24a9a9da63410c9df238c37ea784c5939b56772a920cb22ccdb7f4543879ca
-SIZE (pandasir-gander-v0.6.5_GH0.tar.gz) = 3589891
+SHA256 (pandasir-gander-v0.6.7_GH0.tar.gz) = fd86744680b35cb12dc7fa4f4d05031ed68ce0ca52d9eda6439fad8dcf887b5f
+SIZE (pandasir-gander-v0.6.7_GH0.tar.gz) = 3642753
