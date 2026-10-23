@@ -1,6 +1,6 @@
 # Maintainer: panda <839027631@qq.com>
 pkgname=gander
-pkgver=0.6.5
+pkgver=0.6.6
 pkgrel=1
 pkgdesc="Cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD"
 arch=('x86_64' 'aarch64')

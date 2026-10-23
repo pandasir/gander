@@ -343,14 +343,16 @@ impl Setup {
             .chain(self.draft.meters_right.iter())
             .map(|m| m.name.as_str())
             .collect();
-        // Skip the CPU family when the header already has one: `LeftCPUs` and
+        // Skip the CPU family when the header already has one: `LeftCPUs8` and
         // `CPU` are alternatives, not companions, and adding a second CPU block
         // is never what the user meant.
-        let has_cpu = existing.iter().any(|n| n.contains("CPU"));
+        let has_cpu = existing
+            .iter()
+            .any(|n| crate::meters_impl::cpu_family(n).is_some());
         let name = crate::meters_impl::METER_NAMES
             .iter()
             .find(|n| {
-                let is_cpu = n.contains("CPU");
+                let is_cpu = crate::meters_impl::cpu_family(n).is_some();
                 !existing.contains(*n) && (!is_cpu || !has_cpu)
             })
             .copied()

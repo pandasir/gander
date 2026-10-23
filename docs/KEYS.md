@@ -108,6 +108,7 @@ names `truss`.
 |---|---|
 | `L` | Switch layout: `panels` ⇄ `htop` (see [LAYOUT.md](LAYOUT.md)) |
 | `Shift+Left` / `Shift+Right` | Move the header meter cursor (htop layout) |
+| `F2` → Header | Change the CPU grid's cores-per-line (`LeftCPUs`, `LeftCPUs2`, `LeftCPUs4`, `LeftCPUs8`, and the right/all variants) |
 | `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter). **htop's `I` inverts the sort order** — see the table above |
 | `K` | Toggle kernel threads |
 | `H` | Toggle one row per thread |

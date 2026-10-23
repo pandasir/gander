@@ -33,6 +33,10 @@ process table in the middle and a live inspector on the right. The inspector
 follows the process you select, so its command line, state, memory and runtime are
 there without leaving the list. Press `L` for the classic full-width `htop` layout.
 
+The `htop` layout puts the cores on the same ladder htop does — one per line up to
+eight cores, then 2, 4 and 8 per line — so a 128-core machine spends nine header
+rows on CPU, not 65. `F2` → Header picks `LeftCPUs8` and friends explicitly.
+
 Sampling runs in the background while the renderer reads a snapshot. For scripts,
 `--json`, `-n`, `--sort`, `--filter` and `--limit` work without the TUI.
 

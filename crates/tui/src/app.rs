@@ -1622,26 +1622,46 @@ impl App {
     // -----------------------------------------------------------------------
 
     /// Exposed for tests and the render harness.
-    pub fn header_height_debug(&self) -> u16 {
-        self.header_height()
+    pub fn header_height_debug(&self, width: u16) -> u16 {
+        self.header_height(width)
     }
 
-    /// Height the header needs: the taller column, plus the screen-tab row.
+    /// Height the header needs for a terminal `width` cells wide: the taller
+    /// column, plus the screen-tab row.
     ///
     /// A fixed height clipped the per-core CPU meters as soon as the machine had
-    /// more than four cores.
-    fn header_height(&self) -> u16 {
+    /// more than four cores. The width matters because the CPU meter lays its
+    /// cores out several to a line: the same 128 cores cost nine rows on a
+    /// 200-cell terminal and many more on a narrow one, and asking for the
+    /// height without the width is what made a 128-core machine demand 65 rows.
+    fn header_height(&self, width: u16) -> u16 {
+        // The same geometry `draw_header` uses: two equal halves with a one-cell
+        // gutter at the end of the left one.
+        let left_w = (width / 2).saturating_sub(1);
+        let right_w = width - width / 2;
         let height_of = |column: crate::meters::HeaderColumn| -> u16 {
+            let column_w = match column {
+                crate::meters::HeaderColumn::Left => left_w,
+                crate::meters::HeaderColumn::Right => right_w,
+            };
             self.meters
                 .iter()
                 .filter(|m| m.column() == column)
-                .map(|m| m.rows().max(1))
+                .map(|m| m.rows(column_w).max(1))
                 .sum()
         };
-        height_of(crate::meters::HeaderColumn::Left)
-            .max(height_of(crate::meters::HeaderColumn::Right))
-            .max(1)
-            + 1
+        let split = self
+            .meters
+            .iter()
+            .any(|m| m.column() == crate::meters::HeaderColumn::Right);
+        let height = if split {
+            height_of(crate::meters::HeaderColumn::Left)
+                .max(height_of(crate::meters::HeaderColumn::Right))
+        } else {
+            // One column: every meter gets the full width.
+            self.meters.iter().map(|m| m.rows(width).max(1)).sum()
+        };
+        height.max(1) + 1
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -1675,7 +1695,7 @@ impl App {
         // The header grows with the core count: 8 cores means two five-row CPU
         // meters, so a fixed four-row header would clip them.
         let header_h = self
-            .header_height()
+            .header_height(area.width)
             .min(area.height.saturating_sub(2).max(1));
         let chunks = Layout::vertical([
             Constraint::Length(header_h),
@@ -1926,7 +1946,7 @@ impl App {
             let Some(meter) = self.meters.get_mut(i) else {
                 continue;
             };
-            let wanted = meter.rows().max(1);
+            let wanted = meter.rows(area.width).max(1);
             if y >= area.bottom() {
                 break;
             }
@@ -3586,12 +3606,20 @@ mod tests {
     }
 
     #[test]
-    fn header_shows_one_row_per_core() {
+    fn every_core_appears_exactly_once() {
         // Regression guard: the header was a fixed four rows, so an 8-core
         // machine only ever showed the aggregate and the rest were clipped.
+        //
+        // The count is now cores *per line* as well as rows: on a wide terminal
+        // htop's ladder puts 2, 4 or 8 cores on a line, so the CPU block costs
+        // `ceil(cores / 2 / per_line) + 1` rows per column instead of one row per
+        // core. Every core still has to be drawn exactly once.
         use gander_core::system::{CpuTimes, SystemSnapshot};
 
-        for cores in [2usize, 4, 8, 16] {
+        // 200 cells: each half is 100 wide, which is 10 per-core cells at the
+        // widest, so the configured 8-column layout is not width-clamped.
+        let width = 200u16;
+        for cores in [2usize, 4, 8, 16, 32, 64, 128] {
             let snapshot = SystemSnapshot {
                 cpu: vec![CpuTimes::default(); cores + 1],
                 cpu_delta: vec![CpuTimes::default(); cores + 1],
@@ -3601,19 +3629,19 @@ mod tests {
             let mut app = App::new(Config::default());
             app.apply_sample(snapshot, Vec::new());
 
+            let (split, per_line) = crate::meters_impl::cpu_layout(cores);
             let cpu_rows: u16 = app
                 .meters
                 .iter()
                 .filter(|m| m.name().starts_with("CPU"))
-                .map(|m| m.rows())
+                .map(|m| m.rows(width / 2))
                 .sum();
 
-            // More than four cores: two meters, each one average row plus half
-            // the cores, so every core appears exactly once.
-            // Four or fewer: a single aggregate row.
-            let expected = if cores > 4 {
+            let expected = if split {
                 let half = cores / 2;
-                (half + 1) + (cores - half + 1)
+                let left = half.div_ceil(per_line as usize) + 1;
+                let right = (cores - half).div_ceil(per_line as usize) + 1;
+                left + right
             } else {
                 1
             };
@@ -3622,6 +3650,32 @@ mod tests {
                 "cores={cores} should render {expected} CPU rows"
             );
         }
+    }
+
+    /// The whole point of the change: a 128-core machine must not spend a
+    /// screenful on the header.
+    #[test]
+    fn a_128_core_header_is_a_header_not_a_screenful() {
+        use gander_core::system::{CpuTimes, SystemSnapshot};
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 129],
+            cpu_delta: vec![CpuTimes::default(); 129],
+            ..Default::default()
+        };
+        let config = Config {
+            layout: "htop".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(config);
+        app.apply_sample(snapshot, Vec::new());
+
+        // htop's ladder: 33-128 cores -> eight per line, split in half.
+        assert_eq!(crate::meters_impl::cpu_layout(128), (true, 8));
+        let h = app.header_height_debug(200);
+        // Eight lines of cores plus the average row, then the tab strip: 13
+        // rows, where one row per core would have wanted 66.
+        assert!(h <= 14, "128 cores took {h} header rows");
     }
 
     #[test]
@@ -3671,7 +3725,7 @@ mod tests {
             .filter(|m| m.name().starts_with("CPU"))
             .collect();
         assert_eq!(cpu_meters.len(), 1);
-        assert_eq!(cpu_meters[0].rows(), 1, "4 cores or fewer show one row");
+        assert_eq!(cpu_meters[0].rows(80), 1, "4 cores or fewer show one row");
     }
 
     #[test]
@@ -3686,17 +3740,27 @@ mod tests {
             };
             let mut app = App::new(Config::default());
             app.apply_sample(snapshot, Vec::new());
-            app.header_height()
+            app.header_height(200)
         };
 
         // Four or fewer cores: one CPU row on the left, three text meters on the
         // right, plus the tab row => 4.
         assert_eq!(height_for(2), 4);
         assert_eq!(height_for(4), 4);
-        // 8 cores: five CPU rows per column, plus the tab row.
+        // 8 cores: `LeftCPUs`/`RightCPUs` one per line, five CPU rows per
+        // column, plus the tab row.
         assert_eq!(height_for(8), 9);
         assert!(height_for(8) > height_for(4), "8 cores must not be clipped");
-        assert!(height_for(16) > height_for(8));
+        // Past eight cores the ladder puts more cores on a line, so the header
+        // grows in steps of one row per doubling rather than one row per core.
+        // 16 and 64 cores both need five CPU rows per column; 128 needs nine.
+        assert_eq!(height_for(16), 9, "16 cores: two per line, five CPU rows");
+        assert_eq!(height_for(64), 9, "64 cores: eight per line, five CPU rows");
+        assert_eq!(height_for(128), 13, "128 cores: eight per line, nine rows");
+        assert!(
+            height_for(128) < 20,
+            "a 128-core header must leave the process list room"
+        );
     }
 
     /// Render `app` into a `w`x`h` buffer and return the text, row by row.

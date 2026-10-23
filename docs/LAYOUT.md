@@ -11,10 +11,15 @@ opinions should be optional. This document explains the opinion.
 Three structural problems, none of which is about colours or fonts:
 
 **1. The meters are horizontal, and horizontal space is not scarce.**
-On a 16-core machine htop's header is 17 rows of CPU bars above a 24-row
+On an 8-core machine htop's header is nine rows of CPU bars above a 24-row
 terminal's process list. The meters consume the one resource the process list
 cannot get back. Vertical space is the scarce axis; horizontal space is what a
 160-column terminal has spare.
+
+(The larger the machine, the less this bites: htop puts 2, 4 or 8 cores on a line
+above eight cores, so 128 cores cost nine rows rather than 65. But nine rows is
+still a third of a 24-row terminal, and the bars are still 90 % empty. See
+[PORTABILITY.md](PORTABILITY.md#cpu-core-display) for the ladder.)
 
 **2. Answering "what is this process doing" requires a mode switch.**
 `w`, `e`, `l`, `x`, `s` each replace the whole screen. You lose your scroll
@@ -23,9 +28,12 @@ sampling view. You then press `Esc` and try to find where you were. The question
 you ask constantly — what is the command line, how much memory exactly, how long
 has it run, is it sleeping or running — cost a screen swap each time.
 
-**3. Every core gets a full row.**
-16 cores means 16 bars, each 25 cells long and 90% empty. The information is real
-but it does not need 16 rows to convey.
+**3. A per-core bar says less than a per-core cell.**
+A bar is one core's percentage, one row tall, and mostly empty. A grid of one
+glyph per core says the same thing in a sixteenth of the space, and says
+something the bars cannot: the *shape* of the load across the machine, at a
+glance. "Four cores pinned, the rest idle" is a pattern in a grid and a scan in a
+column of bars.
 
 ## The layout
 

@@ -483,14 +483,7 @@ impl ThroughputMeter {
             },
         ];
         labelled_bar(
-            self.label,
-            self.value,
-            &self.text,
-            &segments,
-            area,
-            buf,
-            theme,
-            mode,
+            self.label, self.value, &self.text, &segments, area, buf, theme, mode,
         );
     }
 }
@@ -932,7 +925,7 @@ impl Meter for PsiMeter {
     /// Stacked rather than side by side because the four resources are read as a
     /// group — "which one is stalling this machine" is the question, and a
     /// single-row layout would have to abbreviate them into unreadable columns.
-    fn rows(&self) -> u16 {
+    fn rows(&self, _width: u16) -> u16 {
         4
     }
 
@@ -961,7 +954,14 @@ impl Meter for PsiMeter {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, mode: MeterMode) {
         if !self.available {
-            put_str(buf, area.x, area.y, "PSI n/a here", theme.meter_label, area.width);
+            put_str(
+                buf,
+                area.x,
+                area.y,
+                "PSI n/a here",
+                theme.meter_label,
+                area.width,
+            );
             return;
         }
 
@@ -973,7 +973,14 @@ impl Meter for PsiMeter {
             }
             if !row.present {
                 put_str(buf, area.x, y, row.label, theme.meter_label, 4);
-                put_str(buf, area.x + 4, y, "-", theme.meter_value, area.width.saturating_sub(4));
+                put_str(
+                    buf,
+                    area.x + 4,
+                    y,
+                    "-",
+                    theme.meter_value,
+                    area.width.saturating_sub(4),
+                );
                 continue;
             }
 
@@ -989,10 +996,7 @@ impl Meter for PsiMeter {
 
             let tail = text.len() as u16;
             let bar_x = area.x + 4;
-            let bar_w = area
-                .width
-                .saturating_sub(4)
-                .saturating_sub(tail + 1);
+            let bar_w = area.width.saturating_sub(4).saturating_sub(tail + 1);
 
             if mode == MeterMode::Bar && bar_w > 0 {
                 // `some` fills the bar; `full` is drawn on top of it in a brighter
@@ -1126,14 +1130,7 @@ impl Meter for ZramMeter {
             color: theme.zram_orig,
         }];
         labelled_bar(
-            "Zram",
-            self.value,
-            &self.text,
-            &segments,
-            area,
-            buf,
-            theme,
-            mode,
+            "Zram", self.value, &self.text, &segments, area, buf, theme, mode,
         );
     }
 }
@@ -1251,14 +1248,7 @@ impl Meter for ZswapMeter {
             },
         ];
         labelled_bar(
-            "Zswap",
-            self.value,
-            &self.text,
-            &segments,
-            area,
-            buf,
-            theme,
-            mode,
+            "Zswap", self.value, &self.text, &segments, area, buf, theme, mode,
         );
     }
 }
@@ -1474,9 +1464,8 @@ fn hostname() -> String {
             return trimmed.to_string();
         }
     }
-    hostname_syscall().unwrap_or_else(|| {
-        std::env::var("HOSTNAME").unwrap_or_else(|_| String::from("localhost"))
-    })
+    hostname_syscall()
+        .unwrap_or_else(|| std::env::var("HOSTNAME").unwrap_or_else(|_| String::from("localhost")))
 }
 
 #[cfg(unix)]
@@ -1501,22 +1490,51 @@ fn hostname_syscall() -> Option<String> {
     None
 }
 
+/// Cores per line for a machine with `cpu_count` cores, and whether the CPU
+/// meters are split across the two header columns.
+///
+/// This is htop's `Settings_defaultMeters` ladder, and it is the whole answer to
+/// "how does htop fit 128 cores in a header":
+///
+/// | cores | header |
+/// |---|---|
+/// | <= 4 | one `CPU` row |
+/// | 5-8 | `LeftCPUs` / `RightCPUs`, one core per line |
+/// | 9-16 | `LeftCPUs2` / `RightCPUs2`, two per line |
+/// | 17-32 | `LeftCPUs4` / `RightCPUs4`, four per line |
+/// | 33-128 | `LeftCPUs8` / `RightCPUs8`, eight per line |
+/// | > 128 | one `CPU` row |
+///
+/// The top rung is the one that matters here. A 128-core box gets eight cores a
+/// line in two columns, so the CPU block is nine rows instead of sixty-five —
+/// which is the difference between a header and a screenful. Above 128 htop
+/// drops back to the single aggregate row on the grounds that a header taller
+/// than the screen is not a header.
+pub fn cpu_layout(cpu_count: usize) -> (bool, u16) {
+    match cpu_count {
+        0..=4 => (false, 1),
+        5..=8 => (true, 1),
+        9..=16 => (true, 2),
+        17..=32 => (true, 4),
+        33..=128 => (true, 8),
+        _ => (false, 1),
+    }
+}
+
 /// Build the default header: one CPU row, then memory and swap.
 pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
     // Mirrors htop's `Settings.c` default header for `initialCpuCount` cores:
     //   left column  : <CPU left>  Memory  Swap
     //   right column : <CPU right> Tasks   LoadAverage  Uptime
     //
-    // More than four cores splits the CPU meters in half so every core gets a
-    // row (`LeftCPUs` / `RightCPUs`); four or fewer use one aggregate row.
     // Each meter declares its own column, so the order here only matters within
     // a column.
-    let split = cpu_count > 4;
+    let (split, columns) = cpu_layout(cpu_count);
     let half = cpu_count / 2;
 
     let mut meters: Vec<Box<dyn Meter>> = vec![
         if split {
-            Box::new(crate::meters::CpuMeter::left(0..half))
+            Box::new(crate::meters::CpuMeter::left(0..half, columns))
         } else {
             Box::new(crate::meters::CpuMeter::aggregate())
         },
@@ -1525,7 +1543,10 @@ pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
     ];
 
     if split {
-        meters.push(Box::new(crate::meters::CpuMeter::right(half..cpu_count)));
+        meters.push(Box::new(crate::meters::CpuMeter::right(
+            half..cpu_count,
+            columns,
+        )));
     }
 
     meters.push(Box::new(TasksMeter::new()));
@@ -1533,6 +1554,59 @@ pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
     meters.push(Box::new(UptimeMeter::new()));
 
     meters
+}
+
+/// Which part of the CPU family a meter name selects.
+///
+/// htop's names are `CPU`, `AllCPUs`, `AllCPUs2/4/8`, `LeftCPUs`, `RightCPUs`,
+/// `LeftCPUs2/4/8` and `RightCPUs2/4/8`. The digits are the number of cores per
+/// *line*, which is why `LeftCPUs8` is short and `LeftCPUs` is tall. Keeping the
+/// parser here means a config written by htop's setup screen loads as the same
+/// shape it had in htop, rather than collapsing to one core per row.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CpuFamily {
+    /// One row: the average across every core (`CPU`, `CPU_CORES`).
+    Aggregate,
+    /// Every core in this one column (`AllCPUs`, `AllCPUs2/4/8`).
+    All,
+    /// The first half (`LeftCPUs`, `LeftCPUs2/4/8`).
+    Left,
+    /// The second half (`RightCPUs`, `RightCPUs2/4/8`).
+    Right,
+}
+
+/// Parse a CPU-family meter name into its half and its cores-per-line.
+///
+/// The inner `Option` is `None` for the unsuffixed names, which mean "lay the
+/// cores out the way this machine's size asks for". That is deliberate: gander's
+/// shipped config is one file that has to be correct on a 2-core laptop and a
+/// 128-core server, so the unsuffixed names defer to [`cpu_layout`]. A suffixed
+/// name is an explicit choice and is honoured as written, which is what an
+/// htoprc written by htop's own setup screen means.
+///
+/// Returns `None` for any name that is not part of the family, so the caller can
+/// fall through to the other meters.
+pub fn cpu_family(name: &str) -> Option<(CpuFamily, Option<u16>)> {
+    if name == "CPU" || name == "CPU_CORES" {
+        return Some((CpuFamily::Aggregate, None));
+    }
+    let (family, rest) = if let Some(rest) = name.strip_prefix("LeftCPUs") {
+        (CpuFamily::Left, rest)
+    } else if let Some(rest) = name.strip_prefix("RightCPUs") {
+        (CpuFamily::Right, rest)
+    } else if let Some(rest) = name.strip_prefix("AllCPUs") {
+        (CpuFamily::All, rest)
+    } else {
+        return None;
+    };
+    let columns = match rest {
+        "" => None,
+        "2" => Some(2),
+        "4" => Some(4),
+        "8" => Some(8),
+        _ => return None,
+    };
+    Some((family, columns))
 }
 
 /// Build the header from the user's configured meter lists.
@@ -1543,42 +1617,62 @@ pub fn default_header(cpu_count: usize) -> Vec<Box<dyn Meter>> {
 /// starts. An empty header falls back to the default one — an empty header is
 /// more likely a broken file than a deliberate choice, and htop refuses to
 /// render one at all.
-pub fn header_from_config(
-    config: &gander_config::Config,
-    cpu_count: usize,
-) -> Header {
-    let split = cpu_count > 4;
+pub fn header_from_config(config: &gander_config::Config, cpu_count: usize) -> Header {
+    let (split, columns) = cpu_layout(cpu_count);
     let half = cpu_count / 2;
     let mut meters: Vec<Box<dyn Meter>> = Vec::new();
     let mut modes: Vec<MeterMode> = Vec::new();
     let mut sources: Vec<MeterSource> = Vec::new();
 
     let add = |entries: &[gander_config::MeterConfig],
-                   column: HeaderColumn,
-                   meters: &mut Vec<Box<dyn Meter>>,
-                   modes: &mut Vec<MeterMode>,
-                   sources: &mut Vec<MeterSource>| {
+               column: HeaderColumn,
+               meters: &mut Vec<Box<dyn Meter>>,
+               modes: &mut Vec<MeterMode>,
+               sources: &mut Vec<MeterSource>| {
         for (index, entry) in entries.iter().enumerate() {
-            let is_cpu_pair =
-                matches!(entry.name.as_str(), "LeftCPUs" | "RightCPUs" | "CPU_CORES");
+            let cpu = cpu_family(&entry.name);
             let mode = mode_from_name(entry.mode_name());
 
-            let meter: Option<Box<dyn Meter>> = if is_cpu_pair {
-                // `LeftCPUs`/`RightCPUs` are a *pair*: with four cores or fewer
-                // htop collapses them into one aggregate `CPU` row in the left
-                // column and leaves the right column alone. Emitting both would
-                // put two identical CPU rows on a small machine.
-                match (split, column) {
-                    (true, HeaderColumn::Left) => {
-                        Some(Box::new(crate::meters::CpuMeter::left(0..half)))
+            let meter: Option<Box<dyn Meter>> = if let Some((family, explicit)) = cpu {
+                // `CPU` is the aggregate row and nothing else; the `*CPUs` names
+                // are the per-core grids. htop draws the same distinction, which
+                // is why `CPU` is one row on a 128-core machine and `AllCPUs8` is
+                // nine.
+                if family == CpuFamily::Aggregate {
+                    Some(Box::new(crate::meters::CpuMeter::aggregate()))
+                } else if !split {
+                    // Four cores or fewer: htop collapses the split pair into one
+                    // aggregate `CPU` row in the left column and leaves the right
+                    // column alone. Emitting both would put two identical CPU
+                    // rows on a small machine.
+                    match column {
+                        HeaderColumn::Left => Some(Box::new(crate::meters::CpuMeter::aggregate())),
+                        HeaderColumn::Right => None,
                     }
-                    (true, HeaderColumn::Right) => {
-                        Some(Box::new(crate::meters::CpuMeter::right(half..cpu_count)))
-                    }
-                    (false, HeaderColumn::Left) => {
-                        Some(Box::new(crate::meters::CpuMeter::aggregate()))
-                    }
-                    (false, HeaderColumn::Right) => None,
+                } else {
+                    // An unsuffixed name takes the machine's own cores-per-line,
+                    // so one config file is right on a 2-core laptop and a
+                    // 128-core server. A suffixed name is an explicit choice.
+                    let columns = explicit.unwrap_or(columns);
+                    // `AllCPUs*` means every core, in this one column. The split
+                    // names are decided by the column rather than by the name, so
+                    // a hand-edited config cannot show the same cores twice or
+                    // none at all.
+                    let range = match family {
+                        CpuFamily::All => 0..cpu_count,
+                        _ => match column {
+                            HeaderColumn::Left => 0..half,
+                            HeaderColumn::Right => half..cpu_count,
+                        },
+                    };
+                    Some(match column {
+                        HeaderColumn::Left => {
+                            Box::new(crate::meters::CpuMeter::left(range, columns))
+                        }
+                        HeaderColumn::Right => {
+                            Box::new(crate::meters::CpuMeter::right(range, columns))
+                        }
+                    })
                 }
             } else {
                 meter_by_name(&entry.name)
@@ -1680,10 +1774,10 @@ fn mode_from_name(name: &str) -> MeterMode {
 
 /// Build a meter by config name.
 pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
+    if cpu_family(name).is_some() {
+        return Some(Box::new(crate::meters::CpuMeter::aggregate()));
+    }
     Some(match name {
-        "CPU" | "AllCPUs" | "LeftCPUs" | "RightCPUs" | "CPU_CORES" => {
-            Box::new(crate::meters::CpuMeter::aggregate())
-        }
         "Memory" => Box::new(MemoryMeter::new()),
         "Swap" => Box::new(SwapMeter::new()),
         "LoadAverage" | "Load" => Box::new(LoadMeter::new()),
@@ -1704,9 +1798,20 @@ pub fn meter_by_name(name: &str) -> Option<Box<dyn Meter>> {
 }
 
 /// Every meter name the setup screen offers, in htop's order.
+///
+/// The suffixed CPU names are here because they are what htop's own setup screen
+/// offers, and because on a large machine picking `LeftCPUs8` is the difference
+/// between a header and a screenful. The unsuffixed names still defer to the
+/// machine's size, so the shipped default keeps working everywhere.
 pub const METER_NAMES: &[&str] = &[
     "LeftCPUs",
+    "LeftCPUs2",
+    "LeftCPUs4",
+    "LeftCPUs8",
     "RightCPUs",
+    "RightCPUs2",
+    "RightCPUs4",
+    "RightCPUs8",
     "CPU",
     "Memory",
     "Swap",
@@ -1872,6 +1977,84 @@ mod tests {
     }
 
     #[test]
+    fn the_cpu_ladder_matches_htop() {
+        // htop's `Settings_defaultMeters`: the digits are cores per *line*.
+        assert_eq!(cpu_layout(1), (false, 1));
+        assert_eq!(cpu_layout(4), (false, 1));
+        assert_eq!(cpu_layout(5), (true, 1));
+        assert_eq!(cpu_layout(8), (true, 1));
+        assert_eq!(cpu_layout(9), (true, 2));
+        assert_eq!(cpu_layout(16), (true, 2));
+        assert_eq!(cpu_layout(17), (true, 4));
+        assert_eq!(cpu_layout(32), (true, 4));
+        assert_eq!(cpu_layout(33), (true, 8));
+        assert_eq!(cpu_layout(128), (true, 8));
+        // Above 128 htop gives up and shows the average: a header taller than
+        // the screen is not a header.
+        assert_eq!(cpu_layout(129), (false, 1));
+        assert_eq!(cpu_layout(1024), (false, 1));
+    }
+
+    #[test]
+    fn cpu_family_names_parse() {
+        use CpuFamily::*;
+        assert_eq!(cpu_family("CPU"), Some((Aggregate, None)));
+        assert_eq!(cpu_family("CPU_CORES"), Some((Aggregate, None)));
+        assert_eq!(cpu_family("AllCPUs"), Some((All, None)));
+        assert_eq!(cpu_family("AllCPUs8"), Some((All, Some(8))));
+        assert_eq!(cpu_family("LeftCPUs"), Some((Left, None)));
+        assert_eq!(cpu_family("LeftCPUs2"), Some((Left, Some(2))));
+        assert_eq!(cpu_family("RightCPUs4"), Some((Right, Some(4))));
+        // Not the family, and not a CPU name that htop has either.
+        assert_eq!(cpu_family("Memory"), None);
+        assert_eq!(cpu_family("CPUs"), None);
+        assert_eq!(cpu_family("LeftCPUs3"), None);
+    }
+
+    /// A 128-core machine's header must be a header. This is the regression that
+    /// started the change: `LeftCPUs` one per line wanted 65 rows per column.
+    #[test]
+    fn a_128_core_header_is_short() {
+        let header = header_from_config(&gander_config::Config::default(), 128);
+        // The left column is 100 cells on a 200-cell terminal.
+        let h: u16 = header
+            .meters
+            .iter()
+            .filter(|m| m.column() == HeaderColumn::Left)
+            .map(|m| m.rows(100))
+            .sum();
+        // Nine CPU rows (eight lines of cores plus the average), then Memory and
+        // Swap.
+        assert_eq!(h, 11, "left column wanted {h} rows for 128 cores");
+    }
+
+    /// A suffixed name in the config is honoured as written.
+    #[test]
+    fn an_explicit_cores_per_line_is_honoured() {
+        let config = gander_config::Config {
+            meters_left: vec![gander_config::MeterConfig::new("LeftCPUs2", "bar")],
+            meters_right: vec![gander_config::MeterConfig::new("RightCPUs2", "bar")],
+            ..Default::default()
+        };
+        let header = header_from_config(&config, 16);
+        // Eight cores a side, two per line: four lines plus the average.
+        assert_eq!(header.meters[0].rows(100), 5);
+        assert_eq!(header.meters[1].rows(100), 5);
+    }
+
+    /// `CPU` is the aggregate row and nothing else, whatever the machine size.
+    #[test]
+    fn the_cpu_meter_is_one_row_on_any_machine() {
+        let config = gander_config::Config {
+            meters_left: vec![gander_config::MeterConfig::new("CPU", "bar")],
+            meters_right: vec![],
+            ..Default::default()
+        };
+        let header = header_from_config(&config, 128);
+        assert_eq!(header.meters[0].rows(100), 1);
+    }
+
+    #[test]
     fn rate_text_uses_iec_units() {
         assert_eq!(rate_text(0.0), "0 B/s");
         assert_eq!(rate_text(0.4), "0 B/s");
@@ -1919,15 +2102,16 @@ mod tests {
         // Two samples, the second much larger: the bar follows the peak, so the
         // larger sample must be the full-width one.
         m.sample(&snapshot_with_rates((1024.0, 0.0), (0.0, 0.0)));
-        m.sample(&snapshot_with_rates((0.0, 100.0 * 1024.0 * 1024.0), (0.0, 0.0)));
+        m.sample(&snapshot_with_rates(
+            (0.0, 100.0 * 1024.0 * 1024.0),
+            (0.0, 0.0),
+        ));
 
         let area = Rect::new(0, 0, 40, 1);
         let mut buf = Buffer::empty(area);
         m.render(area, &mut buf, &Theme::default(), MeterMode::Bar);
 
-        let filled = (0..40)
-            .filter(|&x| buf[(x, 0)].symbol() == "|")
-            .count();
+        let filled = (0..40).filter(|&x| buf[(x, 0)].symbol() == "|").count();
         assert!(filled > 0, "the peak sample must fill some of the bar");
     }
 
@@ -2035,9 +2219,7 @@ mod m3_meter_tests {
     //! statement.
 
     use super::*;
-    use gander_core::system::{
-        Psi, PsiLine, PsiResource, ZramDevice, ZramInfo,
-    };
+    use gander_core::system::{Psi, PsiLine, PsiResource, ZramDevice, ZramInfo};
 
     fn snap() -> SystemSnapshot {
         let mut s = SystemSnapshot::default();
@@ -2064,10 +2246,12 @@ mod m3_meter_tests {
     }
 
     fn render_line(meter: &mut dyn Meter, width: u16, row: u16, mode: MeterMode) -> String {
-        let area = Rect::new(0, 0, width, meter.rows());
+        let area = Rect::new(0, 0, width, meter.rows(width));
         let mut buf = Buffer::empty(area);
         meter.render(area, &mut buf, &Theme::default(), mode);
-        (0..width).map(|x| buf[(x, row)].symbol().to_string()).collect()
+        (0..width)
+            .map(|x| buf[(x, row)].symbol().to_string())
+            .collect()
     }
 
     #[test]
@@ -2090,7 +2274,7 @@ mod m3_meter_tests {
         let mut m = PsiMeter::new();
         m.sample(&s);
 
-        assert_eq!(m.rows(), 4, "one row per resource");
+        assert_eq!(m.rows(24), 4, "one row per resource");
         let io = render_line(&mut m, 24, 2, MeterMode::Bar);
         assert!(io.contains("IO"), "got {io:?}");
         // `full` is the figure shown in bar mode: it is the one that says the
@@ -2116,7 +2300,10 @@ mod m3_meter_tests {
         m.sample(&s);
         let mem = render_line(&mut m, 24, 1, MeterMode::Bar);
         assert!(mem.contains("MEM"), "got {mem:?}");
-        assert!(mem.contains('-'), "an absent resource shows a dash, got {mem:?}");
+        assert!(
+            mem.contains('-'),
+            "an absent resource shows a dash, got {mem:?}"
+        );
     }
 
     #[test]

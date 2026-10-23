@@ -41,7 +41,7 @@ arrangement, and `layout = "htop"` makes that permanent.
 
 The reasoning is in [LAYOUT.md](LAYOUT.md). In short: htop puts its meters on the
 scarce axis (vertical), makes you leave the list to learn anything about a
-process, and spends a row per core.
+process, and spends a bar per core where a single glyph would say the same thing.
 
 | Area | State |
 |---|---|
@@ -471,6 +471,66 @@ this task's life" rather than "waiting now".
 `ac_etime`, so a sample can show more delay than elapsed time. The percentage is
 clamped to 100: the honest reading is "essentially all of it", and an unclamped
 value would sort above a process that really is stalled all the time.
+
+## v0.6.6 — the 128-core header
+
+A display bug with a real cost: on a machine with many cores, the `htop` layout's
+header was taller than the terminal.
+
+`Meter::rows()` had no width parameter, and `CpuMeter` gave every core its own
+row. A 128-core machine therefore wanted 65 rows per header column; the header was
+clamped to the screen, and the process list — the reason the program exists — got
+whatever was left. htop does not do this, and the reason is not a detail: above
+eight cores it puts 2, 4 or 8 cores on each line.
+
+### The ladder is htop's, not an invention
+
+`meters_impl::cpu_layout` is `Settings_defaultMeters` transcribed:
+
+| cores | header |
+|---|---|
+| ≤ 4 | one `CPU` row |
+| 5–8 | `LeftCPUs` / `RightCPUs`, one core per line |
+| 9–16 | `LeftCPUs2` / `RightCPUs2`, two per line |
+| 17–32 | `LeftCPUs4` / `RightCPUs4`, four per line |
+| 33–128 | `LeftCPUs8` / `RightCPUs8`, eight per line |
+| > 128 | one `CPU` row |
+
+128 cores now cost nine rows instead of 65. Above 128 htop gives up and shows the
+average, on the grounds that a header taller than the screen is not a header.
+
+### The geometry inside a meter is htop's too
+
+Not just the row count: cores fill **down** a column and then across, each column
+is `(w - ncol) / ncol + 1` cells so there is a one-cell gap between neighbours, and
+the cells the integer division drops are handed out one each to the first columns
+(`CPUMeterCommonDraw`). Each cell is drawn by htop's `BarMeterMode_draw`: a fixed
+three-cell caption, `[`, the bar, `]`, and the percentage right-aligned *inside*
+the bar. That last part is what makes `0  [48.2]` fit in ten cells; without it
+eight cores across a 100-cell column would have room for a bar or a number, not
+both.
+
+The percentage is the only part that gives way when a cell is narrow: it drops to
+an integer before it drops out. htop would truncate it to `.4`, which reads as a
+different number.
+
+### Two bugs the change exposed
+
+- **`F2` → Header could not select the grid shapes.** `LeftCPUs8` and friends were
+  not in `METER_NAMES`, and the htoprc importer dropped them as unknown, so an
+  htoprc written by htop's own setup screen imported as one core per row. Both now
+  parse, and `cpu_family` is the single place that knows the naming scheme.
+- **The setup screen's "already has a CPU meter" test was `contains("CPU")`.** With
+  nine CPU names that matches all of them, which is fine by accident — but it also
+  matches a hypothetical `CPUsomething`, and it would have blocked adding any future
+  CPU meter next to an existing one. It now asks `cpu_family`.
+
+### What was deliberately not copied
+
+When a header half is too narrow for even a three-cell caption and two bar borders
+per core, gander merges columns and grows the header; htop draws the fragments. A
+grid of unidentifiable numbers is not a CPU meter. This needs a half narrower than
+40 cells at eight across, which is a 80-column terminal or smaller.
 
 ## Post-M3 fixes
 

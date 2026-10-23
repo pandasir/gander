@@ -239,30 +239,68 @@ does — but they are listed.
 ## CPU core display
 
 htop's default header splits the CPU meters in half above four cores
-(`Settings.c`: `LeftCPUs` / `RightCPUs`), one row per core, so an 8-core machine
-shows rows `0..3` in the left column and `4..7` in the right. gander now does the
-same: `CpuMeter::left(0..half)` and `CpuMeter::right(half..n)`.
+(`Settings.c`: `LeftCPUs` / `RightCPUs`) and lays the cores out several to a
+line. The ladder is the whole answer to "how does htop fit 128 cores in a
+header", so gander copies it verbatim (`meters_impl::cpu_layout`):
 
-Two implementation notes that were bugs first:
+| cores | header |
+|---|---|
+| ≤ 4 | one `CPU` row |
+| 5–8 | `LeftCPUs` / `RightCPUs`, one core per line |
+| 9–16 | `LeftCPUs2` / `RightCPUs2`, two per line |
+| 17–32 | `LeftCPUs4` / `RightCPUs4`, four per line |
+| 33–128 | `LeftCPUs8` / `RightCPUs8`, eight per line |
+| > 128 | one `CPU` row |
+
+A 128-core box therefore spends nine rows on the CPU block, not 65. The
+`suffixed` names are also accepted from a config file (`LeftCPUs8` and friends),
+and `AllCPUs*` puts every core in one column instead of splitting it.
+
+The geometry inside a meter is htop's `CPUMeterCommonDraw` as well: cores fill
+**down** a column and then across, each column is `(w - ncol) / ncol + 1` cells so
+there is a one-cell gap between neighbours, and the cells the integer division
+drops are handed out one each to the first columns. Each cell is drawn by htop's
+`BarMeterMode_draw`: a fixed three-cell caption, `[`, the bar, `]`, and the
+percentage right-aligned *inside* the bar. The percentage is the only part that
+gives way when a cell is narrow, which is how eight cores fit on a line in a
+50-cell column instead of forcing the header taller.
+
+Three implementation notes that were bugs first:
 
 1. **The header height was hard-coded to four rows**, so every core past the third
-   was clipped. `App::header_height()` now sums `Meter::rows()` per column and
-   takes the taller one.
+   was clipped. `App::header_height()` now sums `Meter::rows(width)` per column and
+   takes the taller one. The width is a parameter because the number of lines a
+   core grid needs depends on how many cores fit across it; asking for the height
+   without the width is what made a 128-core machine demand 65 rows.
 2. **The column split was inferred from a meter's name.** With the CPU meters
    ordered `[left, mem, swap, right, tasks, ...]`, splitting at `Tasks` put the
    right-hand CPU block in the *left* column and duplicated it. Meters now declare
    `Meter::column()` explicitly, mirroring htop's `hColumns[0]` / `hColumns[1]`.
 3. **A meter taller than the rows left was dropped whole.** `draw_column_indices`
    tested `y + h > area.bottom()` and `break`ed, so on a 128-core machine — where
-   the CPU meter wants 65 rows and the header is clamped to the terminal — the
+   the CPU meter wanted 65 rows and the header is clamped to the terminal — the
    *first* meter failed the test and the entire header rendered blank. It now
    clips to the rows that remain; the renderers already stop at `area.bottom()`,
    and a one-row slice of a split CPU meter relabels itself `CPU` instead of
    keeping `Avg`, which would read as "the average of what?".
 
 Known difference from htop: htop interleaves cores across the two halves
-(`0,4,1,5,2,6,3,7`); gander splits them contiguously (`0,1,2,3` / `4,5,6,7`).
-Cosmetic, not a data error.
+(`0,4,1,5,2,6,3,7`); gander splits them contiguously (`0,1,2,3` / `4,5,6,7`) and
+then fills each half's grid down-then-across, so the numbers read
+`0,1,2,3` / `4,5,6,7` down the first line rather than `0,4,1,5`. Cosmetic, not a
+data error.
+
+The header height therefore matches htop's at every terminal width: a narrow
+terminal shortens the bars, it does not reflow the grid. Below ~40 columns per
+header half the percentages no longer fit and the cells show core numbers and bars
+only, which is also what htop does; gander keeps an integer percentage wherever
+there is room for one (`[5]` rather than `[ ]`), because a rounded 5 is a reading
+and an empty cell is not.
+
+One deliberate difference, at the very bottom: when a header half is too narrow
+for even a three-cell caption and two bar borders per core (under 40 columns at
+eight across), gander merges columns and grows the header rather than drawing
+fragments of numbers. A grid of unidentifiable numbers is not a CPU meter.
 
 ## Readable units in the header
 

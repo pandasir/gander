@@ -262,8 +262,17 @@ fn meter_name_known(name: &str) -> bool {
         name,
         "LeftCPUs"
             | "RightCPUs"
-            | "CPU"
+            | "LeftCPUs2"
+            | "RightCPUs2"
+            | "LeftCPUs4"
+            | "RightCPUs4"
+            | "LeftCPUs8"
+            | "RightCPUs8"
             | "AllCPUs"
+            | "AllCPUs2"
+            | "AllCPUs4"
+            | "AllCPUs8"
+            | "CPU"
             | "Memory"
             | "Swap"
             | "Tasks"
@@ -552,6 +561,39 @@ column_meter_modes_1=1 2 2 2
         assert_eq!(c.meters_right[1].mode_name(), "text");
         assert_eq!(c.meters_left[1].mode_name(), "text");
         assert_eq!(c.meters_left[0].mode_name(), "bar");
+    }
+
+    /// htop writes the suffixed names once it has picked a grid shape, so an
+    /// htoprc from a large machine must import as that shape rather than as one
+    /// core per line.
+    #[test]
+    fn suffixed_cpu_meters_are_kept() {
+        let text = "\
+column_meters_0=LeftCPUs8 Memory Swap
+column_meter_modes_0=1 1 1
+column_meters_1=RightCPUs8 Tasks LoadAverage Uptime
+column_meter_modes_1=1 2 2 2
+";
+        let c = parse(text);
+        assert_eq!(c.meters_left[0].name, "LeftCPUs8");
+        assert_eq!(c.meters_right[0].name, "RightCPUs8");
+        // Every grid shape htop can write has to survive the import.
+        for name in [
+            "LeftCPUs",
+            "LeftCPUs2",
+            "LeftCPUs4",
+            "LeftCPUs8",
+            "RightCPUs",
+            "RightCPUs2",
+            "RightCPUs4",
+            "RightCPUs8",
+            "AllCPUs",
+            "AllCPUs8",
+        ] {
+            assert!(meter_name_known(name), "{name} must import");
+        }
+        // And a name htop never writes must not.
+        assert!(!meter_name_known("LeftCPUs3"));
     }
 
     #[test]
