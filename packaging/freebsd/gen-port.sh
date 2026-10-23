@@ -175,4 +175,31 @@ make package
 echo "==> installed files"
 make -V PLIST_FILES
 
+# The submission is a git patch against the ports tree, not a tarball: bugzilla
+# attachments are applied with `git am`, which needs the committer identity and a
+# commit message in the expected format.
+echo "==> generating the submission patch"
+# portsdir may be relative (CI clones into the workspace), and this subshell is a
+# separate cd. Resolve it, or `cd sysutils/gander` below is attempted twice.
+portsdir=$(cd "${portsdir}" && pwd)
+( cd "${portsdir}" &&
+  git add "sysutils/gander" &&
+  git -c user.name="${GIT_AUTHOR_NAME:-gander port}" \
+      -c user.email="${GIT_AUTHOR_EMAIL:-839027631@qq.com}" \
+      commit -q -m "[NEW PORT] sysutils/gander: Interactive process viewer for the terminal
+
+An interactive process viewer for the terminal in the tradition of top(1) and
+htop(1). It keeps htop's keybindings and imports an existing htoprc, but puts the
+selected process's details beside the process table instead of on a second
+screen.
+
+Runs on Linux, macOS and FreeBSD from one codebase. The FreeBSD backend reads
+sysctl, libkvm and kinfo_proc directly, so it does not need procfs mounted.
+
+WWW: https://github.com/pandasir/gander" &&
+  git format-patch -1 --stdout > "${here}/packaging/freebsd/gander.sysutils.diff" )
+
+echo "==> patch written to packaging/freebsd/gander.sysutils.diff"
+wc -l "${here}/packaging/freebsd/gander.sysutils.diff"
+
 echo "done: ${portdir}"
