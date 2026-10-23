@@ -16,6 +16,43 @@ The per-release notes below say what shipped; ROADMAP says why.
 
 ---
 
+## v0.6.7 — 2026-10-24
+
+**htop-style task counters on macOS**
+
+The Tasks header now uses htop's compact text layout:
+
+    Tasks: 540, 2386 thr, 0 kthr; 3 running
+
+The change fixes the counters behind the text as well as the presentation.
+Previously, every process whose task information was unreadable contributed an
+assumed thread. On macOS, where ordinary users cannot inspect many system
+processes, that inflated the thread count. The sampler now reads
+PROC_PIDTASKINFO, as htop does, and sums pti_threadnum only for successful reads.
+
+Running means running threads on macOS, not processes with a running thread.
+The header sums pti_numrunning and caps the result at the CPU count. PID 0
+(kernel_task) is included in the process list. The Darwin backend reports
+0 kthr, matching htop's backend, which does not maintain a separate kernel
+thread counter.
+
+The extra permission messages and "running procs" wording are gone. The header
+keeps zero-valued fields and uses the existing theme colors for labels,
+threads, kernel threads, and running tasks. Narrow headers retain a shorter
+summary instead of clipping a word. Linux and FreeBSD supply separate kernel
+thread counts for the same display.
+
+Counters are collected from process task information, independently of expanded
+thread rows. The regression tests compare counts within a single snapshot:
+threads may exit between two samples, so a test that requires the second count
+to be greater was not a valid test of duplicate counting.
+
+Validation: full macOS workspace tests, including live task-info reads and
+PID 0; header text/color/narrow-width tests; FreeBSD cross-target checking;
+clippy with warnings denied.
+
+<sub>[compare v0.6.6...v0.6.7](https://github.com/pandasir/gander/compare/v0.6.6...v0.6.7)</sub>
+
 ## v0.6.6 — 2026-10-23
 
 On a machine with many cores the `htop` layout's header was taller than the
