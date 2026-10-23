@@ -1590,15 +1590,13 @@ pub fn cpu_family(name: &str) -> Option<(CpuFamily, Option<u16>)> {
     if name == "CPU" || name == "CPU_CORES" {
         return Some((CpuFamily::Aggregate, None));
     }
-    let (family, rest) = if let Some(rest) = name.strip_prefix("LeftCPUs") {
-        (CpuFamily::Left, rest)
-    } else if let Some(rest) = name.strip_prefix("RightCPUs") {
-        (CpuFamily::Right, rest)
-    } else if let Some(rest) = name.strip_prefix("AllCPUs") {
-        (CpuFamily::All, rest)
-    } else {
-        return None;
-    };
+    let (family, rest) = [
+        ("LeftCPUs", CpuFamily::Left),
+        ("RightCPUs", CpuFamily::Right),
+        ("AllCPUs", CpuFamily::All),
+    ]
+    .into_iter()
+    .find_map(|(prefix, family)| name.strip_prefix(prefix).map(|rest| (family, rest)))?;
     let columns = match rest {
         "" => None,
         "2" => Some(2),
