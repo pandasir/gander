@@ -62,9 +62,17 @@ out=$(
         # the version ("fix: put_str loop counter lint…"). Use it as the heading
         # text rather than printing the version twice.
         heading="$subject"
-        case "$heading" in
-            "$tag:"*) heading="${heading#"$tag: "}" ;;
-        esac
+        # Strip a leading "v0.1.0: " so the version is not printed twice.
+        #
+        # Written with a literal prefix rather than a `case` pattern of
+        # `"$tag:"*`: bash 3.2 (macOS's /bin/bash) parses the nested quotes in
+        # `heading="${heading#"$tag: "}"` as a syntax error, so the script could
+        # not run at all on the machine it was most likely to be run on. CI has
+        # bash 5 and never noticed.
+        prefix="$tag: "
+        if [ "${heading#"$prefix"}" != "$heading" ]; then
+            heading="${heading#"$prefix"}"
+        fi
 
         printf '## %s' "$tag"
         [[ -n "$date" ]] && printf ' — %s' "$date"

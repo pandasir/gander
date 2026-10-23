@@ -16,6 +16,75 @@ The per-release notes below say what shipped; ROADMAP says why.
 
 ---
 
+## v0.6.6 — 2026-10-23
+
+On a machine with many cores the `htop` layout's header was taller than the
+terminal. A 128-core box wanted 65 rows per header column, the header was clamped
+to the screen, and the process list — the reason the program exists — got whatever
+was left. The fix is not a cap or a scrollbar: it is what htop actually does.
+
+The ladder is htop's
+
+`Meter::rows()` had no width parameter, so a meter could not say how tall it was
+without knowing how wide it would be. It takes the column width now, and
+`CpuMeter` lays its cores out in a grid. `meters_impl::cpu_layout` is htop's
+`Settings_defaultMeters`, transcribed:
+
+    <= 4     one CPU row
+    5-8      LeftCPUs / RightCPUs, one core per line
+    9-16     LeftCPUs2 / RightCPUs2, two per line
+    17-32    LeftCPUs4 / RightCPUs4, four per line
+    33-128   LeftCPUs8 / RightCPUs8, eight per line
+    > 128    one CPU row
+
+128 cores now cost nine rows instead of 65, so the whole header is 13. Above 128
+htop gives up and shows the average, on the grounds that a header taller than the
+screen is not a header; that is copied too.
+
+The geometry inside a meter is htop's as well, not just the row count
+
+Cores fill down a column and then across, each column is `(w - ncol) / ncol + 1`
+cells so there is a one-cell gap between neighbours, and the cells the integer
+division drops are handed out one each to the first columns
+(`CPUMeterCommonDraw`). Each cell is drawn by htop's `BarMeterMode_draw`: a fixed
+three-cell caption, `[`, the bar, `]`, and the percentage right-aligned inside
+the bar. That last part is what makes `0  [48.2]` fit in ten cells; without it,
+eight cores across a 100-cell column have room for a bar or a number, not both.
+
+The percentage is the only part that gives way in a narrow cell: it drops to an
+integer before it drops out, because 48 is a rounded 48.2 while htop's truncation
+would show .2 and read as a different number.
+
+Two bugs the change exposed
+
+  * `F2` -> Header could not select the grid shapes, and the htoprc importer
+    dropped `LeftCPUs8` and friends as unknown names — so an htoprc written by
+    htop's own setup screen imported as one core per row. `cpu_family` now parses
+    the whole family and is the only place that knows the naming scheme.
+  * The setup screen tested "already has a CPU meter" with `contains("CPU")`.
+    That happens to work for nine names and would block adding any future CPU
+    meter; it asks `cpu_family` instead.
+
+Deliberately not copied
+
+When a header half is too narrow for even a three-cell caption and two bar
+borders per core, gander merges columns and grows the header where htop draws the
+fragments. A grid of unidentifiable numbers is not a CPU meter. That needs a half
+under 40 cells at eight across — an 80-column terminal.
+
+Two documentation claims were wrong once this landed and are corrected rather
+than left standing: `LAYOUT.md` argued that htop "spends a row per core" (it does
+not above eight), and `PORTABILITY.md` documented the one-row-per-core behaviour
+as the design.
+
+Tests: the ladder's boundaries including both sides of 128; the name parser; a
+128-core header is 13 rows rather than 66; every core gets a non-overlapping
+cell, filled down then across; the aggregate meter is one row on any machine; a
+suffixed name in the config is honoured; `CPU` stays the aggregate. 182 TUI,
+34 config, 146 core tests, clippy `-D warnings` clean.
+
+<sub>[compare v0.6.5...v0.6.6](https://github.com/pandasir/gander/compare/v0.6.5...v0.6.6)</sub>
+
 ## v0.6.5 — 2026-10-23
 
 **crates.io metadata that never reached the registry**
