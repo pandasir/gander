@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.6"
+version = "0.6.7"
 edition = "2021"
 rust-version = "1.89"
 license = "GPL-2.0-or-later"
@@ -24,9 +24,9 @@ keywords = ["htop", "process-viewer", "system-monitor", "tui", "terminal"]
 categories = ["command-line-utilities", "os"]
 
 [workspace.dependencies]
-gander-core = { version = "0.6.6", path = "crates/core" }
-gander-config = { version = "0.6.6", path = "crates/config" }
-gander-tui = { version = "0.6.6", path = "crates/tui" }
+gander-core = { version = "0.6.7", path = "crates/core" }
+gander-config = { version = "0.6.7", path = "crates/config" }
+gander-tui = { version = "0.6.7", path = "crates/tui" }
 
 # core
 memchr = "2"

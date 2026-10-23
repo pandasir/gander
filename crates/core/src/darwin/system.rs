@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::darwin::{parse, scan, units, DarwinPlatform};
 use crate::row::{Row, RowFlags};
-use crate::system::{CpuTimes, MemInfo, SystemSnapshot};
+use crate::system::{CpuTimes, MemInfo, SystemSnapshot, TaskStats};
 use crate::table::{Cache, Stable};
 use crate::Pid;
 
@@ -181,7 +181,7 @@ impl PlatformSampler for Sampler {
             .prev_at
             .map(|p| at.duration_since(p).as_secs_f64())
             .unwrap_or(0.0);
-        let mut rows = self.read_rows(&procs, interval, now_secs, mem.total);
+        let (mut rows, tasks) = self.read_rows(&procs, interval, now_secs, mem.total);
         if self.show_threads {
             let threads = self.read_threads(&procs, &rows, interval, mem.total);
             rows.extend(threads);
@@ -218,7 +218,7 @@ impl PlatformSampler for Sampler {
             // reports `n/a here` instead of a number nobody can act on.
             disk: crate::system::DiskCounters::default(),
             disk_rate: crate::system::Rate::default(),
-            tasks: task_stats(&rows),
+            tasks,
             // Neither exists on macOS: no `/proc/pressure`, no zram module.
             psi: None,
             zram: crate::system::ZramInfo::default(),
@@ -408,9 +408,10 @@ impl Sampler {
         interval_secs: f64,
         now_secs: u64,
         mem_total: u64,
-    ) -> Vec<Row> {
+    ) -> (Vec<Row>, TaskStats) {
         let mut out = Vec::with_capacity(procs.len());
         let mut next_prev = HashMap::with_capacity(procs.len());
+        let mut tasks = TaskStats::default();
 
         for kp in procs {
             let pid = kp.pid;
@@ -419,7 +420,8 @@ impl Sampler {
             // even for processes we cannot inspect. Only the task counters
             // (CPU time, memory, threads) need the extra call.
             let bsd_details = scan::task_all_info(pid);
-            let ti = bsd_details.map(|all| all.task);
+            let ti = scan::task_info(pid);
+            count_task(&mut tasks, ti, self.cpu_count);
             let details = bsd_details.map(|all| all.bsd).unwrap_or_default();
 
             let start_usec = kp
@@ -479,6 +481,7 @@ impl Sampler {
             let _ = row.comm.try_push_str(&name);
 
             row.time_ticks = cpu_ns / 10_000_000; // hundredths of a second
+            row.nlwp = 0;
             if let Some(t) = ti {
                 row.virt = t.virtual_size;
                 row.res = t.resident_size;
@@ -532,7 +535,7 @@ impl Sampler {
         }
 
         self.prev_rows = next_prev;
-        out
+        (out, tasks)
     }
 
     /// Immutable per-process identity: exe path, command line, kernel-thread flag.
@@ -576,23 +579,14 @@ impl Sampler {
     }
 }
 
-/// Summarise the process table for the `Tasks` meter.
-///
-/// Only process rows are counted. When thread rows are present they are
-/// *additional* rows for the same process, so counting every row would report
-/// both `total` and `threads` roughly twice over: the leader's `nlwp` already
-/// counts its threads, and each thread row contributes one more.
-fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
-    let procs = rows.iter().filter(|r| !r.is_thread);
-    let mut stats = crate::system::TaskStats::default();
-    for row in procs {
-        stats.total += 1;
-        if row.state == b'R' {
-            stats.running += 1;
-        }
-        stats.threads += row.nlwp.max(1) as usize;
+/// Mirror htop's DarwinProcess_setFromLibprocPidinfo and TasksMeter counters.
+/// A failed read contributes a process, but no invented threads or running tasks.
+fn count_task(stats: &mut TaskStats, task: Option<scan::TaskInfo>, cpu_count: usize) {
+    stats.total += 1;
+    if let Some(task) = task {
+        stats.threads += task.threads as usize;
+        stats.running = (stats.running + task.running_threads as usize).min(cpu_count);
     }
-    stats
 }
 
 #[cfg(test)]
@@ -630,20 +624,51 @@ mod tests {
     }
 
     #[test]
-    fn task_stats_count_processes_not_rows() {
-        let mut proc = Row::default_for_test(1);
-        proc.nlwp = 4;
-        proc.state = b'R';
-        let mut thread = Row::default_for_test(1);
-        thread.is_thread = true;
-        thread.thread_id = Some(thread_identity(1, 99));
-        thread.nlwp = 1;
-        thread.state = b'R';
+    fn task_counts_match_htop_darwin() {
+        let mut stats = TaskStats::default();
+        count_task(
+            &mut stats,
+            Some(scan::TaskInfo {
+                threads: 4,
+                running_threads: 2,
+                ..Default::default()
+            }),
+            8,
+        );
+        count_task(&mut stats, None, 8);
+        count_task(&mut stats, Some(scan::TaskInfo::default()), 8);
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.threads, 4);
+        assert_eq!(stats.running, 2, "count running threads, not processes");
+        assert_eq!(stats.kernel_threads, 0);
+    }
 
-        let stats = task_stats(&[proc, thread]);
-        assert_eq!(stats.total, 1, "one process, not two rows");
-        assert_eq!(stats.running, 1, "the thread must not be counted again");
-        assert_eq!(stats.threads, 4, "nlwp already counts the threads");
+    #[test]
+    fn running_tasks_are_capped_at_cpu_count() {
+        let mut stats = TaskStats::default();
+        let task = scan::TaskInfo {
+            threads: 10,
+            running_threads: 6,
+            ..Default::default()
+        };
+        count_task(&mut stats, Some(task), 8);
+        count_task(&mut stats, Some(task), 8);
+        assert_eq!(stats.running, 8);
+        assert_eq!(stats.threads, 20);
+    }
+
+    #[test]
+    fn unreadable_tasks_contribute_only_a_process() {
+        let proc = crate::darwin::kinfo::RawProc {
+            pid: 4_194_303,
+            ..Default::default()
+        };
+        let mut sampler = Sampler::new();
+        let (rows, stats) = sampler.read_rows(&[proc], 0.0, 0, 0);
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.threads, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(rows[0].nlwp, 0);
     }
 
     #[test]

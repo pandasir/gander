@@ -310,7 +310,7 @@ in a header where there is room to spell things out:
 | meter | before | after |
 |---|---|---|
 | Uptime | `Uptime 4-23:13:30` | `Uptime 4d 23h` |
-| Tasks | `Tasks -` (never populated) | `Tasks 484 procs, 1 running, 1824 threads` |
+| Tasks | `Tasks -` (never populated) | `Tasks: 484, 1824 thr, 0 kthr; 1 running` |
 
 `format::duration_verbose` keeps the two most significant units and drops the
 rest: seconds are omitted once days appear, because nobody reading a process
@@ -458,6 +458,22 @@ All three platforms hide information for processes you do not own:
 
 The UI shows `-` rather than failing. This is correct behaviour, not a bug; it is
 also why `htop` runs `sudo htop` when you want full detail.
+
+### macOS task counters
+
+The Tasks meter follows htop's `darwin/DarwinProcess.c` and `TasksMeter.c`:
+
+- Include PID 0 (`kernel_task`) from `KERN_PROC_ALL` in the process count.
+- Sum `pti_threadnum` from successful `proc_pidinfo(PROC_PIDTASKINFO)` calls.
+  Failed reads contribute no threads, rather than an assumed one.
+- Sum `pti_numrunning`, capped at the number of CPUs, for `running`.
+- Report `0 kthr`, as htop's Darwin backend does; there is no independent kernel
+  thread counter in this backend.
+
+The text format is `Tasks: 540, 2386 thr, 0 kthr; 3 running`, without extra
+permission warnings. Counters are collected during the process scan, not from
+expanded UI thread rows. In particular, a hidden thread row must not cause its
+process's thread count to be added twice.
 
 ## Deliberate omissions on macOS
 

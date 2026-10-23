@@ -336,6 +336,37 @@ pub struct TaskInfo {
     pub priority: i32,
 }
 
+/// Task counters from the same libproc flavor used by htop's Darwin backend.
+pub fn task_info(pid: u32) -> Option<TaskInfo> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
+    let want = std::mem::size_of::<libc::proc_taskinfo>() as c_int;
+    // SAFETY: the buffer and size match PROC_PIDTASKINFO's output structure.
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid as c_int,
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            want,
+        )
+    };
+    if got != want {
+        return None;
+    }
+    // SAFETY: libproc returned the full initialized structure.
+    let info = unsafe { info.assume_init() };
+    Some(TaskInfo {
+        user_ns: info.pti_total_user,
+        system_ns: info.pti_total_system,
+        virtual_size: info.pti_virtual_size,
+        resident_size: info.pti_resident_size,
+        faults: info.pti_faults as u32,
+        threads: info.pti_threadnum as u32,
+        running_threads: info.pti_numrunning as u32,
+        priority: info.pti_priority,
+    })
+}
+
 /// The executable path of a process, if readable.
 pub fn exe_path(pid: u32) -> Option<String> {
     let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];

@@ -495,11 +495,15 @@ fn task_stats(rows: &[Row]) -> crate::system::TaskStats {
     let procs = rows.iter().filter(|r| !r.is_thread);
     let mut stats = crate::system::TaskStats::default();
     for row in procs {
-        stats.total += 1;
         if row.state == b'R' {
             stats.running += 1;
         }
-        stats.threads += row.nlwp.max(1) as usize;
+        if row.is_kernel_thread() {
+            stats.kernel_threads += row.nlwp.max(1) as usize;
+        } else {
+            stats.total += 1;
+            stats.threads += row.nlwp.max(1) as usize;
+        }
     }
     stats
 }
@@ -562,5 +566,25 @@ mod platform_trait_tests {
         let (_snap, rows) = PlatformSampler::sample(&mut s);
         assert!(!rows.is_empty(), "/proc must yield processes");
         assert_eq!(PlatformSampler::cache_len(&s), <crate::Sampler>::cache_len(&s));
+    }
+}
+
+#[cfg(test)]
+mod task_counter_tests {
+    use super::*;
+
+    #[test]
+    fn userland_and_kernel_threads_are_separate() {
+        let mut process = Row::default_for_test(1);
+        process.nlwp = 4;
+        let mut kernel = Row::default_for_test(2);
+        kernel.flags = kernel.flags.insert(RowFlags::KERNEL_THREAD);
+        kernel.nlwp = 3;
+        let mut thread = process.clone();
+        thread.is_thread = true;
+        let stats = task_stats(&[process, kernel, thread]);
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.threads, 4);
+        assert_eq!(stats.kernel_threads, 3);
     }
 }

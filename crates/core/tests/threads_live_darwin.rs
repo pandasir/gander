@@ -291,7 +291,7 @@ fn thread_cpu_never_exceeds_the_process_total() {
 #[test]
 fn task_stats_ignore_thread_rows() {
     let mut s = gander_core::Sampler::default();
-    let (snap_off, _rows) = s.sample();
+    s.sample();
 
     PlatformSampler::set_scan_options(&mut s, gander_core::ScanOptions::none().with_threads(true));
     let (snap_on, rows) = s.sample();
@@ -301,19 +301,37 @@ fn task_stats_ignore_thread_rows() {
         snap_on.tasks.total, process_rows,
         "Tasks.total must count processes, not rows"
     );
-    assert!(
-        snap_on.tasks.threads >= snap_off.tasks.threads,
-        "the thread count must not shrink when thread rows are added"
-    );
-    // The count is a property of the machine, so turning rows on must not change
-    // it by more than processes starting/stopping in between.
-    let diff = snap_on.tasks.threads.abs_diff(snap_off.tasks.threads);
-    assert!(
-        diff < snap_off.tasks.threads.max(1) / 2,
-        "thread count jumped from {} to {} just by enabling rows",
-        snap_off.tasks.threads,
-        snap_on.tasks.threads
-    );
+    // Compare one snapshot: thread counts can legitimately fall between samples.
+    let threads: usize = rows
+        .iter()
+        .filter(|row| !row.is_thread)
+        .map(|row| row.nlwp.max(0) as usize)
+        .sum();
+    assert_eq!(snap_on.tasks.threads, threads);
+    assert!(snap_on.tasks.running <= snap_on.cpu_count());
+    assert_eq!(snap_on.tasks.kernel_threads, 0);
+}
+
+#[test]
+fn task_counts_include_pid_zero_and_skip_unreadable_threads() {
+    let mut sampler = gander_core::Sampler::default();
+    let (snapshot, rows) = sampler.sample();
+    assert!(rows.iter().any(|row| row.pid == 0), "include kernel_task like htop");
+    let threads: usize = rows.iter().map(|row| row.nlwp.max(0) as usize).sum();
+    assert_eq!(snapshot.tasks.threads, threads);
+    if unsafe { libc::geteuid() } != 0 && scan::task_info(1).is_none() {
+        let launchd = rows.iter().find(|row| row.pid == 1).expect("launchd is listed");
+        assert_eq!(launchd.nlwp, 0, "a denied read must not invent a thread");
+    }
+    assert_eq!(snapshot.tasks.total, rows.len());
+}
+
+#[test]
+fn task_info_uses_the_htop_libproc_flavor() {
+    let info = scan::task_info(std::process::id()).expect("own task info is readable");
+    assert!(info.threads > 0);
+    assert!(info.resident_size > 0);
+    assert!(info.running_threads <= info.threads);
 }
 
 // ---------------------------------------------------------------------------

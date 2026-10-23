@@ -512,7 +512,7 @@ pub fn draw_inspector(
         ("TIME", time),
         ("UP", elapsed),
         ("NICE", row.nice.to_string()),
-        ("THR", row.nlwp.max(1).to_string()),
+        ("THR", row.nlwp.max(0).to_string()),
     ];
     for (label, value) in facts {
         if y >= bottom {

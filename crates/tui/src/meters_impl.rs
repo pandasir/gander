@@ -1,12 +1,12 @@
 //! Memory, swap, load, uptime, task and clock meters.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
 
 use gander_core::format::{bytes_human, duration_verbose};
-use gander_core::system::SystemSnapshot;
+use gander_core::system::{SystemSnapshot, TaskStats};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
 
 use crate::meters::{
     draw_graph, draw_segments, put_str, HeaderColumn, Meter, MeterMode, Segment, GRAPH_HISTORY,
@@ -661,6 +661,7 @@ simple_meter!(
 /// Process-count summary with several lengths, so a narrow header does not clip
 /// a word in half.
 pub struct TasksMeter {
+    tasks: TaskStats,
     verbose: String,
     medium: String,
     terse: String,
@@ -671,6 +672,7 @@ pub struct TasksMeter {
 impl TasksMeter {
     pub fn new() -> Self {
         Self {
+            tasks: TaskStats::default(),
             verbose: String::from("-"),
             medium: String::from("-"),
             terse: String::from("-"),
@@ -705,11 +707,13 @@ impl Meter for TasksMeter {
 
     fn sample(&mut self, snapshot: &SystemSnapshot) {
         let tasks = &snapshot.tasks;
+        self.tasks = *tasks;
         self.verbose = task_summary(tasks);
         self.medium = task_summary_medium(tasks);
-        self.terse = format!("{} procs", tasks.total);
-        self.value = if tasks.total > 0 {
-            tasks.running as f32 / tasks.total as f32
+        self.terse = tasks.total.to_string();
+        let total_tasks = tasks.total + tasks.threads + tasks.kernel_threads;
+        self.value = if total_tasks > 0 {
+            tasks.running as f32 / total_tasks as f32
         } else {
             0.0
         };
@@ -720,14 +724,37 @@ impl Meter for TasksMeter {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode) {
-        put_str(buf, area.x, area.y, "Tasks", theme.meter_label, 6);
+        put_str(
+            buf, area.x, area.y, "Tasks: ", theme.meter_label, area.width.min(7),
+        );
         // Only the rendered width is known here, so pick the longest variant that
         // fits instead of letting `put_str` cut a word in half.
-        let room = area.width.saturating_sub(6) as usize;
+        let room = area.width.saturating_sub(7) as usize;
+        if self.verbose.len() <= room {
+            let tasks = self.tasks;
+            let line = Line::from(vec![
+                Span::styled(tasks.total.to_string(), theme.meter_label),
+                Span::styled(", ", theme.meter_label),
+                Span::styled(
+                    format!("{} thr", tasks.threads),
+                    theme.meter_value.fg(theme.cpu_normal),
+                ),
+                Span::styled(", ", theme.meter_label),
+                Span::styled(
+                    format!("{} kthr", tasks.kernel_threads),
+                    theme.row_kernel_thread,
+                ),
+                Span::styled("; ", theme.meter_label),
+                Span::styled(tasks.running.to_string(), theme.meter_value.fg(theme.cpu_normal)),
+                Span::styled(" running", theme.meter_label),
+            ]);
+            buf.set_line(area.x + 7, area.y, &line, room as u16);
+            return;
+        }
         let text = self.text_for_width(room);
         put_str(
             buf,
-            area.x + 6,
+            area.x + 7,
             area.y,
             &text,
             theme.meter_value,
@@ -757,27 +784,17 @@ impl TasksMeter {
     }
 }
 
-/// `472 procs, 3 running, 1664 threads`
+/// htop's text layout, without the `Tasks: ` caption.
 pub fn task_summary(tasks: &gander_core::system::TaskStats) -> String {
-    let mut text = format!("{} procs", tasks.total);
-    if tasks.running > 0 {
-        let _ = write!(text, ", {} running", tasks.running);
-    }
-    // Only mention threads when they differ from the process count, otherwise it
-    // is noise on single-threaded systems.
-    if tasks.threads > tasks.total {
-        let _ = write!(text, ", {} threads", tasks.threads);
-    }
-    text
+    format!(
+        "{}, {} thr, {} kthr; {} running",
+        tasks.total, tasks.threads, tasks.kernel_threads, tasks.running
+    )
 }
 
-/// `472 procs, 3 running`, `472 procs, 3 run`
+/// Preserve the running count when the full htop summary cannot fit.
 pub fn task_summary_medium(tasks: &gander_core::system::TaskStats) -> String {
-    let mut text = format!("{} procs", tasks.total);
-    if tasks.running > 0 {
-        let _ = write!(text, ", {} run", tasks.running);
-    }
-    text
+    format!("{}; {} running", tasks.total, tasks.running)
 }
 
 // ---------------------------------------------------------------------------
@@ -2155,24 +2172,66 @@ mod tests {
             total: 484,
             running: 1,
             threads: 1824,
+            ..Default::default()
         };
-        assert_eq!(task_summary(&t), "484 procs, 1 running, 1824 threads");
+        assert_eq!(task_summary(&t), "484, 1824 thr, 0 kthr; 1 running");
 
-        // No running processes: omit the clause rather than printing ", 0".
+        // Keep zero-valued fields, as htop does.
         let t = TaskStats {
             total: 12,
             running: 0,
             threads: 12,
+            ..Default::default()
         };
-        assert_eq!(task_summary(&t), "12 procs");
+        assert_eq!(task_summary(&t), "12, 12 thr, 0 kthr; 0 running");
 
-        // Threads equal to the process count is noise; leave it out.
+        // Kernel threads have their own field.
         let t = TaskStats {
             total: 5,
             running: 2,
             threads: 5,
+            kernel_threads: 3,
         };
-        assert_eq!(task_summary(&t), "5 procs, 2 running");
+        assert_eq!(task_summary(&t), "5, 5 thr, 3 kthr; 2 running");
+    }
+
+    #[test]
+    fn tasks_meter_matches_htop_text_and_colors() {
+        let mut snapshot = sample_snapshot();
+        snapshot.tasks = TaskStats {
+            total: 540,
+            threads: 2386,
+            kernel_threads: 0,
+            running: 3,
+        };
+        let mut meter = TasksMeter::new();
+        meter.sample(&snapshot);
+        let theme = Theme::default();
+        let area = Rect::new(0, 0, 64, 1);
+        let mut buf = Buffer::empty(area);
+        meter.render(area, &mut buf, &theme, MeterMode::Text);
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert_eq!(text.trim_end(), "Tasks: 540, 2386 thr, 0 kthr; 3 running");
+        assert_eq!(buf[(7, 0)].fg, theme.meter_label.fg.unwrap());
+        assert_eq!(buf[(text.find("2386").unwrap() as u16, 0)].fg, theme.cpu_normal);
+        assert_eq!(buf[(text.find("3 running").unwrap() as u16, 0)].fg, theme.cpu_normal);
+    }
+
+    #[test]
+    fn tasks_meter_fits_narrow_headers() {
+        let mut snapshot = sample_snapshot();
+        snapshot.tasks.total = 540;
+        snapshot.tasks.threads = 2386;
+        snapshot.tasks.running = 3;
+        let mut meter = TasksMeter::new();
+        meter.sample(&snapshot);
+        assert_eq!(meter.text_for_width(20), "540; 3 running");
+        assert_eq!(meter.text_for_width(4), "540");
+        for width in [0, 1, 6, 7, 12, 20] {
+            let area = Rect::new(0, 0, width, 1);
+            let mut buf = Buffer::empty(area);
+            meter.render(area, &mut buf, &Theme::default(), MeterMode::Text);
+        }
     }
 
     #[test]

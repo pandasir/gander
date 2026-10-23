@@ -32,6 +32,15 @@ on Linux **and macOS**.
 | 300 tests on macOS, 279 on Linux, zero clippy warnings on both | done |
 | Live Linux verification in a container, incl. affinity/ioprio syscalls | done, see [PORTABILITY.md](PORTABILITY.md) |
 
+## v0.6.7: task counters
+
+The macOS Tasks meter uses htop's libproc counters: successful `pti_threadnum`
+reads contribute to `thr`, and `pti_numrunning` contributes to `running`, capped
+at the CPU count. Unreadable processes no longer add an assumed thread, PID 0 is
+included, and the header uses htop's compact `Tasks: ..., ... thr, ... kthr; ...
+running` format. Linux and FreeBSD report kernel threads separately. Counters
+are collected independently of expanded thread rows.
+
 ## The interface
 
 The default layout is **`panels`**: a vertical system column, a leaner process

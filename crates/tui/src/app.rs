@@ -1804,7 +1804,7 @@ impl App {
                 &self.snapshot,
                 self.cpu_history.make_contiguous(),
                 (
-                    self.table.rows.iter().filter(|r| !r.is_thread).count(),
+                    self.snapshot.tasks.total,
                     self.snapshot.tasks.running,
                     self.snapshot.tasks.threads,
                 ),

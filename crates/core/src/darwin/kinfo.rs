@@ -89,7 +89,7 @@ fn read_u64(b: &[u8], off: usize) -> u64 {
 
 fn decode(rec: &[u8]) -> Option<RawProc> {
     let pid = read_i32(rec, OFF_PID);
-    if pid <= 0 {
+    if pid < 0 {
         return None;
     }
     let mut comm = [0u8; COMM_LEN];
@@ -259,6 +259,12 @@ pub fn validate() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pid_zero_is_included_like_htop() {
+        let record = [0u8; STRIDE];
+        assert_eq!(decode(&record).expect("PID 0 is valid").pid, 0);
+    }
 
     #[test]
     fn layout_offsets_are_consistent() {

@@ -491,15 +491,17 @@ impl MemInfo {
 /// Process-table counts, so meters can summarise processes without reaching into
 /// the table themselves.
 ///
-/// htop prints `Tasks: 472, 1664 thr, 1 running`; these are those numbers.
+/// htop prints `Tasks: 472, 1664 thr, 0 kthr; 1 running`.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct TaskStats {
-    /// Rows in the process table.
+    /// Processes, excluding additional thread rows.
     pub total: usize,
-    /// Processes in state `R`.
+    /// Running tasks; on macOS this is the running thread count, capped at CPUs.
     pub running: usize,
-    /// Sum of `NLWP` across the table.
+    /// Userland threads, including main threads.
     pub threads: usize,
+    /// Kernel threads reported separately by the backend (always 0 on macOS).
+    pub kernel_threads: usize,
 }
 
 #[derive(Copy, Clone, Default, Debug)]
