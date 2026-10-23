@@ -29,6 +29,10 @@ out=$(
     printf 'not maintained here, they are *derived* from the tag. The same text is what\n'
     printf '`git show v0.6.0` prints and what the GitHub release shows, because all three\n'
     printf 'read it from the same place.\n\n'
+    printf 'Where a tag shipped with a statement that was later found to be wrong, a\n'
+    printf '**Correction** block follows it, quoting the file in `errata/` that records the\n'
+    printf 'correction. That is the one addition to the verbatim text, and it is always\n'
+    printf 'labelled.\n\n'
     printf 'The reasoning behind each milestone — why a feature is shaped the way it is, and\n'
     printf 'what a live kernel taught the implementation — is in [docs/ROADMAP.md](docs/ROADMAP.md).\n'
     printf 'The per-release notes below say what shipped; ROADMAP says why.\n\n'
@@ -83,6 +87,16 @@ out=$(
         if [[ -n "$prev" ]]; then
             printf '<sub>[compare %s...%s](https://github.com/%s/compare/%s...%s)</sub>\n\n' \
                 "$prev" "$tag" "$repo" "$prev" "$tag"
+        fi
+
+        # A tag message cannot be edited once the tag has shipped, so a wrong
+        # statement in one would repeat here forever. errata/<tag>.md holds the
+        # correction and is printed after the verbatim notes, labelled as an
+        # addition rather than silently mixed into text that claims to be the tag.
+        errata="errata/$tag.md"
+        if [[ -f "$errata" ]]; then
+            printf '> **Correction (%s).** %s\n\n' \
+                "$(basename "$errata" .md)" "$(tr '\n' ' ' < "$errata" | sed 's/  */ /g; s/ *$//')"
         fi
     done
 )

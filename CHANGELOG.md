@@ -5,11 +5,51 @@ not maintained here, they are *derived* from the tag. The same text is what
 `git show v0.6.0` prints and what the GitHub release shows, because all three
 read it from the same place.
 
+Where a tag shipped with a statement that was later found to be wrong, a
+**Correction** block follows it, quoting the file in `errata/` that records the
+correction. That is the one addition to the verbatim text, and it is always
+labelled.
+
 The reasoning behind each milestone — why a feature is shaped the way it is, and
 what a live kernel taught the implementation — is in [docs/ROADMAP.md](docs/ROADMAP.md).
 The per-release notes below say what shipped; ROADMAP says why.
 
 ---
+
+## v0.6.5 — 2026-10-23
+
+**crates.io metadata that never reached the registry**
+
+A patch release with no behaviour change. Its only content is the metadata fixed
+in 74e2ba0, which crates.io could not show because a crate's search fields are
+frozen at upload time.
+
+What changed on crates.io:
+
+  * keywords lead with `htop`. They used to be `['monitor','process','system','tui']`,
+    none of which is the word someone looking for this category types. `htop` is.
+  * `gander-bin`'s description said "Executable entry point for gander", which
+    describes the crate's role in the workspace and not the program. It now says
+    what it is: a cross-platform interactive process viewer for Linux, macOS and
+    FreeBSD.
+  * `homepage` points at the project site rather than back at the repository.
+
+The installed command is still `gander`; the crates.io package is still
+`gander-bin`, because `gander` on crates.io is an unrelated crate.
+
+Why this is worth a version of its own: before it, searching crates.io for "htop"
+did not surface the package in the first twenty results, in a category where the
+packages that do appear are mostly single-platform or low-download. The archive of
+0.6.5 is otherwise byte-for-byte the behaviour of 0.6.4 — if you are on 0.6.4 and
+installed it from a release archive or a package, there is nothing here to upgrade
+for.
+
+Nothing else changed. `git diff v0.6.4..v0.6.5 -- crates/` touches only the version
+string.
+
+<sub>[compare v0.6.4...v0.6.5](https://github.com/pandasir/gander/compare/v0.6.4...v0.6.5)</sub>
+
+> **Correction (v0.6.5).** The notes above say `homepage` changed to point at the project site. It did not: `Cargo.toml` has `homepage = "https://github.com/pandasir/gander"` in both v0.6.4 and v0.6.5, and it has never pointed anywhere else. What changed is `keywords` (now led by `htop`) and `gander-bin`'s `description`. `git diff v0.6.4..v0.6.5 -- Cargo.toml` shows the whole change. This cannot be fixed in the tag itself. Moving a tag that shipped a working release would make two different archives share a name, so the correction is recorded here instead.
 
 ## v0.6.4 — 2026-10-22
 
