@@ -3,6 +3,27 @@
 Release sources of truth are the annotated `v*` tags. Update every version and
 checksum below when cutting a release.
 
+## Are the documented channels live?
+
+Every install command the READMEs and the landing page print is a promise. When a
+channel is missing — an AUR package that was never pushed, a tap whose formula
+does not resolve — a reader who follows the docs gets an error from a command we
+told them to run, and nothing in the build notices, because the code is fine.
+
+```bash
+packaging/check-channels.sh            # network checks + .SRCINFO
+packaging/check-channels.sh --offline  # .SRCINFO only, no network
+```
+
+The script fails when a command in `README.md` or `site/index.html` has no live
+channel behind it, and when `packaging/aur/.SRCINFO` disagrees with the
+`PKGBUILD` beside it. CI runs it in the `channels` job.
+
+It currently reports `yay -S gander` as a failure: the AUR package has not been
+pushed yet. That is the intended behaviour — the check exists so the gap cannot
+be forgotten — and it is why the README claim has to be made true or removed
+before the next release.
+
 ## crates.io
 
 The registry name `gander` is already occupied by an unrelated, yanked crate, so
@@ -236,16 +257,57 @@ gpg --verify <(curl -fsSL https://pandasir.github.io/gander/dists/stable/InRelea
 ## AUR
 
 `packaging/aur/` contains the `PKGBUILD` and `.SRCINFO` for the `gander` AUR
-package. Register an AUR account and add an SSH public key, then:
+package. `gander` was unclaimed on the AUR as of 2026-10-23.
+
+### Before pushing
+
+`.SRCINFO` is generated, not hand-written, and the AUR rejects a push whose
+`.SRCINFO` disagrees with its `PKGBUILD`. Regenerate it from the PKGBUILD in the
+same commit that changes the PKGBUILD:
 
 ```bash
-git clone ssh://aur@aur.archlinux.org/gander.git /tmp/aur-gander
+cd packaging/aur
+makepkg --printsrcinfo > .SRCINFO
+```
+
+The package builds and installs on x86_64 and aarch64. Both were verified end to
+end in a clean `archlinux` container (`makepkg --syncdeps`, then `pacman -U`, then
+`gander --version` and `gander --json --limit 2`).
+
+Note that `Cargo.toml` sets `strip = true` for the release profile. The PKGBUILD
+overrides that with `CARGO_PROFILE_RELEASE_STRIP=none` so the `-debug` package
+makepkg splits off carries real debuginfo instead of a 3 KB stub; makepkg strips
+the binary itself.
+
+### Pushing
+
+The first push creates the package. The AUR has no web form for a new package:
+the name is created by the first push to a repository with that name, so the
+clone below is expected to warn that it is empty.
+
+```bash
+# One-time: register at https://aur.archlinux.org/register/ and paste the
+# contents of the public key into My Account -> SSH Public Key.
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_aur   # if you have none
+cat ~/.ssh/id_ed25519_aur.pub                     # paste this into the AUR
+
+git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/gander.git /tmp/aur-gander
 cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO /tmp/aur-gander/
 cd /tmp/aur-gander
 git add PKGBUILD .SRCINFO
 git commit -m "gander 0.6.4"
 git push
 ```
+
+A push that only updates an existing package does not need the `clone` line.
+After the push, the package page is live immediately; `yay -S gander` works once
+the AUR's cgit index picks up the commit, which is normally a few seconds.
+
+`ssh -T aur@aur.archlinux.org` is the cheapest way to test the key before a push.
+With a registered key it prints a welcome line and exits; unregistered keys get
+`Permission denied (publickey)` even though the host is reachable. Only the
+second message means the key is not on the account — a failed TCP connection is a
+network problem, not an authentication one.
 
 Users install with:
 

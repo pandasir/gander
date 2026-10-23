@@ -1,5 +1,5 @@
 pkgbase = gander
-	pkgdesc = Cross-platform interactive process viewer
+	pkgdesc = Cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD
 	pkgver = 0.6.4
 	pkgrel = 1
 	url = https://github.com/pandasir/gander

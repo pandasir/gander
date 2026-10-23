@@ -119,6 +119,23 @@ jobs:
           '
           echo "checked $deb and $rpm"
 
+  # Every install command the docs print has to be a command that works. This is
+  # a cheap network check, and it is here because the alternative is learning
+  # about a missing channel from a user who followed the README into an error.
+  # It is not in the `packages` job: that one builds artifacts on every push,
+  # while this only asks whether the published channels answer.
+  #
+  # `--offline` is not used here on purpose: the network half is the half that
+  # catches the drift this job exists for. `packaging/check-channels.sh --offline`
+  # validates the committed `.SRCINFO` against its `PKGBUILD` without a network,
+  # and is the form to run on a machine that is offline.
+  channels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the documented install channels
+        run: packaging/check-channels.sh
+
   # FreeBSD has no GitHub-hosted runner, so the backend is checked two ways.
   #
   # This job only *compiles* it, which is cheap and catches the common

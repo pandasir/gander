@@ -1,8 +1,8 @@
-# Maintainer: gander contributors <https://github.com/pandasir/gander>
+# Maintainer: panda <839027631@qq.com>
 pkgname=gander
 pkgver=0.6.4
 pkgrel=1
-pkgdesc="Cross-platform interactive process viewer"
+pkgdesc="Cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD"
 arch=('x86_64' 'aarch64')
 url="https://github.com/pandasir/gander"
 license=('GPL-2.0-or-later')
@@ -20,6 +20,11 @@ build() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR="$srcdir/target"
+  # Cargo.toml sets `strip = true` for the release profile, which leaves the
+  # `-debug` package that makepkg splits off with nothing but a 3 KB stub. Ask
+  # cargo to keep the symbols and let makepkg's own stripping produce the real
+  # debuginfo split.
+  export CARGO_PROFILE_RELEASE_STRIP=none
   cargo build --release --locked --package gander-bin
 }
 
