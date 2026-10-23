@@ -95,6 +95,32 @@ jobs:
           fi
           echo "publishing gander ${declared}"
 
+          # The published package index has to be at least as new as the page.
+          #
+          # This workflow reads the `repo` branch, which is written by a tag run of
+          # release.yml. On a release, `main` is pushed before the tag, so this
+          # workflow starts first and can finish holding a `repo` snapshot from
+          # *before* the new packages were merged — and Pages keeps the newest
+          # deployment, so publishing that snapshot replaces the new packages with
+          # the previous ones. v0.6.5 shipped exactly that way: the page said 0.6.5
+          # while `dists/` served 0.6.4, and both runs were green.
+          #
+          # Failing here is the honest outcome: the page and the packages have to
+          # describe the same release, and the fix is to re-run this workflow once
+          # publish-repo has landed.
+          if [ -f repo-tree/dists/stable/main/binary-amd64/Packages ]; then
+            newest=$(grep '^Version:' repo-tree/dists/stable/main/binary-amd64/Packages \
+                     | sed 's/^Version: //; s/-[0-9]*$//' | sort -V | tail -1)
+            if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$declared" | sort -V | tail -1)" != "$newest" ]; then
+              echo "::error::the repo branch has packages up to ${newest}, but this page publishes ${declared}"
+              echo "The release packages have not been merged yet (or were merged after"
+              echo "this run checked out). Re-run this workflow; do not deploy a page that"
+              echo "advertises a version the package repository does not serve."
+              exit 1
+            fi
+            echo "package index is at ${newest}, page at ${declared}"
+          fi
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
