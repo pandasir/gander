@@ -174,3 +174,47 @@ Description: cross-platform interactive process viewer
  This package contains the statically linked binary, so it has no runtime
  dependencies and does not depend on the host's glibc.
 
+Package: gander
+Architecture: amd64
+Version: 0.6.7-1
+Priority: optional
+Section: utils
+Maintainer: gander contributors <gander-maintainers@users.noreply.github.com>
+Installed-Size: 1736
+Filename: pool/main/g/gander/gander_0.6.7-1_amd64.deb
+Size: 647684
+MD5sum: e636d954b456d82ad8c54056a721d9ce
+SHA1: b49799973179ebe93ca40788404165bb2ff6a5b4
+SHA256: ea26818f9dfd7059e70dc85f51455fce4ecd00221af4868165a324a510be09e6
+SHA512: 9b20e78f2c3e786d214d90d69454c8f5a6e242a12ac3e8d9ca195474684424cb1871ca64d056a9193de71abf2e6cdd74fa4fadbb4aefd8463708d6a1d7ba77da
+Homepage: https://github.com/pandasir/gander
+Description: cross-platform interactive process viewer
+ gander is an interactive process viewer for Linux, macOS and FreeBSD in the
+ spirit of htop: a process table with sorting, filtering, tree view, per-process
+ signals, CPU affinity and I/O priority, plus header meters and a batch mode.
+ .
+ This package contains the statically linked binary, so it has no runtime
+ dependencies and does not depend on the host's glibc.
+
+Package: gander
+Architecture: arm64
+Version: 0.6.7-1
+Priority: optional
+Section: utils
+Maintainer: gander contributors <gander-maintainers@users.noreply.github.com>
+Installed-Size: 1536
+Filename: pool/main/g/gander/gander_0.6.7-1_arm64.deb
+Size: 564392
+MD5sum: 5aa0ec5763916d2bf4d72350f68367a8
+SHA1: 4f6c5e6e71e615af05e83213c8c493bd6f2b7f56
+SHA256: b88a45e029c0367d965c28cc75f00ab021afdc7565a098059be92001be0c8bbe
+SHA512: 527df2456e446fbe76d19c225bbdd4d6ce931b283691c675341038506fc28f2ab1790208d692b274d22921e98b487c9049b0d4251c4edf5f6cbd37f84dcf35f4
+Homepage: https://github.com/pandasir/gander
+Description: cross-platform interactive process viewer
+ gander is an interactive process viewer for Linux, macOS and FreeBSD in the
+ spirit of htop: a process table with sorting, filtering, tree view, per-process
+ signals, CPU affinity and I/O priority, plus header meters and a batch mode.
+ .
+ This package contains the statically linked binary, so it has no runtime
+ dependencies and does not depend on the host's glibc.
+
