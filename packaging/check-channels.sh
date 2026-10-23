@@ -322,6 +322,32 @@ case "$aur_state" in
     ;;
 esac
 
+# docs/待办.md is where the blocked work is tracked, and it names files by path. A
+# renamed patch or script leaves a reader hunting for something that is not there,
+# which is exactly the kind of drift this script exists to catch.
+todo=docs/待办.md
+if [ -f "$todo" ]; then
+  missing=""
+  for path in $(grep -oE '`[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+`' "$todo" | tr -d '`' | sort -u); do
+    # Only repository files. Bare host/path strings like freshports.org/... appear
+    # in prose and are not files; every real path here starts with a known top-level
+    # directory.
+    case "$path" in
+      http*|.*) continue ;;
+    esac
+    case "$path" in
+      docs/*|packaging/*|site/*|assets/*|errata/*|.github/*) ;;
+      *) continue ;;
+    esac
+    [ -e "$path" ] || missing="$missing $path"
+  done
+  if [ -n "$missing" ]; then
+    fail "docs/待办.md references files that do not exist:$missing"
+  else
+    ok "every path named in docs/待办.md exists"
+  fi
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed" >&2
   exit 1

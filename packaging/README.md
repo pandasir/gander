@@ -448,15 +448,12 @@ correctly and is only rejected on review.
 it applies cleanly with `git am` on a current ports tree — checked by applying it
 to an empty repository and diffing the result against the copies here.
 
-What is left needs a human, because it needs an account:
-
-1. Register at <https://bugs.freebsd.org/bugzilla/createaccount.cgi>. Confirmed
-   reachable; the account is the only blocker.
-2. File a PR at <https://bugs.freebsd.org/submit/> with product
-   "Ports & Packages", component "Individual Port(s)".
-3. Summary: `[NEW PORT] sysutils/gander Interactive process viewer for the terminal`
-4. Attach `gander.sysutils.diff`. Body: a short description of the program, and
-   anything a committer should know when testing.
+What is left needs an account, and accounts are granted by hand now: Bugzilla's
+self-registration is disabled (AI-generated spam) and the maintainer creates them
+from a request email to <bugmeister@FreeBSD.org>. That mail has been sent; the
+account, the exact form fields and the summary line are tracked in
+[`docs/待办.md`](../docs/待办.md#阻塞中-freebsd-ports), which is where the status
+lives so it is not duplicated here.
 
 Review time is "a few days to a few months". Nothing is blocked on it: the release
 archives already work on FreeBSD, and `freshports.org/sysutils/gander` will 404
