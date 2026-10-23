@@ -62,8 +62,15 @@
   footer { padding: 40px 0 72px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
   footer a { color: var(--dim); text-decoration: underline; }
   .shot3 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .shot3 a { display: block; border-radius: 8px; }
+  .shot3 a:hover { text-decoration: none; }
+  .shot3 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .shot3 img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .shot3 a img { cursor: zoom-in; }
+  .shot3 a:hover img, .shot3 a:focus-visible img { border-color: var(--accent-dim); }
   .shot3 span { display: block; color: var(--dim); font-size: 13px; margin-top: 6px; }
+  .shot3 .shot-action { color: var(--accent-dim); }
+  .shot3 a:hover .shot-action, .shot3 a:focus-visible .shot-action { text-decoration: underline; }
 
   /* Shared by the comparison and platform pages. */
   .crumbs { color: var(--dim); font-size: 14px; margin: 0 0 18px; }
