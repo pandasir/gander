@@ -74,7 +74,8 @@ jobs:
           for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
                    htop-for-macos.html htop-for-freebsd.html site.css analytics.js \
                    robots.txt sitemap.xml \
-                   screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
+                   screenshot-panels.png screenshot-htop.png screenshot-tree.png \
+                   social-preview.png demo.gif; do
             test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
           done
           # Every page named in the sitemap has to exist, or the sitemap

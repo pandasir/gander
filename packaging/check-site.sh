@@ -158,6 +158,34 @@ for page in "${pages[@]}"; do
 done
 ok "every page has its own canonical URL"
 
+# 9. A shared link has to render as a card. Without og:image the platform shows a
+#    blank rectangle, and without og:image:alt it shows nothing to screen readers.
+#    The three dimensions must match the committed file or the card is cropped.
+preview_before=$failures
+for page in "${pages[@]}"; do
+  for tag in 'og:image' 'og:image:alt' 'twitter:card' 'twitter:image'; do
+    grep -q "\(property\|name\)=\"$tag\"" "$site/$page" || fail "$page has no $tag"
+  done
+  grep -q 'og:image" content="https://pandasir.github.io/gander/social-preview.png"' "$site/$page" ||
+    fail "$page og:image does not point at the preview card"
+done
+if [ "$failures" -eq "$preview_before" ]; then
+  ok "every page has social preview metadata"
+fi
+
+# The declared dimensions and the actual file have to agree.
+real=$(magick identify -format '%wx%h' "assets/social-preview.png" 2>/dev/null || true)
+if [ -n "$real" ]; then
+  [ "$real" = "1280x640" ] || fail "assets/social-preview.png is $real, want 1280x640"
+  for page in "${pages[@]}"; do
+    grep -q 'og:image:width" content="1280"' "$site/$page" || fail "$page declares the wrong card width"
+    grep -q 'og:image:height" content="640"' "$site/$page" || fail "$page declares the wrong card height"
+  done
+  size=$(wc -c < "assets/social-preview.png")
+  [ "$size" -lt 1000000 ] || fail "assets/social-preview.png is $size bytes, over GitHub's 1 MB limit"
+  ok "preview card is 1280x640 and under 1 MB"
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed" >&2
   exit 1

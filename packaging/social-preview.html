@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* GitHub renders the social preview at 1280x640 and crops nothing; X shows a
+     2:1 card. The layout keeps everything inside a 1180x540 safe area so a
+     trim to 2:1 does not cut the wordmark or the tagline. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: #0b0e14;
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #dfe4ee;
+    position: relative;
+  }
+
+  /* The screenshot sits behind everything, scaled so its text stays legible at
+     thumbnail size, and is faded out to the left by a scrim so the wordmark has
+     a clean field to sit on. */
+  .shot {
+    position: absolute;
+    top: 40px; left: 556px;
+    width: 1000px;
+    border-radius: 10px 0 0 10px;
+    border: 1px solid #2b3340;
+    border-right: 0;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0,0,0,.65);
+  }
+  .shot img { display: block; width: 100%; }
+
+  .scrim {
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg,
+      #0b0e14 0%, #0b0e14 34%,
+      rgba(11,14,20,.97) 44%,
+      rgba(11,14,20,.78) 54%,
+      rgba(11,14,20,.34) 64%,
+      rgba(11,14,20,0) 76%);
+  }
+
+  /* A faint teal wash from the top-left corner, matching the site's accent. */
+  .glow {
+    position: absolute; inset: 0;
+    background: radial-gradient(760px 460px at 8% -10%, rgba(110,231,183,.13), transparent 70%);
+  }
+
+  .accent { position: absolute; top: 0; left: 0; right: 0; height: 5px;
+            background: linear-gradient(90deg, #6ee7b7, #2dd4bf 42%, rgba(45,212,191,0) 78%); }
+
+  .content { position: absolute; left: 76px; top: 150px; }
+
+  .name {
+    font-size: 104px; font-weight: 700; letter-spacing: -3px;
+    line-height: 1; color: #f2f5fa;
+  }
+  .name .mark {
+    display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+    background: #6ee7b7; margin-left: 14px; vertical-align: 46px;
+  }
+
+  .rule { width: 76px; height: 3px; background: #6ee7b7; margin: 30px 0 26px; }
+
+  .tag {
+    font-size: 30px; line-height: 1.42; font-weight: 400;
+    color: #c2cad8; letter-spacing: -.2px;
+  }
+  .tag b { color: #eef2f8; font-weight: 600; }
+
+  .chips { margin-top: 34px; display: flex; gap: 11px; }
+  .chip {
+    font-size: 19px; font-weight: 500; color: #9fb3ad;
+    border: 1px solid #2b3a3a; background: rgba(110,231,183,.07);
+    padding: 8px 15px; border-radius: 7px; letter-spacing: .2px;
+  }
+  .rust { color: #6ee7b7; border-color: #35474a; background: rgba(110,231,183,.1); }
+</style>
+</head>
+<body>
+  <div class="scrim"></div>
+  <div class="shot"><img src="assets/screenshot-panels.png" alt=""></div>
+  <div class="glow"></div>
+  <div class="accent"></div>
+
+  <div class="content">
+    <div class="name">gander<span class="mark"></span></div>
+    <div class="rule"></div>
+    <div class="tag">
+      An interactive <b>process viewer</b><br>
+      for Linux, macOS and FreeBSD
+    </div>
+    <div class="chips">
+      <div class="chip rust">Rust</div>
+      <div class="chip">Linux</div>
+      <div class="chip">macOS</div>
+      <div class="chip">FreeBSD</div>
+    </div>
+  </div>
+</body>
+</html>
