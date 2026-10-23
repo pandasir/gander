@@ -92,6 +92,12 @@ EOF
 # `make makesum` then fetches every crate and writes distinfo. Neither step has an
 # equivalent outside FreeBSD.
 echo "==> generating CARGO_CRATES"
+# Resolve to an absolute path before changing directory: the CI run passes a
+# relative ports tree (it clones into the workspace so the action syncs it back),
+# and `cd relative/dir` followed by `relative/dir/Makefile` resolves against the
+# new directory, not the original one. That is what broke the second run — the
+# crates were found (199 of them) and then written to a path that did not exist.
+portdir=$(cd "${portdir}" && pwd)
 cd "${portdir}"
 if ! make cargo-crates > /tmp/cargo-crates.txt 2>/tmp/cargo-crates.err; then
   echo "make cargo-crates failed:" >&2
