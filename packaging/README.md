@@ -401,6 +401,66 @@ Users install with:
 yay -S gander
 ```
 
+## FreeBSD
+
+The port files are in `packaging/freebsd/`: `Makefile`, `distinfo`, `pkg-descr`.
+They are not submitted yet — see "Submitting" below for what is left.
+
+### Why the files are generated
+
+A Rust port's `distinfo` carries a SHA-256 for every crate in `Cargo.lock` — 199
+entries here, plus the GitHub tarball. Those values can only be produced by the
+ports framework:
+
+- `make cargo-crates` reads `Cargo.lock` through `Mk/Scripts/cargo-crates.awk`
+- `make makesum` fetches every crate and hashes it
+
+Neither has an equivalent outside FreeBSD, so `packaging/freebsd/gen-port.sh` runs
+inside one. Do not hand-edit `distinfo`: a single wrong checksum fails the build
+with one error that names no others, and the file goes stale whenever any
+dependency moves.
+
+```bash
+git clone --depth 1 https://git.FreeBSD.org/ports.git /tmp/ports
+sh packaging/freebsd/gen-port.sh /tmp/ports
+```
+
+`.github/workflows/freebsd-port.yml` does this on a FreeBSD 14.5 VM for free and
+uploads the result; that is how the committed files were produced.
+
+Three things in the `Makefile` are not obvious and were each wrong at least once:
+
+| Setting | Why |
+|---|---|
+| `CARGO_INSTALL_PATH=crates/bin` | The workspace root is a *virtual* manifest and `cargo install` refuses it. The framework variable is `CARGO_INSTALL_PATH`; `CARGO_INSTALL_PACKAGES` does not exist and is silently ignored. |
+| `CARGO_CRATES=` inserted by the script | `make cargo-crates` prints the block to stdout, it does not edit the `Makefile`. |
+| nothing else before `.include` | The block must precede the include or the framework sees no dependencies. |
+
+The script also strips the `===>` banner lines that `make cargo-crates` writes to
+stdout. That matters more than it looks: `make` treats an unrecognised line as a
+comment, so a `Makefile` polluted with them still builds, stages and packages
+correctly and is only rejected on review.
+
+### Submitting
+
+Not done yet. It needs:
+
+1. A Bugzilla account, and a PR at <https://bugs.freebsd.org/submit/> with
+   product "Ports & Packages", component "Individual Port(s)".
+2. Summary in the form `[NEW PORT] sysutils/gander <short description>`.
+3. The three files as a `git format-patch` diff, since bugzilla wants a patch and
+   not a tarball.
+
+Review time is "a few days to a few months". Nothing is blocked on it: the release
+archives already work on FreeBSD, and `freshports.org/sysutils/gander` will 404
+until a committer takes it.
+
+### After it lands
+
+Bump `DISTVERSION` and regenerate `distinfo` on every release. `pkg-descr` and the
+`COMMENT` line rarely change; the dependency list changes whenever `Cargo.lock`
+does.
+
 ## nixpkgs
 
 The upstream source builds with the existing `rustPlatform.buildRustPackage`

@@ -260,9 +260,39 @@ do
   fi
 done
 
+# FreeBSD: same shape as the AUR. The port files exist in the repository but no
+# committer has taken them yet, so the two facts that have to agree are "does the
+# docs claim a package exists" and "is there one on freshports".
+#
+# A 404 from freshports is the normal state before review and is not a failure on
+# its own; claiming `pkg install gander` in the README would be. That is the
+# direction this checks, because it is the one that sends someone to run a command
+# that cannot work.
+check_freebsd() {
+  if grep -qsE 'pkg install gander|sysutils/gander' README.md site/index.html; then
+    # The docs say a package exists; one must.
+    if ! curl -fsSL --max-time 25 -A "gander-check-channels/1.0" \
+         -o /dev/null "https://www.freshports.org/sysutils/gander/"; then
+      echo "the docs offer a FreeBSD package, but freshports has no sysutils/gander"
+      return 1
+    fi
+    return 0
+  fi
+
+  # The docs do not offer one. The port files may exist (they are being prepared);
+  # what must not exist is a live package nobody documents.
+  if curl -fsSL --max-time 25 -A "gander-check-channels/1.0" \
+       -o /dev/null "https://www.freshports.org/sysutils/gander/" 2>/dev/null; then
+    echo "freshports has sysutils/gander, but no README tells anyone to install it"
+    return 1
+  fi
+  return 0
+}
+
 # Analytics is not an install channel, so it is not gated on a README line: the
 # pages load it whether or not anyone documented it.
 check_channel "analytics (GoatCounter)" check_analytics "site/"
+check_channel "freebsd (ports)" check_freebsd "README.md / site/index.html"
 
 # The AUR is a special case: it is a real channel the project intends to use, but
 # it is currently impossible to create an account. What matters is that the docs

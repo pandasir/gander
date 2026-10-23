@@ -1,0 +1,21 @@
+gander is an interactive process viewer for the terminal, in the tradition of
+top(1) and htop(1): it shows the processes on the machine and what they cost, and
+it runs on Linux, macOS and FreeBSD from one codebase.
+
+It differs from htop in layout rather than in data. Where htop devotes a second
+screen to one process and makes you leave the list to read it, gander keeps the
+list and puts a live inspector beside it, so the details of whatever the cursor is
+on are always visible. The keybindings are htop's, and an existing htoprc can be
+imported, so the transition is mostly habit rather than relearning.
+
+Features:
+
+  - Process table with tree mode, filtering and search, sortable on any column
+  - Inspector panel showing the selected process's memory, threads, open files,
+    affinity and I/O priority, without leaving the list
+  - Meters for CPU, memory, swap and load, each with its own display mode
+  - htoprc import, and a TOML config of its own
+  - Batch mode (--json) for scripting, with no TUI attached
+
+The FreeBSD backend reads sysctl, libkvm and the kinfo_proc structures directly,
+which is also what makes it work without procfs mounted.
