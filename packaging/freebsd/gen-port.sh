@@ -50,13 +50,13 @@ USE_GITHUB=	yes
 GH_ACCOUNT=	pandasir
 
 # This is a Cargo workspace: the top-level Cargo.toml is a virtual manifest, which
-# `cargo install` rejects with "found a virtual manifest at ... instead of a
+# cargo install rejects with "found a virtual manifest at ... instead of a
 # package manifest". Point the install at the crate that produces the binary.
 #
-# The variable is CARGO_INSTALL_PATH, which the framework turns into
-# `cargo install --path <dir>`. It is not CARGO_INSTALL_PACKAGES -- that name does
-# not exist in Mk/Uses/cargo.mk, so setting it is silently ignored and the install
-# falls back to the workspace root.
+# The variable is CARGO_INSTALL_PATH, which the framework passes to cargo install
+# as --path. It is not CARGO_INSTALL_PACKAGES -- that name does not exist in
+# Mk/Uses/cargo.mk, so setting it is silently ignored and the install falls back
+# to the workspace root.
 CARGO_INSTALL_PATH=	crates/bin
 
 PLIST_FILES=	bin/gander

@@ -31,6 +31,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # An unquoted heredoc runs command substitution, so a backtick or $(...) in a
+      # comment inside one is executed as a command — or, when it does not parse,
+      # aborts the whole script on FreeBSD's sh while passing `sh -n` on macOS.
+      # Both happened here. This check is cheap and runs before the 20-minute VM.
+      - name: No command substitution inside the generated Makefile
+        run: |
+          set -eu
+          bad=$(awk '/<<EOF/{f=1;next} /^EOF$/{f=0} f && (/`/ || /\$\(/) {print FILENAME":"NR": "$0}' \
+                packaging/freebsd/gen-port.sh)
+          if [ -n "$bad" ]; then
+            echo "::error::the Makefile heredoc contains command substitution:"
+            echo "$bad"
+            exit 1
+          fi
+          sh -n packaging/freebsd/gen-port.sh
+          echo "heredoc and syntax are clean"
+
       - name: Generate the port and build it on FreeBSD
         uses: vmactions/freebsd-vm@v1
         with:
