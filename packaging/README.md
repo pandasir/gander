@@ -443,17 +443,25 @@ correctly and is only rejected on review.
 
 ### Submitting
 
-Not done yet. It needs:
+`packaging/freebsd/gander.sysutils.diff` is the thing to attach. It is a
+`git format-patch` of the three files with the subject the handbook asks for, and
+it applies cleanly with `git am` on a current ports tree — checked by applying it
+to an empty repository and diffing the result against the copies here.
 
-1. A Bugzilla account, and a PR at <https://bugs.freebsd.org/submit/> with
-   product "Ports & Packages", component "Individual Port(s)".
-2. Summary in the form `[NEW PORT] sysutils/gander <short description>`.
-3. The three files as a `git format-patch` diff, since bugzilla wants a patch and
-   not a tarball.
+What is left needs a human, because it needs an account:
+
+1. Register at <https://bugs.freebsd.org/bugzilla/createaccount.cgi>. Confirmed
+   reachable; the account is the only blocker.
+2. File a PR at <https://bugs.freebsd.org/submit/> with product
+   "Ports & Packages", component "Individual Port(s)".
+3. Summary: `[NEW PORT] sysutils/gander Interactive process viewer for the terminal`
+4. Attach `gander.sysutils.diff`. Body: a short description of the program, and
+   anything a committer should know when testing.
 
 Review time is "a few days to a few months". Nothing is blocked on it: the release
 archives already work on FreeBSD, and `freshports.org/sysutils/gander` will 404
-until a committer takes it.
+until a committer takes it. `check-channels.sh` fails if the README ever offers
+`pkg install gander` while that is still true.
 
 ### After it lands
 
