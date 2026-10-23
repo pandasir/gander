@@ -49,10 +49,15 @@ USES=		cargo
 USE_GITHUB=	yes
 GH_ACCOUNT=	pandasir
 
-# Only the binary crate is built and installed. The workspace's other crates are
-# libraries this one links against, so they arrive through the same Cargo.lock and
-# do not need their own port.
-CARGO_INSTALL_PACKAGES=	gander-bin
+# This is a Cargo workspace: the top-level Cargo.toml is a virtual manifest, and
+# `cargo install` refuses it with "found a virtual manifest at ... instead of a
+# package manifest". Point the install at the crate that produces the binary.
+#
+# The framework's variable is CARGO_INSTALL_PATH — it becomes `cargo install
+# --path ...` — not CARGO_INSTALL_PACKAGES, which does not exist in
+# Mk/Uses/cargo.mk. Getting this wrong compiles all 200 crates successfully and
+# then fails at stage with a message about a virtual manifest.
+CARGO_INSTALL_PATH=	crates/bin
 
 PLIST_FILES=	bin/gander
 
