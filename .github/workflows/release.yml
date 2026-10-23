@@ -304,19 +304,22 @@ jobs:
               echo "rockylinux:9/${{ matrix.arch }} installed and ran $(gander --version)"
             '
 
-      - name: Write checksums
-        run: |
-          cd dist
-          sha256sum ./*.deb ./*.rpm > SHA256SUMS
-          cat SHA256SUMS
-
+      # No `SHA256SUMS` here. This job is one architecture of two, so a file
+      # written here covers only this architecture's packages — and
+      # `merge-multiple: true` below makes the two files overwrite each other, so
+      # the release ended up with whichever job finished last. Every release from
+      # v0.6.4 to v0.6.6 shipped a SHA256SUMS listing one architecture: v0.6.4
+      # had amd64 only, v0.6.5 and v0.6.6 arm64 only. Nothing was red, because a
+      # checksum file that is missing entries still parses.
+      #
+      # `publish-packages` writes it once, over the merged tree, which is the
+      # only place that sees both architectures.
       - uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.arch }}
           path: |
             dist/*.deb
             dist/*.rpm
-            dist/SHA256SUMS
             dist/signing/gander.gpg
             dist/signing/RPM-GPG-KEY-gander
 
@@ -330,6 +333,25 @@ jobs:
           path: dist
           pattern: packages-*
           merge-multiple: true
+
+      - name: Write checksums
+        # One file, written after both architectures have been merged, so it
+        # covers all four packages. Written per-architecture inside the `packages`
+        # matrix it could only ever list half of them, and the two halves
+        # overwrote each other (see the note in that job).
+        run: |
+          cd dist
+          sha256sum ./*.deb ./*.rpm > SHA256SUMS
+          cat SHA256SUMS
+          # A checksum file that names fewer packages than the release ships is
+          # the bug this step exists to prevent, so assert it rather than trust it.
+          packages=$(ls -1 ./*.deb ./*.rpm | wc -l)
+          listed=$(wc -l < SHA256SUMS)
+          if [ "$packages" -ne "$listed" ]; then
+            echo "::error::SHA256SUMS lists ${listed} packages but dist has ${packages}"
+            exit 1
+          fi
+
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
