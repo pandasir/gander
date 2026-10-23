@@ -1,0 +1,113 @@
+
+  :root {
+    --bg: #10131a;
+    --panel: #171b24;
+    --line: #262c38;
+    --fg: #dfe4ee;
+    --dim: #9aa3b2;
+    --accent: #6ee7b7;
+    --accent-dim: #2dd4bf;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-dim); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 72px 0 40px; }
+  h1 { font-size: 56px; line-height: 1.05; margin: 0 0 16px; letter-spacing: -0.02em; }
+  h1 .ver { font-size: 15px; vertical-align: super; color: var(--dim); font-weight: 400; letter-spacing: 0; margin-left: 10px; }
+  .lede { font-size: 20px; color: var(--fg); margin: 0 0 8px; max-width: 46em; }
+  .sub { color: var(--dim); margin: 0 0 28px; max-width: 46em; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+    font-size: 15px;
+  }
+  .btn:hover { border-color: var(--accent-dim); text-decoration: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #06251b; font-weight: 600; }
+  .btn.primary:hover { background: #8af0c7; }
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; font-size: 14px; margin: 0 0 8px;
+  }
+  pre .c { color: var(--dim); }
+  figure { margin: 0 0 8px; }
+  figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; display: block; }
+  figcaption { color: var(--dim); font-size: 14px; margin-top: 8px; }
+  section { padding: 40px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 26px; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  p { max-width: 48em; }
+  ul { max-width: 48em; padding-left: 22px; }
+  li { margin: 6px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 8px 0 16px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; }
+  td.c, th.c { text-align: center; }
+  .yes { color: var(--accent); }
+  .no { color: #6b7280; }
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .card h3 { margin-top: 0; }
+  .card p { margin: 0; color: var(--dim); font-size: 15px; }
+  footer { padding: 40px 0 72px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  footer a { color: var(--dim); text-decoration: underline; }
+  .shot3 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .shot3 img { width: 100%; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .shot3 span { display: block; color: var(--dim); font-size: 13px; margin-top: 6px; }
+
+  /* Shared by the comparison and platform pages. */
+  .crumbs { color: var(--dim); font-size: 14px; margin: 0 0 18px; }
+  .crumbs a { color: var(--dim); text-decoration: underline; }
+  .subpage header { padding: 56px 0 32px; }
+  .subpage h1 { font-size: 40px; }
+  .verdict { border-left: 3px solid var(--accent); padding-left: 16px; margin: 0 0 28px; }
+  .verdict p { margin: 0; }
+  table.compare th:first-child, table.compare td:first-child { width: 44%; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 20px 0; }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 10px; }
+  .next { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 8px; }
+  /* Three cards read better than three-plus-one; see the HTML, which links
+     exactly three siblings from each page. */
+  @media (min-width: 761px) { .next { grid-template-columns: repeat(3, 1fr); } }
+  .next a.card { display: block; color: var(--fg); }
+  .next a.card:hover { border-color: var(--accent-dim); text-decoration: none; }
+  .next .card p { color: var(--dim); }
+
+  /* Narrow screens.
+   *
+   * The layout is a fixed 980px column with two-column tables. Below ~760px the
+   * tables' min-content width exceeds the viewport, so the document gets wider
+   * than the screen and every paragraph is clipped at the right edge -- the page
+   * still scrolls, so it looks fine in a screenshot of the top-left corner and
+   * broken on the device. These rules let the tables scroll on their own axis
+   * instead of pushing the document wide, and drop the type sizes that were
+   * chosen for a desktop column view.
+   */
+  @media (max-width: 760px) {
+    h1 { font-size: 36px; }
+    .subpage h1 { font-size: 30px; }
+    h2 { font-size: 22px; }
+    .lede { font-size: 18px; }
+    .wrap { padding: 0 18px; }
+    header { padding: 44px 0 28px; }
+    p, ul, .sub { max-width: none; }
+    /* A table cannot shrink below its own min-content width; give it its own
+       scroll container rather than letting it widen the page. */
+    table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table thead, table tbody { display: table; width: 100%; }
+    pre { font-size: 12.5px; }
+    .grid, .shot3, .next { grid-template-columns: 1fr; }
+  }
+  /* Long tokens (paths, sysctl names, code) must not force a wide line. */
+  body { overflow-wrap: break-word; }

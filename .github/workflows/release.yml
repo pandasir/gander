@@ -534,7 +534,12 @@ jobs:
         # published tree is what keeps that true without a second set of paths.
         run: |
           set -eu
-          cp -f site-src/site/index.html repo-tree/index.html
+          # Glob, not a file list: the comparison pages were added after this
+          # workflow was written, and a hardcoded copy step would have deployed a
+          # green build in which the new URLs 404. The explicit checks below are
+          # what stops a glob that matches nothing from passing.
+          cp -f site-src/site/*.html repo-tree/
+          cp -f site-src/site/*.css repo-tree/
           cp -f site-src/site/robots.txt repo-tree/robots.txt
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
           cp -f site-src/assets/*.png repo-tree/
@@ -542,8 +547,18 @@ jobs:
           # A build that silently published nothing would leave the old page up,
           # which looks like a deploy that worked. Check the files are there and
           # that the version in the page matches the tag being released.
-          for f in index.html robots.txt sitemap.xml screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
+          for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
+                   htop-for-macos.html htop-for-freebsd.html site.css \
+                   robots.txt sitemap.xml \
+                   screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
             test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
+          done
+          # A sitemap entry with no page behind it is a 404 advertised to a
+          # crawler, which is worse than no sitemap.
+          for url in $(grep -oE '<loc>[^<]+' site-src/site/sitemap.xml | sed 's/<loc>//'); do
+            name=${url##*/gander/}
+            [ -n "$name" ] || name=index.html
+            test -s "repo-tree/$name" || { echo "::error::sitemap lists $url but $name is not published"; exit 1; }
           done
           grep -q "softwareVersion\": \"${GITHUB_REF_NAME#v}\"" repo-tree/index.html \
             || echo "::warning::index.html does not declare ${GITHUB_REF_NAME#v}; bump site/index.html"

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>htop on FreeBSD — and the viewers that only partly support it</title>
+<meta name="description" content="htop supports FreeBSD; several newer process viewers do not. What gander reads through sysctl and libkvm, and how it is tested on a real kernel.">
+<link rel="canonical" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="htop on FreeBSD, and what the alternatives support">
+<meta property="og:description" content="sysctl and libkvm give you a full process table on FreeBSD. These are the viewers that actually use them.">
+<meta property="og:url" content="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<meta property="og:image" content="https://pandasir.github.io/gander/screenshot-panels.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/screenshot-panels.png">
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <p class="crumbs"><a href="index.html">gander</a> / on FreeBSD</p>
+  <h1>A process viewer on FreeBSD</h1>
+  <p class="lede">FreeBSD is where the newer terminal process viewers thin out — not because the data is hard to get, but because few projects test there.</p>
+  <div class="verdict">
+    <p>htop has supported FreeBSD for years and gander has a dedicated <code>sysctl</code>/<code>libkvm</code> backend tested on a real FreeBSD kernel in CI. If you are choosing between the newer tools on FreeBSD, the platform-support row is often the whole decision.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">Install gander</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">Backend notes</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>Who actually supports FreeBSD</h2>
+  <table class="compare">
+    <thead><tr><th></th><th class="c">FreeBSD support</th></tr></thead>
+    <tbody>
+      <tr><td>htop</td><td class="c yes">yes, in the ports tree</td></tr>
+      <tr><td>gander</td><td class="c yes">yes, <code>libkvm</code> backend, CI-tested in a VM</td></tr>
+      <tr><td>btop</td><td class="c yes">yes, built in CI (also NetBSD, OpenBSD)</td></tr>
+      <tr><td>bottom</td><td class="c">listed as unofficial; "may only receive limited support"</td></tr>
+    </tbody>
+  </table>
+  <p>That is not a ranking of the tools. bottom is a good program, and it says plainly what its FreeBSD support is. The point is narrower: on FreeBSD you should check this row before anything else, because a viewer that compiles but is not exercised on the platform will eventually show you a number that is wrong rather than missing.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>What gander reads on FreeBSD</h2>
+  <p>The backend uses two interfaces. <code>sysctl</code> supplies the process table and system figures; <code>libkvm</code> (<code>kvm_getswapinfo</code>, <code>devstat_getdevs</code>) fills in what <code>sysctl</code> does not expose.</p>
+  <table>
+    <thead><tr><th>Figure</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Process list</td><td><code>sysctl(KERN_PROC_PROC)</code> → <code>kinfo_proc[]</code></td></tr>
+      <tr><td>CPU time, start time</td><td><code>ki_runtime</code> (microseconds), <code>ki_start</code></td></tr>
+      <tr><td>Resident and virtual size</td><td><code>ki_rssize</code> (pages), <code>ki_size</code> (bytes)</td></tr>
+      <tr><td>State letter</td><td><code>ki_stat</code> plus <code>ki_tdflags</code>/<code>ki_slptime</code></td></tr>
+      <tr><td>Command line, env</td><td><code>sysctl(KERN_PROC_ARGS)</code>, <code>KERN_PROC_ENV</code></td></tr>
+      <tr><td>Executable, cwd</td><td><code>KERN_PROC_PATHNAME</code>, <code>KERN_PROC_CWD</code></td></tr>
+      <tr><td>Open files</td><td><code>KERN_PROC_FILEDESC</code></td></tr>
+      <tr><td>Per-core CPU</td><td><code>kern.cp_times</code></td></tr>
+      <tr><td>Memory</td><td><code>vm.stats.vm.v_*</code> with <code>v_page_count</code></td></tr>
+      <tr><td>Swap</td><td><code>kvm_getswapinfo(3)</code></td></tr>
+      <tr><td>Disk throughput</td><td><code>devstat_getdevs(3)</code></td></tr>
+      <tr><td>Network throughput</td><td><code>sysctl(NET_RT_IFLIST)</code></td></tr>
+      <tr><td>CPU affinity</td><td><code>cpuset_getaffinity</code> / <code>cpuset_setaffinity</code></td></tr>
+    </tbody>
+  </table>
+  <p>Every one of those rows produced a bug during development that only a comparison against another tool caught. A sample of the ones worth knowing about:</p>
+  <ul>
+    <li><code>ki_runtime</code> is <strong>microseconds</strong>, while every CPU-time field on Linux and macOS is a tick counter. Dividing one by a <code>HZ</code> divisor gives a percentage off by four orders of magnitude.</li>
+    <li><code>ki_rssize</code> is pages and <code>ki_size</code> is bytes. They look like a matched pair and are not; forgetting the page size reports a 1.2 GB process as 300 MB, which is plausible enough to survive review.</li>
+    <li><code>ki_stat</code> is not a state letter. <code>SSLEEP</code> splits three ways depending on <code>ki_tdflags &amp; TDF_SINTR</code> and <code>ki_slptime</code>, and mapping it arithmetically shows a brand-new process as <code>I</code> and a locked one as <code>X</code>.</li>
+    <li><code>kvm_getswapinfo</code> reports <strong>pages</strong>. htop's own FreeBSD backend multiplies by 1024 instead of the page size, which reports a 1 GiB swap file as 4 MiB while labelling it bytes. gander does it the way <code>swapinfo(8)</code> does.</li>
+    <li><code>hw.physmem</code> is larger than the memory the VM manages, so using it as the memory bar's denominator leaves the bar permanently short of full — which reads as a rendering bug on a machine that is genuinely out of memory.</li>
+  </ul>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>What FreeBSD does not have, and gander says so</h2>
+  <p>The same rule as macOS: a column that could only ever render <code>-</code> is removed from the column list, and a meter stays with <code>n/a here</code> so a config file moved between machines still loads.</p>
+  <table>
+    <thead><tr><th></th><th class="c">on FreeBSD</th></tr></thead>
+    <tbody>
+      <tr><td>PSS / EPSS</td><td class="c">no <code>smaps_rollup</code>; gated out</td></tr>
+      <tr><td>PSI, zram, zswap, HugePages</td><td class="c">meter says <code>n/a here</code></td></tr>
+      <tr><td>Container columns</td><td class="c">jails are not containers; gated out</td></tr>
+      <tr><td>GPU columns</td><td class="c">no <code>drm-usage-stats</code>; gated out</td></tr>
+      <tr><td>Delay accounting</td><td class="c"><code>TASKSTATS</code> is Linux-only; gated out</td></tr>
+      <tr><td>I/O priority (<code>i</code>)</td><td class="c">no <code>ioprio_set</code>; panel says so</td></tr>
+      <tr><td>File locks panel (<code>x</code>)</td><td class="c">no lock table; points at <code>lsof</code></td></tr>
+      <tr><td>CPU affinity, env, open files</td><td class="c yes">supported</td></tr>
+      <tr><td>Host-wide disk throughput</td><td class="c yes">supported, the only platform with both figures</td></tr>
+    </tbody>
+  </table>
+  <p>Jails are the interesting omission. <code>kinfo_proc.ki_jid</code> is read and available, but nothing renders it: a jail shares the kernel, has no image layers and no identifier beyond a small integer, so listing it as <code>CONTAINER</code> would be a false equivalence. <code>jid 0</code> is the host, which is the common case, so the column would be a list of zeroes with a few exceptions.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>How it is tested</h2>
+  <p>FreeBSD has no GitHub-hosted runner, so it is checked two ways: a cross-compile of the whole crate to <code>x86_64-unknown-freebsd</code> on every push, and a full test run inside a FreeBSD 14 VM on QEMU. The VM job is the one that matters — the live tests compare gander's figures against <code>ps(1)</code>, <code>sysctl(8)</code>, <code>swapinfo(8)</code> and <code>netstat(1)</code> inside the guest. Most of the bugs listed above are things a cross-compile cannot see.</p>
+  <p>The full matrix, including every row that is deliberately missing on each platform, is in <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Install on FreeBSD</h2>
+  <p>Every release ships a <code>x86_64-unknown-freebsd</code> archive with a <code>.sha256</code> file beside it:</p>
+<pre><code>tar -xzf gander-&lt;version&gt;-x86_64-unknown-freebsd.tar.gz
+./gander-&lt;version&gt;-x86_64-unknown-freebsd/gander</code></pre>
+  <p>With a Rust toolchain:</p>
+<pre><code>cargo install gander-bin</code></pre>
+  <p>See <a href="https://github.com/pandasir/gander/releases">Releases</a> for the current archive, or <a href="index.html#install">all install options</a>.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Keep reading</h2>
+  <div class="next">
+    <a class="card" href="htop-for-macos.html">
+      <h3>htop on macOS</h3>
+      <p>What libproc and Mach give you, and what they refuse to.</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>Same keys, and the one layout difference that changes daily use.</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>The comparison where platform support is the whole decision.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Releases</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">Portability</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">Changelog</a></p>
+  <p>GPL-2.0-or-later. Built with Rust.</p>
+</div>
+</footer>
+
+</body>
+</html>

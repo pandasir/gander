@@ -2,11 +2,19 @@
 #
 # The apt/dnf trees are crawled by package clients, not by people, so they are
 # kept out of the index: a search result that lands someone in dists/stable/ is
-# a dead end. The landing page itself is explicitly allowed.
+# a dead end. The landing page and the comparison pages are explicitly allowed,
+# and the stylesheet has to be allowed too or the pages render unstyled in a
+# crawler that obeys this file.
 
 User-agent: *
 Allow: /$
 Allow: /index.html
+Allow: /vs-htop.html
+Allow: /vs-btop.html
+Allow: /vs-bottom.html
+Allow: /htop-for-macos.html
+Allow: /htop-for-freebsd.html
+Allow: /site.css
 Allow: /screenshot-
 Allow: /demo.gif
 Disallow: /dists/

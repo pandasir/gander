@@ -129,12 +129,17 @@ jobs:
   # catches the drift this job exists for. `packaging/check-channels.sh --offline`
   # validates the committed `.SRCINFO` against its `PKGBUILD` without a network,
   # and is the form to run on a machine that is offline.
+  #
+  # The site check is offline and lives here too, so a broken landing page fails
+  # on the pull request rather than at deploy time.
   channels:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Check the documented install channels
         run: packaging/check-channels.sh
+      - name: Check the site is self-consistent
+        run: packaging/check-site.sh
 
   # FreeBSD has no GitHub-hosted runner, so the backend is checked two ways.
   #

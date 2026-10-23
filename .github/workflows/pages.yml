@@ -57,15 +57,31 @@ jobs:
         # Same assembly as the release workflow, and for the same reason: the page
         # refers to the screenshots by bare filename, so they have to sit next to
         # index.html in the published tree.
+        #
+        # The HTML is copied by glob rather than by name. Listing the pages was
+        # how the comparison pages would silently fail to deploy: the workflow
+        # would go green and the new URLs would 404. The explicit list that
+        # follows is the guard, so a glob that matches nothing still fails.
         run: |
           set -eu
-          cp -f site-src/site/index.html repo-tree/index.html
+          cp -f site-src/site/*.html repo-tree/
+          cp -f site-src/site/*.css repo-tree/
           cp -f site-src/site/robots.txt repo-tree/robots.txt
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
           cp -f site-src/assets/*.png repo-tree/
           cp -f site-src/assets/demo.gif repo-tree/
-          for f in index.html robots.txt sitemap.xml screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
+          for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
+                   htop-for-macos.html htop-for-freebsd.html site.css \
+                   robots.txt sitemap.xml \
+                   screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
             test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
+          done
+          # Every page named in the sitemap has to exist, or the sitemap
+          # advertises 404s.
+          for url in $(grep -oE '<loc>[^<]+' site-src/site/sitemap.xml | sed 's/<loc>//'); do
+            name=${url##*/gander/}
+            [ -n "$name" ] || name=index.html
+            test -s "repo-tree/$name" || { echo "::error::sitemap lists $url but $name is not published"; exit 1; }
           done
           # The version in the page is a fact, not decoration: it is what a search
           # result shows. Compare it to Cargo.toml rather than to a tag, because

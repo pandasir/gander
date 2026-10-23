@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs btop — two different answers to "not htop"</title>
+<meta name="description" content="btop and gander both reject htop's layout in opposite directions: btop draws the machine, gander lists the processes. Which to pick, and why.">
+<link rel="canonical" href="https://pandasir.github.io/gander/vs-btop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs btop">
+<meta property="og:description" content="btop is a dashboard about the machine. gander is a list of processes. They are not competing for the same screen.">
+<meta property="og:url" content="https://pandasir.github.io/gander/vs-btop.html">
+<meta property="og:image" content="https://pandasir.github.io/gander/screenshot-htop.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/screenshot-htop.png">
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <p class="crumbs"><a href="index.html">gander</a> / compared with btop</p>
+  <h1>gander vs btop</h1>
+  <p class="lede">Both reject htop's layout. They disagree about what should replace it: btop draws the machine, gander lists the processes.</p>
+  <div class="verdict">
+    <p>Pick btop when the question is "how is this machine doing". Pick gander when the question is "which process is doing it" — or when you want the answer to that question in a script.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">Install</a>
+    <a class="btn" href="https://github.com/pandasir/gander">Source</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>Different tools that look like the same category</h2>
+  <p>btop is a resource monitor: CPU, memory, network, disk and temperature as graphs and braille plots, with the process list as one box among several. It is good at what it does, and if you want a dashboard it is the right answer.</p>
+  <p>gander does not try to be a dashboard. It is a process list — the same thing htop is — with the detail of the selected process moved from a separate screen into a column. The screenshots are the honest summary:</p>
+  <div class="shot3">
+    <div>
+      <img src="screenshot-panels.png" width="1800" height="800" loading="lazy" alt="gander's panels layout: one aggregate CPU bar, a memory and swap meter, a compact per-core grid in one column, and the process table with the inspector.">
+      <span>gander <code>panels</code> — meters compressed into one column</span>
+    </div>
+    <div>
+      <img src="screenshot-htop.png" width="1800" height="800" loading="lazy" alt="gander's htop layout: horizontal meters across the top and a full-width process table.">
+      <span>gander <code>htop</code> layout (<code>L</code>)</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Side by side</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">btop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Primary question it answers</td><td class="c">which process</td><td class="c">how is the machine</td></tr>
+      <tr><td>A layout that is not htop's</td><td class="c yes"><code>panels</code></td><td class="c yes">yes</td></tr>
+      <tr><td>Keeps htop's keybindings</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Reads an existing <code>htoprc</code></td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Selected process's details beside the list</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>CPU / memory / network / disk graphs</td><td class="c">CPU, memory, disk, network, PSI</td><td class="c yes">all four, plus temperature</td></tr>
+      <tr><td>Linux, macOS, FreeBSD</td><td class="c yes">all three, supported</td><td class="c yes">all three, built in CI (also NetBSD, OpenBSD)</td></tr>
+      <tr><td><code>--json</code> batch mode without the TUI</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Written in</td><td class="c">Rust</td><td class="c">C++</td></tr>
+      <tr><td>License</td><td class="c">GPL-2.0-or-later</td><td class="c">Apache-2.0</td></tr>
+    </tbody>
+  </table>
+  <p>btop's platform list is genuinely broader in one direction — it also builds for NetBSD and OpenBSD, which gander does not. If those are your systems, btop is the choice and this page is not for you.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>The scripting difference is the practical one</h2>
+  <p>btop is a screen. There is no supported way to ask it for a machine-readable snapshot, so anything automated has to either scrape the display or read <code>/proc</code> itself.</p>
+  <p>gander's batch mode is the same binary with the TUI turned off:</p>
+<pre><code>gander --json --limit 10                   <span class="c"># one JSON sample, top 10 rows</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># heaviest 20 by memory</span>
+gander -F "python|node" -n 5               <span class="c"># five samples, filtered</span></code></pre>
+  <p>That is not a feature you use every day. It is the difference between a tool you look at and a tool you can put in a cron job.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Install</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># any platform with Rust</span></code></pre>
+  <p>Signed <code>apt</code> and <code>dnf</code> repositories, plus archives for seven targets, are on <a href="index.html#install">the install section</a>.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Keep reading</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>The tool gander borrows its keybindings and column semantics from.</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>Cross-platform graphs and widgets, and what "official support" covers.</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>htop on FreeBSD</h3>
+      <p>The <code>libkvm</code> backend, and the alternatives that skip FreeBSD.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Releases</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">Keymap</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">Changelog</a></p>
+  <p>GPL-2.0-or-later. Built with Rust.</p>
+</div>
+</footer>
+
+</body>
+</html>

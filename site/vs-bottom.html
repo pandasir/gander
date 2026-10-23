@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs bottom — FreeBSD support, JSON, and layout</title>
+<meta name="description" content="bottom treats FreeBSD as unofficial support; gander has a libkvm backend tested in CI. How the two Rust process viewers differ.">
+<link rel="canonical" href="https://pandasir.github.io/gander/vs-bottom.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs bottom">
+<meta property="og:description" content="Both are Rust TUIs for Linux, macOS and FreeBSD. bottom is a widget dashboard; gander is a process list with a live inspector.">
+<meta property="og:url" content="https://pandasir.github.io/gander/vs-bottom.html">
+<meta property="og:image" content="https://pandasir.github.io/gander/screenshot-tree.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/screenshot-tree.png">
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <p class="crumbs"><a href="index.html">gander</a> / compared with bottom</p>
+  <h1>gander vs bottom</h1>
+  <p class="lede">The closest comparison of the three: both are Rust, both cover Linux, macOS and FreeBSD, and both refuse htop's layout. They differ in what the screen is for.</p>
+  <div class="verdict">
+    <p>bottom gives you a dashboard of widgets you arrange. gander gives you htop's process list with the details moved onto the same screen. If you want graphs and configurability, bottom is further along. If you want htop's muscle memory and a scriptable output, gander is.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">Install</a>
+    <a class="btn" href="https://github.com/pandasir/gander">Source</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>Side by side</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">bottom</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Written in</td><td class="c yes">Rust</td><td class="c yes">Rust</td></tr>
+      <tr><td>Linux and macOS, officially supported</td><td class="c yes">yes</td><td class="c yes">yes</td></tr>
+      <tr><td>FreeBSD</td><td class="c yes">supported, <code>libkvm</code> backend</td><td class="c">unofficial, may miss features</td></tr>
+      <tr><td>Windows</td><td class="c no">no</td><td class="c yes">yes</td></tr>
+      <tr><td>Keeps htop's keybindings</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Reads an existing <code>htoprc</code></td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Selected process's details beside the list</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Graphs over time (CPU, memory, network, disk, temperature)</td><td class="c">CPU, memory, disk, network, PSI</td><td class="c yes">all five</td></tr>
+      <tr><td>Layout rearranged at runtime</td><td class="c">two built-in layouts</td><td class="c yes">widgets, fully configurable</td></tr>
+      <tr><td><code>--json</code> batch mode without the TUI</td><td class="c yes">yes</td><td class="c no">no</td></tr>
+      <tr><td>Config file format</td><td class="c">TOML, plus <code>htoprc</code> import</td><td class="c">TOML</td></tr>
+    </tbody>
+  </table>
+  <p>Two rows deserve the detail rather than a checkmark.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD: "compiles" is not "supported"</h2>
+  <p>bottom's README is explicit about this. Its official platforms are macOS, Linux and Windows. FreeBSD <code>x86_64</code> appears in a second list, introduced like this:</p>
+  <div class="note">
+    <p><em>Might not be tested in CI to build or pass tests. Might not be properly tested by maintainers prior to a stable release. May only receive limited support, such as missing features or bugs that may not be fixed.</em></p>
+  </div>
+  <p>That is an honest description, not a criticism — it is exactly the kind of statement this project tries to make about its own gaps. But it means FreeBSD is not a platform you can depend on bottom for.</p>
+  <p>gander has a dedicated FreeBSD backend that reads <code>sysctl</code> and <code>libkvm</code>, and a CI job that runs the whole test suite in a FreeBSD 14 VM on QEMU, comparing its figures against <code>ps(1)</code>, <code>sysctl(8)</code>, <code>swapinfo(8)</code> and <code>netstat(1)</code> inside the guest. The capabilities that are genuinely missing there are listed rather than implied: no container columns, no PSS, no GPU columns, no disk throughput meter. See <a href="htop-for-freebsd.html">htop on FreeBSD</a>.</p>
+  <p>If you run FreeBSD, that is the most concrete difference on this page.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Scripts: gander has a batch mode</h2>
+  <p>bottom is a screen. For automated collection you read <code>/proc</code> (or the equivalent) yourself, which is fine until you want the same formatting the TUI uses.</p>
+  <p>gander's batch mode is the same binary with the interface turned off, so the numbers a script sees are the numbers the screen would have drawn:</p>
+<pre><code>gander --json --limit 10
+gander --sort PERCENT_MEM --limit 20
+gander -F "python|node" -n 5</code></pre>
+  <p>Exit status is meaningful: a failed scan is a non-zero exit, not an empty array.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Coming from htop</h2>
+  <p>Neither tool reads <code>htoprc</code> except gander. If you have years of tuned columns and sort order in htop, that is the difference you notice first:</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p>The import is a dry run without <code>--save</code>, and <code>htoprc</code> is never modified. See <a href="vs-htop.html">vs htop</a> for the keys that differ.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Install</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># any platform with Rust</span></code></pre>
+  <p>Signed <code>apt</code> and <code>dnf</code> repositories, and archives including <code>x86_64-unknown-freebsd</code>, are on <a href="index.html#install">the install section</a>.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Keep reading</h2>
+  <div class="next">
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>htop on FreeBSD</h3>
+      <p>What the <code>libkvm</code> backend reads, and what it cannot.</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>The reference gander takes its keybindings from.</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>The other dashboard, and its broader BSD coverage.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Releases</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">Keymap</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">Changelog</a></p>
+  <p>GPL-2.0-or-later. Built with Rust.</p>
+</div>
+</footer>
+
+</body>
+</html>
