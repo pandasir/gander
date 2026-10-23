@@ -1,0 +1,58 @@
+name: FreeBSD port
+
+# Prove that the FreeBSD port in packaging/freebsd/ actually builds, and produce
+# the distinfo that cannot be generated anywhere but FreeBSD.
+#
+# The port files are not committed: `CARGO_CRATES` lists ~200 crates and every one
+# has a checksum, so a checked-in distinfo goes stale the moment a dependency
+# moves, and a stale distinfo fails the build with one checksum error that hides
+# all the others. They are generated here from Cargo.lock and uploaded instead.
+#
+# The ports tree is cloned *inside* the workspace rather than under /tmp, because
+# the action syncs the workspace between host and VM — a file written to /tmp in
+# the VM is not visible to the upload step on the host.
+#
+# Manual only. A new port is submitted to FreeBSD's Bugzilla; this workflow exists
+# to produce and verify what gets attached, not to publish it.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "packaging/freebsd/**"
+      - ".github/workflows/freebsd-port.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the port and build it on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.5"
+          usesh: true
+          prepare: |
+            pkg install -y git rust
+          run: |
+            set -e
+            # `portsnap` is gone; cloning the tree is the supported way to get
+            # Mk/ and bsd.port.mk on a fresh jail.
+            rm -rf ports-tree
+            git clone --depth 1 https://git.FreeBSD.org/ports.git ports-tree
+            mkdir -p ports-tree/sysutils/gander
+            sh packaging/freebsd/gen-port.sh ports-tree
+
+      - name: Collect the generated port
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebsd-port-gander
+          path: |
+            ports-tree/sysutils/gander/Makefile
+            ports-tree/sysutils/gander/distinfo
+            ports-tree/sysutils/gander/pkg-descr
+          if-no-files-found: error
