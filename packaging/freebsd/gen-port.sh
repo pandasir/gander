@@ -83,25 +83,59 @@ The FreeBSD backend reads sysctl, libkvm and the kinfo_proc structures directly,
 which is also what makes it work without procfs mounted.
 EOF
 
-# `make cargo-crates` appends the CARGO_CRATES block by reading Cargo.lock through
-# the ports framework; `make makesum` fetches every crate and hashes it. Neither
-# step has an equivalent outside FreeBSD.
+# `make cargo-crates` prints the block to stdout; it does not edit the Makefile.
+# (Mk/Uses/cargo.mk: `@${_CARGO_AWK} .../cargo-crates.awk ${CARGO_CARGOLOCK}`.)
+# The block has to be inserted here, and it must go *after* the last variable and
+# before any target, which for this Makefile means immediately before the
+# `.include <bsd.port.mk>` line.
+#
+# `make makesum` then fetches every crate and writes distinfo. Neither step has an
+# equivalent outside FreeBSD.
 echo "==> generating CARGO_CRATES"
 cd "${portdir}"
-make cargo-crates > /tmp/cargo-crates.txt 2>/tmp/cargo-crates.err || {
+if ! make cargo-crates > /tmp/cargo-crates.txt 2>/tmp/cargo-crates.err; then
   echo "make cargo-crates failed:" >&2
   cat /tmp/cargo-crates.err >&2
   exit 1
-}
+fi
 
-# The output is now also written into the Makefile by the framework; check it
-# actually landed there rather than trusting the exit status.
-if ! grep -q '^CARGO_CRATES=' Makefile; then
-  echo "make cargo-crates did not add a CARGO_CRATES block to the Makefile" >&2
-  echo "--- it printed instead: ---" >&2
-  head -5 /tmp/cargo-crates.txt >&2
+# cargo-crates prints banner lines (===> ...) on stderr and the block on stdout.
+# Check the result is what we asked for, rather than inserting an empty block and
+# calling it done.
+crates=$(sed '/^\.include /d' /tmp/cargo-crates.txt)
+if ! printf '%s\n' "$crates" | grep -q '^CARGO_CRATES='; then
+  echo "make cargo-crates produced no CARGO_CRATES assignment" >&2
+  echo "--- stdout was ---" >&2
+  head -20 /tmp/cargo-crates.txt >&2
+  echo "--- stderr was ---" >&2
+  head -20 /tmp/cargo-crates.err >&2
   exit 1
 fi
+
+count=$(printf '%s\n' "$crates" | grep -o ' \\$' | wc -l | tr -d ' ')
+echo "    ${count} crates"
+
+# Insert the block before the include, so a rebuild of this script does not
+# duplicate it in a Makefile that already has one.
+#
+# awk cannot take multi-line text as a -v assignment (it fails with "newline in
+# string"), so the block goes through a file that awk reads line by line.
+printf '%s\n' "$crates" > /tmp/cargo-crates-block.txt
+awk '
+  /^\.include <bsd\.port\.mk>/ && !done {
+    while ((getline line < "/tmp/cargo-crates-block.txt") > 0) print line
+    close("/tmp/cargo-crates-block.txt")
+    print ""
+    done = 1
+  }
+  { print }
+' "${portdir}/Makefile" > "${portdir}/Makefile.new" &&
+  mv "${portdir}/Makefile.new" "${portdir}/Makefile"
+
+grep -q '^CARGO_CRATES=' "${portdir}/Makefile" || {
+  echo "failed to insert CARGO_CRATES into the Makefile" >&2
+  exit 1
+}
 
 echo "==> generating distinfo"
 make makesum
