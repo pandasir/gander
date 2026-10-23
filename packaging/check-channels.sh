@@ -145,23 +145,49 @@ check_crates() {
 
 # The analytics site code has to exist, or every page silently measures nothing.
 #
-# `/counter/TOTAL.json` is the one endpoint that distinguishes the two states:
-# a code that was never registered answers 400 with `no site at this domain`,
-# and a registered one answers 200 with a counter. The `/count` endpoint the
-# browser posts to returns 400 either way, so it cannot be used for this.
+# `/counter/TOTAL.json` distinguishes the states, but there are three of them and
+# only two matter here:
+#
+#   400  "no site at this domain"  -- the code was never registered
+#   403  "Need to enable the 'allow using the visitor counter' setting"
+#   200  a public counter
+#
+# 403 is a *registered* site whose public counter is off, which is the default
+# and is not a problem: the counter endpoint is only one way to read a site, and
+# page views are still recorded. Treating 403 as "missing" reports a working setup
+# as broken. The `/count` endpoint the browser posts to answers 400 in every
+# state, so it cannot be used to check this at all.
 #
 # The code is read out of site/analytics.js rather than duplicated here.
 check_analytics() {
-  local code body
+  local code body status
   code=$(sed -n "s/.*var SITE_CODE = '\([^']*\)'.*/\1/p" site/analytics.js 2>/dev/null | head -1)
   [ -n "$code" ] || { echo "site/analytics.js declares no SITE_CODE"; return 1; }
 
-  body=$(curl -fsSL --max-time 20 -A "gander-check-channels/1.0" \
+  body=$(curl -sS --max-time 20 -A "gander-check-channels/1.0" \
+    -o /tmp/gander-analytics-check.$$ -w '%{http_code}' \
     "https://$code.goatcounter.com/counter/TOTAL.json" 2>/dev/null) || {
-    echo "GoatCounter has no site '$code' yet: register it at https://www.goatcounter.com/signup"
+    echo "could not reach goatcounter.com for site '$code'"
     return 1
   }
-  return 0
+  status=$body
+
+  case "$status" in
+    200 | 403)
+      rm -f /tmp/gander-analytics-check.$$
+      return 0
+      ;;
+    400)
+      rm -f /tmp/gander-analytics-check.$$
+      echo "GoatCounter has no site '$code': register it at https://www.goatcounter.com/signup"
+      return 1
+      ;;
+    *)
+      rm -f /tmp/gander-analytics-check.$$
+      echo "unexpected HTTP $status from goatcounter.com for site '$code'"
+      return 1
+      ;;
+  esac
 }
 
 # The Arch channel is a source build from the `PKGBUILD` in the repository, not an
