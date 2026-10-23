@@ -49,14 +49,14 @@ USES=		cargo
 USE_GITHUB=	yes
 GH_ACCOUNT=	pandasir
 
-# This is a Cargo workspace: the top-level Cargo.toml is a virtual manifest, and
-# `cargo install` refuses it with "found a virtual manifest at ... instead of a
+# This is a Cargo workspace: the top-level Cargo.toml is a virtual manifest, which
+# `cargo install` rejects with "found a virtual manifest at ... instead of a
 # package manifest". Point the install at the crate that produces the binary.
 #
-# The framework's variable is CARGO_INSTALL_PATH — it becomes `cargo install
-# --path ...` — not CARGO_INSTALL_PACKAGES, which does not exist in
-# Mk/Uses/cargo.mk. Getting this wrong compiles all 200 crates successfully and
-# then fails at stage with a message about a virtual manifest.
+# The variable is CARGO_INSTALL_PATH, which the framework turns into
+# `cargo install --path <dir>`. It is not CARGO_INSTALL_PACKAGES -- that name does
+# not exist in Mk/Uses/cargo.mk, so setting it is silently ignored and the install
+# falls back to the workspace root.
 CARGO_INSTALL_PATH=	crates/bin
 
 PLIST_FILES=	bin/gander
@@ -110,10 +110,18 @@ if ! make cargo-crates > /tmp/cargo-crates.txt 2>/tmp/cargo-crates.err; then
   exit 1
 fi
 
-# cargo-crates prints banner lines (===> ...) on stderr and the block on stdout.
-# Check the result is what we asked for, rather than inserting an empty block and
-# calling it done.
-crates=$(sed '/^\.include /d' /tmp/cargo-crates.txt)
+# `make cargo-crates` writes its banner lines (===> ...) to *stdout* as well as
+# the block: the recipe is `@${_CARGO_AWK} ...`, and `@` only silences make's own
+# echo of the command, not the command's output. So the raw log starts with
+# "===> Extracting for gander-0.6.5" and only later reaches `CARGO_CRATES=`.
+#
+# Keep only the assignment and its continuation lines. A blank or banner line
+# before the assignment would end up in the Makefile, where make treats it as a
+# comment and builds anyway — the port would work and be rejected by review.
+crates=$(awk '
+  /^CARGO_CRATES=/ { inblock = 1 }
+  inblock { print }
+' /tmp/cargo-crates.txt)
 if ! printf '%s\n' "$crates" | grep -q '^CARGO_CRATES='; then
   echo "make cargo-crates produced no CARGO_CRATES assignment" >&2
   echo "--- stdout was ---" >&2
