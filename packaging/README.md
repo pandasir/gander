@@ -65,7 +65,7 @@ mkdir -p /tmp/homebrew-tap/Formula
 cp packaging/homebrew/Formula/gander.rb /tmp/homebrew-tap/Formula/
 cd /tmp/homebrew-tap
 git add Formula/gander.rb
-git commit -m "gander 0.6.4"
+git commit -m "gander 0.6.5"
 git push
 ```
 
@@ -243,7 +243,7 @@ architecture, attaches them to the release with a `SHA256SUMS`, and then merges
 them into the signed repositories. Verify with:
 
 ```bash
-gh release view v0.6.4 --json assets --jq '.assets[].name' | grep -E 'deb|rpm|SHA256SUMS'
+gh release view v0.6.5 --json assets --jq '.assets[].name' | grep -E 'deb|rpm|SHA256SUMS'
 ```
 
 ## Verifying a release end to end
@@ -253,7 +253,7 @@ The archives and packages can be checked without installing anything:
 ```bash
 # The release assets are what the repository will serve.
 sha256sum -c SHA256SUMS
-rpm -K gander-0.6.4-1.x86_64.rpm          # after importing RPM-GPG-KEY-gander
+rpm -K gander-0.6.5-1.x86_64.rpm          # after importing RPM-GPG-KEY-gander
 
 # The repository index verifies against the published key.
 gpg --verify <(curl -fsSL https://pandasir.github.io/gander/dists/stable/InRelease)
@@ -381,7 +381,7 @@ git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/gander.git /t
 cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO /tmp/aur-gander/
 cd /tmp/aur-gander
 git add PKGBUILD .SRCINFO
-git commit -m "gander 0.6.4"
+git commit -m "gander 0.6.5"
 git push
 ```
 

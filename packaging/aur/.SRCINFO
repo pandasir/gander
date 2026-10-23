@@ -1,6 +1,6 @@
 pkgbase = gander
 	pkgdesc = Cross-platform interactive process viewer (htop alternative) for Linux, macOS and FreeBSD
-	pkgver = 0.6.4
+	pkgver = 0.6.5
 	pkgrel = 1
 	url = https://github.com/pandasir/gander
 	arch = x86_64
@@ -9,7 +9,7 @@ pkgbase = gander
 	makedepends = cargo
 	makedepends = rust
 	depends = gcc-libs
-	source = gander-0.6.4.tar.gz::https://github.com/pandasir/gander/archive/refs/tags/v0.6.4.tar.gz
-	sha256sums = 1b1759f8afb4bdc8625c4aecd28bf4e7780d476b61d8f85bf7f0ee10c48f8ec1
+	source = gander-0.6.5.tar.gz::https://github.com/pandasir/gander/archive/refs/tags/v0.6.5.tar.gz
+	sha256sums = 5f24a9a9da63410c9df238c37ea784c5939b56772a920cb22ccdb7f4543879ca
 
 pkgname = gander
