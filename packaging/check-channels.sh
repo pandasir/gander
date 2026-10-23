@@ -143,6 +143,27 @@ check_crates() {
   http_ok "https://crates.io/api/v1/crates/gander-bin" '"id":"gander-bin"' || return 1
 }
 
+# The analytics site code has to exist, or every page silently measures nothing.
+#
+# `/counter/TOTAL.json` is the one endpoint that distinguishes the two states:
+# a code that was never registered answers 400 with `no site at this domain`,
+# and a registered one answers 200 with a counter. The `/count` endpoint the
+# browser posts to returns 400 either way, so it cannot be used for this.
+#
+# The code is read out of site/analytics.js rather than duplicated here.
+check_analytics() {
+  local code body
+  code=$(sed -n "s/.*var SITE_CODE = '\([^']*\)'.*/\1/p" site/analytics.js 2>/dev/null | head -1)
+  [ -n "$code" ] || { echo "site/analytics.js declares no SITE_CODE"; return 1; }
+
+  body=$(curl -fsSL --max-time 20 -A "gander-check-channels/1.0" \
+    "https://$code.goatcounter.com/counter/TOTAL.json" 2>/dev/null) || {
+    echo "GoatCounter has no site '$code' yet: register it at https://www.goatcounter.com/signup"
+    return 1
+  }
+  return 0
+}
+
 # The Arch channel is a source build from the `PKGBUILD` in the repository, not an
 # AUR package: registration has been closed since the June 2026 incident and there
 # is no manual process to create an account. So the thing that can break is the
@@ -212,6 +233,10 @@ do
     check_channel "$cmd" "$checker" "README.md / site/index.html"
   fi
 done
+
+# Analytics is not an install channel, so it is not gated on a README line: the
+# pages load it whether or not anyone documented it.
+check_channel "analytics (GoatCounter)" check_analytics "site/"
 
 # The AUR is a special case: it is a real channel the project intends to use, but
 # it is currently impossible to create an account. What matters is that the docs

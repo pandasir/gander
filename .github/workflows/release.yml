@@ -540,6 +540,7 @@ jobs:
           # what stops a glob that matches nothing from passing.
           cp -f site-src/site/*.html repo-tree/
           cp -f site-src/site/*.css repo-tree/
+          cp -f site-src/site/*.js repo-tree/
           cp -f site-src/site/robots.txt repo-tree/robots.txt
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
           cp -f site-src/assets/*.png repo-tree/
@@ -548,7 +549,7 @@ jobs:
           # which looks like a deploy that worked. Check the files are there and
           # that the version in the page matches the tag being released.
           for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
-                   htop-for-macos.html htop-for-freebsd.html site.css \
+                   htop-for-macos.html htop-for-freebsd.html site.css analytics.js \
                    robots.txt sitemap.xml \
                    screenshot-panels.png screenshot-htop.png screenshot-tree.png demo.gif; do
             test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }

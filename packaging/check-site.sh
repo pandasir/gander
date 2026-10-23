@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert that the published site's own claims about itself hold.
 #
-# Three ways this drifts, all of which look like a successful deploy:
+# Ways this drifts, all of which look like a successful deploy:
 #
 #   1. A sitemap entry with no page behind it. A crawler is handed a 404, which
 #      is worse than not listing the URL at all.
@@ -11,8 +11,13 @@
 #      new .html file was silently never published.
 #   3. robots.txt disallowing a page that the sitemap advertises. The two files
 #      are edited by hand and have no reason to agree.
+#   4. A page that does not load the analytics script, or a script naming a site
+#      code that was never registered. Both are invisible in a browser tab:
+#      analytics failing is not an error a reader sees, it is just no data.
 #
-# This runs on the files in site/, with no network and no browser.
+# This runs on the files in site/, with no network and no browser. Whether the
+# analytics site code actually exists on goatcounter.com needs the network, so
+# `packaging/check-channels.sh` asks that separately.
 #
 # Usage: packaging/check-site.sh
 set -euo pipefail
@@ -113,7 +118,34 @@ grep -qx "Allow: /site.css" "$site/robots.txt" ||
   fail "robots.txt does not allow /site.css, which every page needs"
 ok "robots.txt allows every advertised page"
 
-# 6. Each page must declare a canonical URL of its own. A copy-pasted canonical
+# 7. Every page must load the analytics script, and the script must name a site
+#    code that is reachable. A page silently missing the tag is a hole in the
+#    only measurement this project has; a script pointing at a site code that was
+#    never registered fails invisibly in every browser.
+analytics_before=$failures
+for page in "${pages[@]}"; do
+  grep -q 'src="analytics.js"' "$site/$page" ||
+    fail "$page does not load analytics.js"
+done
+if [ "$failures" -eq "$analytics_before" ]; then
+  ok "every page loads analytics.js"
+fi
+
+[ -f "$site/analytics.js" ] || fail "$site/analytics.js is missing"
+code=$(sed -n "s/.*var SITE_CODE = '\([^']*\)'.*/\1/p" "$site/analytics.js" | head -1)
+if [ -z "$code" ]; then
+  fail "$site/analytics.js does not declare a SITE_CODE"
+else
+  ok "analytics site code is '$code'"
+fi
+
+# The script must not be served to crawlers as a disallowed resource: robots.txt
+# governs fetches by crawlers, and a blocked .js is a page they render without
+# measurement (and, for the stylesheet, without styling).
+grep -qx "Allow: /analytics.js" "$site/robots.txt" ||
+  fail "robots.txt does not allow /analytics.js"
+
+# 8. Each page must declare a canonical URL of its own. A copy-pasted canonical
 #    is how a subpage tells a crawler it is a duplicate of the homepage.
 for page in "${pages[@]}"; do
   canonical=$(grep -oE 'rel="canonical" href="[^"]+"' "$site/$page" | sed -E 's/.*href="//; s/"$//')

@@ -259,6 +259,40 @@ rpm -K gander-0.6.4-1.x86_64.rpm          # after importing RPM-GPG-KEY-gander
 gpg --verify <(curl -fsSL https://pandasir.github.io/gander/dists/stable/InRelease)
 ```
 
+## Site analytics
+
+The landing page and the comparison pages load `site/analytics.js`, which sends a
+page view to GoatCounter. It sets no cookies and stores no personal data, and
+visitors who send `DNT` or `Global Privacy Control` are not counted at all — the
+script returns before it even fetches `count.js`.
+
+There is exactly one place the site code is written:
+
+```js
+var SITE_CODE = 'gander';   // site/analytics.js
+```
+
+**It has to be registered before any data appears.** A code that was never created
+answers HTTP 400 (`no site at this domain`) and then fails silently in the reader's
+browser — there is no error to notice, just an empty dashboard.
+
+```
+https://www.goatcounter.com/signup     # account name: gander
+```
+
+Registration needs an email address, a password and the human-verification field
+on that form, so it cannot be automated from here. Once it exists,
+`packaging/check-channels.sh` stops reporting it as a failure and every page
+starts counting with no code change.
+
+`packaging/check-site.sh` (offline) checks that every page loads the script and
+that the script declares a code; `check-channels.sh` (network) checks that the
+code exists on goatcounter.com. The two are separate because the first is what CI
+can do without credentials and the second is the part that actually breaks.
+
+Local previews do not pollute the data: `count.js` skips `localhost`, `127.*`,
+private ranges and `file://` on its own.
+
 ## AUR
 
 `packaging/aur/` contains the `PKGBUILD` and `.SRCINFO` for the `gander` AUR
