@@ -72,4 +72,5 @@ jobs:
             ports-tree/sysutils/gander/Makefile
             ports-tree/sysutils/gander/distinfo
             ports-tree/sysutils/gander/pkg-descr
+            packaging/freebsd/gander.sysutils.diff
           if-no-files-found: error
