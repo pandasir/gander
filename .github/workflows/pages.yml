@@ -71,11 +71,17 @@ jobs:
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
           cp -f site-src/assets/*.png repo-tree/
           cp -f site-src/assets/demo.gif repo-tree/
+          cp -f site-src/assets/demo.webm repo-tree/
+          cp -f site-src/assets/demo.mp4 repo-tree/
+          # The IndexNow key file (see site/61dfc108*.txt). Bing verifies it at
+          # this exact path before accepting the submitted URLs.
+          cp -f site-src/site/61dfc108afd102fcd90caee0b0ff0af4.txt repo-tree/
           for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
                    htop-for-macos.html htop-for-freebsd.html site.css analytics.js \
                    robots.txt sitemap.xml \
                    screenshot-panels.png screenshot-htop.png screenshot-tree.png \
-                   social-preview.png demo.gif; do
+                   social-preview.png demo.gif demo.webm demo.mp4 \
+                   61dfc108afd102fcd90caee0b0ff0af4.txt; do
             test -s "repo-tree/$f" || { echo "::error::repo-tree/$f is missing or empty"; exit 1; }
           done
           # Every page named in the sitemap has to exist, or the sitemap

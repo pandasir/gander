@@ -51,6 +51,44 @@
 }
 </script>
 <script src="analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Is gander an htop replacement?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes and no. It reads the same /proc data and keeps htop's keys, so it drops into the way you already work, and --import-htoprc copies your htop settings over. But the default layout is deliberately not htop's, because a full-width table with the details on a second screen is not the only way to read a process list." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does gander run on Windows?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The three backends are /proc (Linux), sysctl/Mach/libproc (macOS) and sysctl/libkvm (FreeBSD). There is no Windows backend, and the columns that depend on Linux kernel interfaces (PSS, PSI, zram, delay accounting, containers) are Linux only." }
+    },
+    {
+      "@type": "Question",
+      "name": "Why is the crates.io package called gander-bin?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Because gander on crates.io is an unrelated, long-yanked crate. The installed command is still gander." }
+    },
+    {
+      "@type": "Question",
+      "name": "Why does gander not use ncurses?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It renders with ratatui and crossterm, so there is no ncurses development header to install before building." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can gander be used in scripts?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. gander --json, -n, --sort, --filter and --limit run without the TUI and print one row per process." }
+    },
+    {
+      "@type": "Question",
+      "name": "What is gander's license?",
+      "acceptedAnswer": { "@type": "Answer", "text": "GPL-2.0-or-later. gander takes its behaviour, keybindings and column semantics from htop, so keep the license compatible and credit it." }
+    }
+  ]
+}
+</script>
 </head>
 <body>
 
@@ -65,6 +103,14 @@
     <a class="btn" href="#install">Install</a>
   </div>
 </header>
+
+<figure>
+  <video controls muted loop playsinline autoplay width="1200" height="570" poster="screenshot-panels.png">
+    <source src="demo.webm" type="video/webm">
+    <source src="demo.mp4" type="video/mp4">
+  </video>
+  <figcaption>Ten seconds of gander: a filter narrows the list, the inspector follows the cursor down it, <code>t</code> folds it into a tree, and <code>L</code> switches to the full-width htop arrangement.</figcaption>
+</figure>
 
 <figure>
   <img src="screenshot-panels.png" width="1600" height="760"

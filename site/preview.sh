@@ -17,6 +17,8 @@ port=${1:-8899}
 
 cp -f "$root"/assets/*.png "$here"/
 cp -f "$root"/assets/demo.gif "$here"/
+cp -f "$root"/assets/demo.webm "$here"/
+cp -f "$root"/assets/demo.mp4 "$here"/
 
 # Fail loudly rather than serving a page whose stylesheet is missing: that looks
 # like a CSS bug and is really a packaging one.

@@ -42,6 +42,7 @@
   pre .c { color: var(--dim); }
   figure { margin: 0 0 8px; }
   figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; display: block; }
+  figure video { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; display: block; }
   figcaption { color: var(--dim); font-size: 14px; margin-top: 8px; }
   section { padding: 40px 0; border-top: 1px solid var(--line); }
   h2 { font-size: 26px; margin: 0 0 16px; letter-spacing: -0.01em; }

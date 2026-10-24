@@ -17,7 +17,7 @@ Allow: /htop-for-freebsd.html
 Allow: /site.css
 Allow: /analytics.js
 Allow: /screenshot-
-Allow: /demo.gif
+Allow: /demo.
 Disallow: /dists/
 Disallow: /pool/
 Disallow: /repodata/
