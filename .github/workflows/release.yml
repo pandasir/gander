@@ -576,7 +576,8 @@ jobs:
           # which looks like a deploy that worked. Check the files are there and
           # that the version in the page matches the tag being released.
           for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
-                   htop-for-macos.html htop-for-freebsd.html site.css analytics.js \
+                   htop-for-macos.html htop-for-freebsd.html json-process-list.html \
+                   site.css analytics.js \
                    robots.txt sitemap.xml \
                    screenshot-panels.png screenshot-htop.png screenshot-tree.png \
                    social-preview.png demo.gif demo.webm demo.mp4 \

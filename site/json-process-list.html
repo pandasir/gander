@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A JSON process list for scripts — gander's batch mode</title>
+<meta name="description" content="gander --json prints the process list as JSON, with --sort, --filter and --limit, on Linux, macOS and FreeBSD. What htop and btop cannot give your scripts.">
+<link rel="canonical" href="https://pandasir.github.io/gander/json-process-list.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="A JSON process list for scripts">
+<meta property="og:description" content="Live CPU and memory figures, full command lines and byte counts as JSON, without parsing fixed-width ps output.">
+<meta property="og:url" content="https://pandasir.github.io/gander/json-process-list.html">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="A dark card reading &quot;gander&quot; with the tagline &quot;An interactive process viewer for Linux, macOS and FreeBSD&quot;, beside a screenshot of the process table.">
+<meta name="twitter:title" content="A JSON process list for scripts">
+<meta name="twitter:description" content="Live CPU and memory figures, full command lines and byte counts as JSON, without parsing fixed-width ps output.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="A dark card reading &quot;gander&quot; with the tagline &quot;An interactive process viewer for Linux, macOS and FreeBSD&quot;, beside a screenshot of the process table.">
+<script src="analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "A JSON process list for scripts — gander's batch mode",
+  "description": "gander --json prints the process list as JSON, with --sort, --filter and --limit, on Linux, macOS and FreeBSD. What htop and btop cannot give your scripts.",
+  "url": "https://pandasir.github.io/gander/json-process-list.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "en",
+  "dateModified": "2026-10-24",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <p class="crumbs"><a href="index.html">gander</a> / a JSON process list for scripts</p>
+  <h1>A JSON process list for scripts</h1>
+  <p class="lede">The numbers the TUI shows, as one JSON document per sample — for cron jobs, monitors, and anything that would otherwise be parsing fixed-width ps output.</p>
+  <div class="verdict">
+    <p>Use <code>ps</code> for one-shot column output; for that it remains the right tool. Use <code>gander --json</code> when you want live CPU and memory percentages, full command lines and byte counts as data, on Linux, macOS and FreeBSD.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">Install</a>
+    <a class="btn" href="https://github.com/pandasir/gander">Source</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>What the alternatives give your scripts</h2>
+  <p><code>ps</code> prints one snapshot with space-aligned columns, which is why half the scripts on every server contain an <code>awk</code> invocation that breaks the day a column is renamed. Its CPU figure is the process's lifetime average, not what it is doing now, and getting both <code>comm</code> and the full command line without truncation takes flags that differ between procps and Darwin.</p>
+  <p><code>top</code> has a batch mode (<code>-b</code>), but what it batches is the rendered curses screen — a text scrape of a display, not data. <code>htop</code> has no batch mode at all: there is no way to ask it for one sample of anything. <code>btop</code> is in the same position, and so is <code>bottom</code>.</p>
+  <p>That gap is why shell scripts end up re-reading <code>/proc</code> by hand, once per platform. gander's TUI and its batch mode read the same backends — <code>/proc</code> on Linux, <code>sysctl</code>/Mach/libproc on macOS, <code>sysctl</code>/<code>libkvm</code> on FreeBSD — so the numbers a script sees are the numbers the interactive view shows.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>The batch mode</h2>
+<pre><code>gander --json                        <span class="c"># one JSON sample, then exit</span>
+gander --json --limit 5              <span class="c"># at most five rows</span>
+gander --json --sort PERCENT_MEM     <span class="c"># sorted like the TUI's F6</span>
+gander -F "postgres|nginx"           <span class="c"># fixed-string filter, not regex</span>
+gander -n 60 -d 1000 --json          <span class="c"># sixty samples, one per second</span></code></pre>
+  <p>One invocation prints one JSON array of process rows and exits. With <code>-n N</code> it prints N arrays, one after another — a stream of documents, so <code>jq -s 'add'</code> flattens a run into one list. Sorting and filtering happen before JSON is produced, so <code>--limit 5</code> means five rows, not a five-row slice of the whole table downloaded and thrown away.</p>
+  <p>With <code>jq</code>, the top five consumers by memory, tab-separated:</p>
+<pre><code>gander --json --sort PERCENT_MEM --limit 5 |
+  jq -r '.[] | [.pid, .mem_percent, .rss, .cmdline] | @tsv'</code></pre>
+  <p>The same row set, merged across a one-minute run, to catch what spikes and disappears:</p>
+<pre><code>gander -n 60 -d 1000 --json | jq -s 'add |
+  group_by(.comm) | map({comm: .[0].comm, max_rss: (map(.rss) | max)}) |
+  sort_by(-.max_rss) | .[0:10]'</code></pre>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>The fields</h2>
+  <p>A real row, from macOS:</p>
+<pre><code>{"pid":407,"ppid":1,"uid":0,"comm":"loginwindow","state":"S",
+  "cpu_percent":0.00,"mem_percent":0.18,"rss":15613952,
+  "vsize":446144643072,"nice":0,"priority":0,"threads":6,
+  "elapsed":479475,"is_thread":false,
+  "cmdline":"/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console",
+  "memory":null}</code></pre>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>pid</code>, <code>ppid</code>, <code>uid</code></td><td>The ids, as the kernel reports them.</td></tr>
+      <tr><td><code>comm</code></td><td>The executable's base name, the column the TUI sorts by default.</td></tr>
+      <tr><td><code>cmdline</code></td><td>The full command line with arguments, never truncated. This is the field <code>ps</code> makes you fight for.</td></tr>
+      <tr><td><code>state</code></td><td>The kernel's state character: <code>R</code> running, <code>S</code> sleeping, <code>Z</code> zombie, and so on.</td></tr>
+      <tr><td><code>cpu_percent</code>, <code>mem_percent</code></td><td>Live figures over the sample interval, the same numbers the TUI's columns show — not <code>ps</code>'s lifetime average.</td></tr>
+      <tr><td><code>rss</code>, <code>vsize</code></td><td>Resident and virtual size, in bytes. Not "KB, probably", which is the unit ambiguity that makes parsed <code>ps</code> output untrustworthy.</td></tr>
+      <tr><td><code>nice</code>, <code>priority</code>, <code>threads</code></td><td>Scheduling figures as the kernel reports them.</td></tr>
+      <tr><td><code>elapsed</code></td><td>Seconds since the process started.</td></tr>
+      <tr><td><code>is_thread</code></td><td>True for rows that are threads of another process rather than processes; with <code>--threads</code> the per-thread rows are emitted too.</td></tr>
+      <tr><td><code>memory</code>, <code>identity</code></td><td>Platform-dependent: nested memory detail and container identity where the platform reports one, null where it does not.</td></tr>
+    </tbody>
+  </table>
+  <p>Sorting accepts the TUI's column names — <code>PERCENT_CPU</code>, <code>PERCENT_MEM</code>, <code>RSS</code>, <code>PID</code> and the rest. <code>-F</code> matches fixed, case-insensitive strings against the command line, separated by <code>|</code>; it is deliberately not a regex, because a filter that runs on a schedule should not be one character away from matching everything.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>What it is not</h2>
+  <p>It is not a monitoring agent. Each invocation is self-contained: no daemon, no storage, no dashboard, no dependency. A cron job that appends <code>gander --json</code> to a file is the whole system, and the file stays readable by <code>jq</code> forever. If you need continuous collection with retention and alerting, point the tool you already run at this output rather than expecting gander to grow a server.</p>
+  <p>It is also not <code>ps</code>. One-shot column output, process-group selection and session ids are <code>ps</code>'s strengths, and a script that already works with <code>ps</code> has no reason to change. The batch mode is for the cases where <code>ps</code> runs out: live percentages, byte-true sizes, and numbers that match what the interactive view shows.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Install</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># any platform with Rust</span></code></pre>
+  <p>Linux packages for Debian, Ubuntu, Fedora and RHEL are on a signed repository, and every release ships archives for macOS (Apple Silicon and Intel), Linux (x86_64 and arm64) and FreeBSD. See <a href="index.html#install">all install options</a>.</p>
+  <div class="note">
+    <p>There is no AUR package yet: AUR account registration has been closed since the June 2026 malicious-packages incident and there is no manual process to create one. Arch users build from the same <code>PKGBUILD</code> that would have been published — see <a href="index.html#install">Install</a>.</p>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Keep reading</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>The same keys and data, with the inspector beside the table.</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>A graphical monitor with its own layout. Where it and gander differ.</p>
+    </a>
+    <a class="card" href="htop-for-macos.html">
+      <h3>htop on macOS</h3>
+      <p>What libproc, sysctl and Mach will and will not give a process viewer.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Releases</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">Keymap</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">Changelog</a></p>
+  <p>GPL-2.0-or-later. Built with Rust.</p>
+</div>
+</footer>
+
+</body>
+</html>

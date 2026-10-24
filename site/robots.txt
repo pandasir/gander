@@ -14,6 +14,7 @@ Allow: /vs-btop.html
 Allow: /vs-bottom.html
 Allow: /htop-for-macos.html
 Allow: /htop-for-freebsd.html
+Allow: /json-process-list.html
 Allow: /site.css
 Allow: /analytics.js
 Allow: /screenshot-

@@ -21,6 +21,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://pandasir.github.io/gander/json-process-list.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://pandasir.github.io/gander/vs-btop.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
