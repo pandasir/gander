@@ -1,0 +1,39 @@
+# gander
+
+> gander is a cross-platform interactive process viewer for Linux, macOS and
+> FreeBSD, written in Rust. Think htop, with a layout that shows you one process
+> instead of all of them at once: a live inspector sits beside the process table
+> and follows the selection. It keeps most of htop's keybindings, samples in the
+> background, and ships a JSON batch mode for scripts.
+
+gander's default `panels` layout puts a compact system column on the left, the
+process table in the middle and a live inspector on the right showing the
+selected process's command line, state, memory and runtime. Press `L` for the
+classic full-width `htop` layout. The macOS backend reads sysctl, Mach and
+libproc; the FreeBSD backend reads sysctl and libkvm. On Linux there is more to
+read: PSS/EPSS, PSI, zram/zswap, GPU, delay accounting and container identity
+are available as optional columns or meters.
+
+Install: `brew install pandasir/tap/gander` (macOS), `cargo install gander-bin`
+(any platform with Rust), or the AUR package on Arch Linux.
+
+## Pages
+
+- [gander — a cross-platform interactive process viewer](https://pandasir.github.io/gander/): landing page with screenshots, install commands and feature overview
+- [gander vs htop](https://pandasir.github.io/gander/vs-htop.html): what gander keeps from htop's keys, and where the layouts differ
+- [gander vs btop](https://pandasir.github.io/gander/vs-btop.html): two different answers to "not htop"
+- [gander vs bottom](https://pandasir.github.io/gander/vs-bottom.html): FreeBSD support, JSON batch mode and layout compared
+- [htop on macOS](https://pandasir.github.io/gander/htop-for-macos.html): what macOS will and will not let a process viewer read, and how gander handles it
+- [htop on FreeBSD](https://pandasir.github.io/gander/htop-for-freebsd.html): what FreeBSD exposes to process viewers, and what gander reads
+- [A JSON process list for scripts](https://pandasir.github.io/gander/json-process-list.html): gander's batch mode — `--json`, `-n`, `--sort`, `--filter` and `--limit` without the TUI
+
+## Source and releases
+
+- [GitHub repository](https://github.com/pandasir/gander): source, README in English, 简体中文, 日本語 and 한국어, issue tracker
+- [Releases](https://github.com/pandasir/gander/releases): signed release binaries for Linux, macOS and FreeBSD
+- [Keybindings](https://github.com/pandasir/gander/blob/main/docs/KEYS.md): the full key map, htop-compatible unless noted
+- [Roadmap](https://github.com/pandasir/gander/blob/main/docs/ROADMAP.md): planned platforms and features
+
+## License
+
+GPL-2.0-or-later.

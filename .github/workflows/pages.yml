@@ -69,6 +69,7 @@ jobs:
           cp -f site-src/site/*.js repo-tree/
           cp -f site-src/site/robots.txt repo-tree/robots.txt
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
+          cp -f site-src/site/llms.txt repo-tree/llms.txt
           cp -f site-src/assets/*.png repo-tree/
           cp -f site-src/assets/demo.gif repo-tree/
           cp -f site-src/assets/demo.webm repo-tree/
@@ -79,7 +80,7 @@ jobs:
           for f in index.html vs-htop.html vs-btop.html vs-bottom.html \
                    htop-for-macos.html htop-for-freebsd.html json-process-list.html \
                    site.css analytics.js \
-                   robots.txt sitemap.xml \
+                   robots.txt sitemap.xml llms.txt \
                    screenshot-panels.png screenshot-htop.png screenshot-tree.png \
                    social-preview.png demo.gif demo.webm demo.mp4 \
                    61dfc108afd102fcd90caee0b0ff0af4.txt; do
