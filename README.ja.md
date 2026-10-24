@@ -21,6 +21,9 @@ cargo install gander-bin             # Rust が入っている任意のプラッ
 git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
+60秒で試す：インストール後、`gander` を起動し、矢印キーでプロセスを選択、
+`L` で従来の htop レイアウトに切り替えて、`q` で終了します。
+
 ![録画: プロセスの選択、ツリー表示、そして L で htop レイアウトへ](assets/demo.gif)
 
 gander は、システム上で実行中のプロセスとそのリソース使用量を表示します。

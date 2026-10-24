@@ -21,6 +21,9 @@ cargo install gander-bin             # Rust가 있는 모든 플랫폼
 git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
+60초 만에 체험하기: 설치 후 `gander`를 실행하고, 방향키로 프로세스를 고르고,
+`L`로 클래식 htop 레이아웃으로 전환한 뒤, `q`로 종료합니다.
+
 ![녹화: 프로세스 선택, 트리 보기, 그리고 L로 htop 레이아웃 전환](assets/demo.gif)
 
 gander는 시스템에서 실행 중인 프로세스와 각 프로세스의 리소스 사용량을 보여 줍니다.

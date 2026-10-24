@@ -21,6 +21,9 @@ cargo install gander-bin             # any platform with Rust
 git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
+Try it in 60 seconds: install, run `gander`, pick a process with the arrow
+keys, press `L` for the classic htop layout, `q` to quit.
+
 ![Recording: selecting a process, tree view, then L for the htop layout](assets/demo.gif)
 
 gander shows what is running on your system and how much it costs. It runs on

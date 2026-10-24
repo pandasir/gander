@@ -20,6 +20,9 @@ cargo install gander-bin             # 任何有 Rust 的平台
 git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si   # Arch Linux
 ```
 
+60 秒上手：安装后运行 `gander`，方向键选进程，按 `L` 切到经典 htop 布局，
+`q` 退出。
+
 ![录屏：选中进程、树状视图，然后按 L 切到 htop 布局](assets/demo.gif)
 
 gander 展示系统中正在运行的进程及其资源消耗。它支持 Linux、macOS 和 FreeBSD，
