@@ -9,6 +9,8 @@
 
 [English](README.md) | **简体中文** | [日本語](README.ja.md) | [한국어](README.ko.md)
 
+文档与对比页：**[pandasir.github.io/gander](https://pandasir.github.io/gander/)** — [vs htop](https://pandasir.github.io/gander/vs-htop.html) · [vs btop](https://pandasir.github.io/gander/vs-btop.html) · [vs bottom](https://pandasir.github.io/gander/vs-bottom.html) · [htop on macOS](https://pandasir.github.io/gander/htop-for-macos.html) · [htop on FreeBSD](https://pandasir.github.io/gander/htop-for-freebsd.html) · [JSON 批处理模式](https://pandasir.github.io/gander/json-process-list.html)
+
 > **gander** 是一个用 Rust 编写的跨平台交互式进程查看器，支持 Linux、macOS 和
 > FreeBSD。可以理解成 htop，但布局的重点是「一个进程」而不是「所有进程」。
 

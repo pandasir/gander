@@ -9,6 +9,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | **한국어**
 
+문서: **[pandasir.github.io/gander](https://pandasir.github.io/gander/)** — [vs htop](https://pandasir.github.io/gander/vs-htop.html) · [vs btop](https://pandasir.github.io/gander/vs-btop.html) · [vs bottom](https://pandasir.github.io/gander/vs-bottom.html) · [htop on macOS](https://pandasir.github.io/gander/htop-for-macos.html) · [htop on FreeBSD](https://pandasir.github.io/gander/htop-for-freebsd.html) · [JSON batch mode](https://pandasir.github.io/gander/json-process-list.html)
+
 > **gander**는 Rust로 작성된 Linux·macOS·FreeBSD용 대화형 프로세스 뷰어입니다.
 > htop과 같은 부류지만, 레이아웃의 주인공은 "모든 프로세스"가 아니라
 > "고른 프로세스 하나"입니다.
