@@ -14,8 +14,29 @@ libproc; the FreeBSD backend reads sysctl and libkvm. On Linux there is more to
 read: PSS/EPSS, PSI, zram/zswap, GPU, delay accounting and container identity
 are available as optional columns or meters.
 
+Current release: v0.6.7 (October 2026).
+
 Install: `brew install pandasir/tap/gander` (macOS), `cargo install gander-bin`
-(any platform with Rust), or the AUR package on Arch Linux.
+(any platform with Rust), or the AUR package on Arch Linux. Debian/Ubuntu and
+Fedora/RHEL install from signed repositories hosted on this site:
+
+```bash
+# Debian, Ubuntu, Linux Mint, …
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update && sudo apt install gander
+
+# Fedora, RHEL, Rocky, Alma, openSUSE, …
+sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo curl -fsSL https://pandasir.github.io/gander/gander.repo \
+  -o /etc/yum.repos.d/gander.repo
+sudo dnf install gander
+```
+
+Upgrades then arrive with `apt upgrade` / `dnf upgrade`.
 
 ## Pages
 
@@ -33,6 +54,7 @@ Install: `brew install pandasir/tap/gander` (macOS), `cargo install gander-bin`
 - [Releases](https://github.com/pandasir/gander/releases): signed release binaries for Linux, macOS and FreeBSD
 - [Keybindings](https://github.com/pandasir/gander/blob/main/docs/KEYS.md): the full key map, htop-compatible unless noted
 - [Roadmap](https://github.com/pandasir/gander/blob/main/docs/ROADMAP.md): planned platforms and features
+- [Portability](https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md): which capabilities each platform's backend can read, and which other Unix targets compile without a live backend
 
 ## License
 
