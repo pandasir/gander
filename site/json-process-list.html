@@ -34,7 +34,7 @@
   "url": "https://pandasir.github.io/gander/json-process-list.html",
   "image": "https://pandasir.github.io/gander/social-preview.png",
   "inLanguage": "en",
-  "dateModified": "2026-10-24",
+  "dateModified": "2026-10-25",
   "isPartOf": {
     "@type": "WebSite",
     "name": "gander",
@@ -59,7 +59,7 @@
   <h1>A JSON process list for scripts</h1>
   <p class="lede">The numbers the TUI shows, as one JSON document per sample — for cron jobs, monitors, and anything that would otherwise be parsing fixed-width ps output.</p>
   <div class="verdict">
-    <p>Use <code>ps</code> for one-shot column output; for that it remains the right tool. Use <code>gander --json</code> when you want live CPU and memory percentages, full command lines and byte counts as data, on Linux, macOS and FreeBSD.</p>
+    <p>Use <code>ps</code> for one-shot column output; for that it remains the right tool. Use <code>gander --json</code> when you want memory percentages, full command lines and byte counts as data, on Linux, macOS and FreeBSD. For live CPU percentages, take at least two samples in the same invocation; the first sample has no CPU baseline.</p>
   </div>
   <div class="cta">
     <a class="btn primary" href="index.html#install">Install</a>
@@ -80,12 +80,14 @@
 <section>
 <div class="wrap">
   <h2>The batch mode</h2>
-<pre><code>gander --json                        <span class="c"># one JSON sample, then exit</span>
-gander --json --limit 5              <span class="c"># at most five rows</span>
-gander --json --sort PERCENT_MEM     <span class="c"># sorted like the TUI's F6</span>
-gander -F "postgres|nginx"           <span class="c"># fixed-string filter, not regex</span>
-gander -n 60 -d 1000 --json          <span class="c"># sixty samples, one per second</span></code></pre>
+<pre><code>gander --json                       <span class="c"># one JSON sample, then exit</span>
+gander --json --limit 5             <span class="c"># at most five rows</span>
+gander --json --sort PERCENT_MEM    <span class="c"># sorted like the TUI's F6</span>
+gander --json -F "postgres|nginx"    <span class="c"># fixed-string filter, not regex</span>
+gander -n 60 -d 1000 --json         <span class="c"># sixty samples, about one second apart</span></code></pre>
   <p>One invocation prints one JSON array of process rows and exits. With <code>-n N</code> it prints N arrays, one after another — a stream of documents, so <code>jq -s 'add'</code> flattens a run into one list. Sorting and filtering happen before JSON is produced, so <code>--limit 5</code> means five rows, not a five-row slice of the whole table downloaded and thrown away.</p>
+  <p><code>cpu_percent</code> needs two consecutive samples of a process. Every invocation starts with a fresh sampler, so its first sample reports zero CPU for every row; a newly observed process also starts at zero in later samples. Memory figures do not need this baseline. To get a CPU sample for a script or cron job, take two samples one second apart and keep only the second array:</p>
+<pre><code>gander -n 2 -d 1000 --json | jq -s '.[1]'</code></pre>
   <p>With <code>jq</code>, the top five consumers by memory, tab-separated:</p>
 <pre><code>gander --json --sort PERCENT_MEM --limit 5 |
   jq -r '.[] | [.pid, .mem_percent, .rss, .cmdline] | @tsv'</code></pre>
@@ -103,7 +105,7 @@ gander -n 60 -d 1000 --json          <span class="c"># sixty samples, one per se
 <pre><code>{"pid":407,"ppid":1,"uid":0,"comm":"loginwindow","state":"S",
   "cpu_percent":0.00,"mem_percent":0.18,"rss":15613952,
   "vsize":446144643072,"nice":0,"priority":0,"threads":6,
-  "elapsed":479475,"is_thread":false,
+  "elapsed":479475,"is_thread":false,"identity":407,
   "cmdline":"/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console",
   "memory":null}</code></pre>
   <table>
@@ -115,22 +117,24 @@ gander -n 60 -d 1000 --json          <span class="c"># sixty samples, one per se
       <tr><td><code>comm</code></td><td>The executable's base name, the column the TUI sorts by default.</td></tr>
       <tr><td><code>cmdline</code></td><td>The full command line with arguments, never truncated. This is the field <code>ps</code> makes you fight for.</td></tr>
       <tr><td><code>state</code></td><td>The kernel's state character: <code>R</code> running, <code>S</code> sleeping, <code>Z</code> zombie, and so on.</td></tr>
-      <tr><td><code>cpu_percent</code>, <code>mem_percent</code></td><td>Live figures over the sample interval, the same numbers the TUI's columns show — not <code>ps</code>'s lifetime average.</td></tr>
+      <tr><td><code>cpu_percent</code></td><td>CPU usage over the interval between consecutive samples of the process, not its lifetime average. Zero until a previous sample is available, including every row in the first sample of an invocation.</td></tr>
+      <tr><td><code>mem_percent</code></td><td>Resident memory as a percentage of total physical memory at the time of the sample; available in the first sample too.</td></tr>
       <tr><td><code>rss</code>, <code>vsize</code></td><td>Resident and virtual size, in bytes. Not "KB, probably", which is the unit ambiguity that makes parsed <code>ps</code> output untrustworthy.</td></tr>
       <tr><td><code>nice</code>, <code>priority</code>, <code>threads</code></td><td>Scheduling figures as the kernel reports them.</td></tr>
       <tr><td><code>elapsed</code></td><td>Seconds since the process started.</td></tr>
       <tr><td><code>is_thread</code></td><td>True for rows that are threads of another process rather than processes; with <code>--threads</code> the per-thread rows are emitted too.</td></tr>
-      <tr><td><code>memory</code>, <code>identity</code></td><td>Platform-dependent: nested memory detail and container identity where the platform reports one, null where it does not.</td></tr>
+      <tr><td><code>identity</code></td><td>A numeric row identifier: the PID for a process row, or a thread-specific ID for a thread row. It distinguishes threads that share a PID on macOS; it is not a container identifier and is not null.</td></tr>
+      <tr><td><code>memory</code></td><td>Platform-dependent nested memory and resource detail. Null on macOS and FreeBSD; on Linux, individual values are null when their optional reads were not requested or the data was unavailable.</td></tr>
     </tbody>
   </table>
-  <p>Sorting accepts the TUI's column names — <code>PERCENT_CPU</code>, <code>PERCENT_MEM</code>, <code>RSS</code>, <code>PID</code> and the rest. <code>-F</code> matches fixed, case-insensitive strings against the command line, separated by <code>|</code>; it is deliberately not a regex, because a filter that runs on a schedule should not be one character away from matching everything.</p>
+  <p>Sorting accepts the TUI's column names — <code>PERCENT_CPU</code>, <code>PERCENT_MEM</code>, <code>M_RESIDENT</code>, <code>PID</code> and the rest. These are not the JSON keys: to sort by <code>rss</code>, use <code>--sort M_RESIDENT</code>. <code>-F</code> matches fixed, case-insensitive strings against the command line, separated by <code>|</code>; it is deliberately not a regex, because a filter that runs on a schedule should not be one character away from matching everything.</p>
 </div>
 </section>
 
 <section>
 <div class="wrap">
   <h2>What it is not</h2>
-  <p>It is not a monitoring agent. Each invocation is self-contained: no daemon, no storage, no dashboard, no dependency. A cron job that appends <code>gander --json</code> to a file is the whole system, and the file stays readable by <code>jq</code> forever. If you need continuous collection with retention and alerting, point the tool you already run at this output rather than expecting gander to grow a server.</p>
+  <p>It is not a monitoring agent. Each invocation is self-contained: no daemon, no storage, no dashboard, no dependency. A cron job can append <code>gander --json</code> to a file for memory snapshots; for CPU measurements, use the two-sample command above instead. The file remains readable by <code>jq</code>. If you need continuous collection with retention and alerting, point the tool you already run at this output rather than expecting gander to grow a server.</p>
   <p>It is also not <code>ps</code>. One-shot column output, process-group selection and session ids are <code>ps</code>'s strengths, and a script that already works with <code>ps</code> has no reason to change. The batch mode is for the cases where <code>ps</code> runs out: live percentages, byte-true sizes, and numbers that match what the interactive view shows.</p>
 </div>
 </section>

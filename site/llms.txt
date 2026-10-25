@@ -17,8 +17,14 @@ are available as optional columns or meters.
 Current release: v0.6.7 (October 2026).
 
 Install: `brew install pandasir/tap/gander` (macOS), `cargo install gander-bin`
-(any platform with Rust), or the AUR package on Arch Linux. Debian/Ubuntu and
-Fedora/RHEL install from signed repositories hosted on this site:
+(any platform with Rust). There is no published AUR package yet. On Arch Linux,
+build from the PKGBUILD in this repository:
+
+```bash
+git clone https://github.com/pandasir/gander && cd gander/packaging/aur && makepkg -si
+```
+
+Debian/Ubuntu and Fedora/RHEL install from signed repositories hosted on this site:
 
 ```bash
 # Debian, Ubuntu, Linux Mint, …
