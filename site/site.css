@@ -119,3 +119,13 @@
   }
   /* Long tokens (paths, sysctl names, code) must not force a wide line. */
   body { overflow-wrap: break-word; }
+
+  /* Language switcher at the top of every page header. The separators are
+     drawn with ::before on any following sibling, so the current language can
+     sit anywhere in the order without breaking the dots. */
+  nav.lang { font-size: 14px; color: var(--dim); margin: 0 0 20px; }
+  .subpage nav.lang { margin-bottom: 10px; }
+  nav.lang > * + *::before { content: "·"; margin: 0 8px; color: var(--line); }
+  nav.lang a { color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+  nav.lang a:hover { color: var(--fg); }
+  nav.lang span[aria-current] { color: var(--fg); font-weight: 600; }

@@ -6,6 +6,11 @@
 <title>gander vs btop — two different answers to "not htop"</title>
 <meta name="description" content="btop and gander both reject htop's layout in opposite directions: btop draws the machine, gander lists the processes. Which to pick, and why.">
 <link rel="canonical" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html">
 <meta name="robots" content="index, follow">
 <link rel="stylesheet" href="site.css">
 
@@ -34,7 +39,7 @@
   "url": "https://pandasir.github.io/gander/vs-btop.html",
   "image": "https://pandasir.github.io/gander/social-preview.png",
   "inLanguage": "en",
-  "dateModified": "2026-10-23",
+  "dateModified": "2026-10-27",
   "isPartOf": {
     "@type": "WebSite",
     "name": "gander",
@@ -55,6 +60,12 @@
 
 <div class="wrap">
 <header>
+  <nav class="lang" aria-label="Language">
+    <span aria-current="true">English</span>
+    <a lang="zh-CN" hreflang="zh-CN" href="zh-CN/vs-btop.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="ja/vs-btop.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="ko/vs-btop.html">한국어</a>
+  </nav>
   <p class="crumbs"><a href="index.html">gander</a> / compared with btop</p>
   <h1>gander vs btop</h1>
   <p class="lede">Both reject htop's layout. They disagree about what should replace it: btop draws the machine, gander lists the processes.</p>
@@ -72,7 +83,7 @@
 <div class="wrap">
   <h2>Different tools that look like the same category</h2>
   <p>btop is a resource monitor: CPU, memory, network, disk and temperature as graphs and braille plots, with the process list as one box among several. It is good at what it does, and if you want a dashboard it is the right answer.</p>
-  <p>gander does not try to be a dashboard. It is a process list — the same thing htop is — with the detail of the selected process moved from a separate screen into a column. The screenshots are the honest summary:</p>
+  <p>gander is a process list — the same thing htop is — with the detail of the selected process moved from a separate screen into a column. The screenshots are the whole argument:</p>
   <div class="shot3">
     <div>
       <img src="screenshot-panels.png" width="1800" height="800" loading="lazy" alt="gander's panels layout: one aggregate CPU bar, a memory and swap meter, a compact per-core grid in one column, and the process table with the inspector.">
@@ -106,7 +117,7 @@
       <tr><td>License</td><td class="c">GPL-2.0-or-later</td><td class="c">Apache-2.0</td></tr>
     </tbody>
   </table>
-  <p>btop's platform list is genuinely broader in one direction — it also builds for NetBSD and OpenBSD, which gander does not. If those are your systems, btop is the choice and this page is not for you.</p>
+  <p>btop's platform list is broader in one direction — it also builds for NetBSD and OpenBSD, which gander does not. If those are your systems, btop is the choice and this page is not for you.</p>
 </div>
 </section>
 

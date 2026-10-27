@@ -6,6 +6,11 @@
 <title>gander vs htop — an htop alternative that keeps htop's keys</title>
 <meta name="description" content="gander vs htop: the same /proc data and keybindings, but the selected process's details sit beside the list. Includes --import-htoprc migration.">
 <link rel="canonical" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html">
 <meta name="robots" content="index, follow">
 <link rel="stylesheet" href="site.css">
 
@@ -34,7 +39,7 @@
   "url": "https://pandasir.github.io/gander/vs-htop.html",
   "image": "https://pandasir.github.io/gander/social-preview.png",
   "inLanguage": "en",
-  "dateModified": "2026-10-23",
+  "dateModified": "2026-10-27",
   "isPartOf": {
     "@type": "WebSite",
     "name": "gander",
@@ -55,9 +60,15 @@
 
 <div class="wrap">
 <header>
+  <nav class="lang" aria-label="Language">
+    <span aria-current="true">English</span>
+    <a lang="zh-CN" hreflang="zh-CN" href="zh-CN/vs-htop.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="ja/vs-htop.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="ko/vs-htop.html">한국어</a>
+  </nav>
   <p class="crumbs"><a href="index.html">gander</a> / compared with htop</p>
   <h1>gander vs htop</h1>
-  <p class="lede">The same process data and the same keybindings, with the details of the selected process beside the list instead of on a screen you have to leave it to reach.</p>
+  <p class="lede">The same process data and the same keybindings. The difference is where the details of the selected process live: beside the table, not a keypress away.</p>
   <div class="verdict">
     <p>Use htop if you want the tool that ships with every distribution and nothing else. Use gander if you already know htop's keys and want the inspector without giving up the table.</p>
   </div>
@@ -105,6 +116,7 @@
       <tr><td>License</td><td class="c">GPL-2.0-or-later</td><td class="c">GPL-2.0-or-later</td></tr>
     </tbody>
   </table>
+  <p class="sub">A dash means not applicable — htop has htop's keybindings and reads htop's config by definition.</p>
   <p>htop is the reference for most of this table, and gander takes its column semantics and keybindings from it deliberately. The rows where gander is not simply "htop plus a panel" are the last three: the batch mode, the Linux-only extra columns, and the fact that htop has no equivalent of the inspector.</p>
 </div>
 </section>
@@ -141,9 +153,6 @@
 <pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
 cargo install gander-bin             <span class="c"># any platform with Rust</span></code></pre>
   <p>Linux packages for Debian, Ubuntu, Fedora and RHEL are on a signed repository, and every release ships archives for macOS (Apple Silicon and Intel), Linux (x86_64 and arm64) and FreeBSD. See <a href="index.html#install">all install options</a>.</p>
-  <div class="note">
-    <p>There is no AUR package yet: AUR account registration has been closed since the June 2026 malicious-packages incident and there is no manual process to create one. Arch users build from the same <code>PKGBUILD</code> that would have been published — see <a href="index.html#install">Install</a>.</p>
-  </div>
 </div>
 </section>
 

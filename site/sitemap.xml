@@ -1,37 +1,283 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://pandasir.github.io/gander/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/"/>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/"/>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/"/>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/"/>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/vs-htop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/vs-htop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/vs-htop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/vs-htop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/htop-for-macos.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/htop-for-macos.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/htop-for-macos.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/htop-for-macos.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/htop-for-freebsd.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/htop-for-freebsd.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/htop-for-freebsd.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/json-process-list.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/json-process-list.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/json-process-list.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/json-process-list.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/vs-btop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/vs-btop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/vs-btop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/vs-btop.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://pandasir.github.io/gander/vs-bottom.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/zh-CN/vs-bottom.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ja/vs-bottom.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html"/>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://pandasir.github.io/gander/ko/vs-bottom.html</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html"/>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>

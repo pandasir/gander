@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeBSD에서 htop — 일부만 지원하는 뷰어들</title>
+<meta name="description" content="htop은 FreeBSD를 지원하지만, 그보다 새 프로세스 뷰어 여럿은 그렇지 않습니다. gander가 sysctl과 libkvm을 통해 읽는 것, 그리고 실제 커널에서 테스트하는 방법.">
+<link rel="canonical" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="FreeBSD에서 htop, 그리고 대체 도구들의 지원 범위">
+<meta property="og:description" content="sysctl과 libkvm이면 FreeBSD에서도 완전한 프로세스 표를 얻습니다. 실제로 이 인터페이스를 쓰는 뷰어들입니다.">
+<meta property="og:url" content="https://pandasir.github.io/gander/ko/htop-for-freebsd.html">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<meta name="twitter:title" content="FreeBSD에서 htop, 그리고 대체 도구들의 지원 범위">
+<meta name="twitter:description" content="sysctl과 libkvm이면 FreeBSD에서도 완전한 프로세스 표를 얻습니다. 실제로 이 인터페이스를 쓰는 뷰어들입니다.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "FreeBSD에서 htop — 일부만 지원하는 뷰어들",
+  "description": "htop은 FreeBSD를 지원하지만, 그보다 새 프로세스 뷰어 여럿은 그렇지 않습니다. gander가 sysctl과 libkvm을 통해 읽는 것, 그리고 실제 커널에서 테스트하는 방법.",
+  "url": "https://pandasir.github.io/gander/ko/htop-for-freebsd.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ko",
+  "dateModified": "2026-10-23",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ko/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="언어">
+    <a lang="en" hreflang="en" href="../htop-for-freebsd.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/htop-for-freebsd.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="../ja/htop-for-freebsd.html">日本語</a>
+    <span aria-current="true">한국어</span>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / FreeBSD 편</p>
+  <h1>FreeBSD에서의 프로세스 뷰어</h1>
+  <p class="lede">FreeBSD는 새 터미널 프로세스 뷰어가 드물어지는 지점입니다. 데이터를 얻기 어려워서가 아니라, 그곳에서 테스트하는 프로젝트가 적기 때문입니다.</p>
+  <div class="verdict">
+    <p>htop은 오래전부터 FreeBSD를 지원하고, gander는 CI의 실제 FreeBSD 커널에서 검증되는 전용 <code>sysctl</code>/<code>libkvm</code> 백엔드를 갖추고 있습니다. FreeBSD에서 새 도구를 고른다면 플랫폼 지원 행이 곧 결정인 경우가 많습니다.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">gander 설치</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">백엔드 참고 사항</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>실제로 FreeBSD를 지원하는 곳</h2>
+  <table class="compare">
+    <thead><tr><th></th><th class="c">FreeBSD 지원</th></tr></thead>
+    <tbody>
+      <tr><td>htop</td><td class="c yes">예, ports 트리에 있음</td></tr>
+      <tr><td>gander</td><td class="c yes">예, <code>libkvm</code> 백엔드, VM에서 CI 검증</td></tr>
+      <tr><td>btop</td><td class="c yes">예, CI에서 빌드 (NetBSD, OpenBSD도)</td></tr>
+      <tr><td>bottom</td><td class="c">비공식으로 표기, “제한적인 지원만 받을 수 있음”</td></tr>
+    </tbody>
+  </table>
+  <p>도구의 순위는 아닙니다. bottom은 좋은 프로그램이고, 자신의 FreeBSD 지원 수준을 분명히 말합니다. 요점은 더 좁습니다. FreeBSD에서는 무엇보다 이 행을 먼저 확인해야 합니다. 컴파일은 되지만 플랫폼에서 검증되지 않은 뷰어는 결국 빠진 값이 아니라 틀린 값을 보여 주기 때문입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>gander가 FreeBSD에서 읽는 것</h2>
+  <p>백엔드는 두 인터페이스를 씁니다. <code>sysctl</code>이 프로세스 표와 시스템 수치를 공급하고, <code>libkvm</code>(<code>kvm_getswapinfo</code>, <code>devstat_getdevs</code>)이 <code>sysctl</code>이 노출하지 않는 부분을 채웁니다.</p>
+  <table>
+    <thead><tr><th>수치</th><th>출처</th></tr></thead>
+    <tbody>
+      <tr><td>프로세스 목록</td><td><code>sysctl(KERN_PROC_PROC)</code> → <code>kinfo_proc[]</code></td></tr>
+      <tr><td>CPU 시간, 시작 시간</td><td><code>ki_runtime</code> (마이크로초), <code>ki_start</code></td></tr>
+      <tr><td>상주 및 가상 크기</td><td><code>ki_rssize</code> (페이지), <code>ki_size</code> (바이트)</td></tr>
+      <tr><td>상태 문자</td><td><code>ki_stat</code>와 <code>ki_tdflags</code>/<code>ki_slptime</code></td></tr>
+      <tr><td>명령줄, 환경</td><td><code>sysctl(KERN_PROC_ARGS)</code>, <code>KERN_PROC_ENV</code></td></tr>
+      <tr><td>실행 파일, cwd</td><td><code>KERN_PROC_PATHNAME</code>, <code>KERN_PROC_CWD</code></td></tr>
+      <tr><td>열린 파일</td><td><code>KERN_PROC_FILEDESC</code></td></tr>
+      <tr><td>코어별 CPU</td><td><code>kern.cp_times</code></td></tr>
+      <tr><td>메모리</td><td><code>vm.stats.vm.v_*</code>와 <code>v_page_count</code></td></tr>
+      <tr><td>스왑</td><td><code>kvm_getswapinfo(3)</code></td></tr>
+      <tr><td>디스크 처리량</td><td><code>devstat_getdevs(3)</code></td></tr>
+      <tr><td>네트워크 처리량</td><td><code>sysctl(NET_RT_IFLIST)</code></td></tr>
+      <tr><td>CPU 선호도</td><td><code>cpuset_getaffinity</code> / <code>cpuset_setaffinity</code></td></tr>
+    </tbody>
+  </table>
+  <p>그 행마다 개발 중에, 다른 도구와의 비교로만 잡을 수 있었던 버그가 생겼습니다. 알아 둘 만한 것들 몇 가지:</p>
+  <ul>
+    <li><code>ki_runtime</code>은 <strong>마이크로초</strong>입니다. 반면 Linux와 macOS의 모든 CPU 시간 필드는 틱 카운터입니다. 이를 <code>HZ</code> 제수로 나누면 네 자릿수나 벗어난 백분율이 나옵니다.</li>
+    <li><code>ki_rssize</code>는 페이지이고 <code>ki_size</code>는 바이트입니다. 짝처럼 보이지만 짝이 아닙니다. 페이지 크기를 잊으면 1.2 GB 프로세스를 300 MB로 보고하는데, 리뷰를 통과할 만큼 그럴듯한 수치입니다.</li>
+    <li><code>ki_stat</code>은 상태 문자가 아닙니다. <code>SSLEEP</code>은 <code>ki_tdflags &amp; TDF_SINTR</code>와 <code>ki_slptime</code>에 따라 셋으로 갈라지고, 이를 산술적으로 대응시키면 새로 시작한 프로세스가 <code>I</code>로, 잠긴 프로세스가 <code>X</code>로 표시됩니다.</li>
+    <li><code>kvm_getswapinfo</code>는 <strong>페이지</strong>를 보고합니다. htop 자신의 FreeBSD 백엔드는 페이지 크기 대신 1024를 곱하는데, 그러면 1 GiB 스왑 파일을 4 MiB로 보고하면서 단위는 바이트라고 표시합니다. gander는 <code>swapinfo(8)</code>과 같은 방식으로 계산합니다.</li>
+    <li><code>hw.physmem</code>은 VM이 관리하는 메모리보다 큽니다. 이를 메모리 막대의 분모로 쓰면 막대가 영영 가득 차지 않는데, 정말로 메모리가 부족한 시스템에서는 이것이 렌더링 버그로 읽힙니다.</li>
+  </ul>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD에 없는 것, 그리고 gander의 표시 방식</h2>
+  <p>macOS와 같은 규칙입니다. <code>-</code>만 렌더링하게 될 열은 열 목록에서 빠지고, 미터는 <code>n/a here</code>를 표시하며 제자리에 남아 시스템 사이를 옮겨 다니는 설정 파일도 여전히 불러올 수 있게 합니다.</p>
+  <table>
+    <thead><tr><th></th><th class="c">FreeBSD에서</th></tr></thead>
+    <tbody>
+      <tr><td>PSS / EPSS</td><td class="c"><code>smaps_rollup</code> 없음, 제외</td></tr>
+      <tr><td>PSI, zram, zswap, HugePages</td><td class="c">미터에 <code>n/a here</code> 표시</td></tr>
+      <tr><td>컨테이너 열</td><td class="c">jail은 컨테이너가 아님, 제외</td></tr>
+      <tr><td>GPU 열</td><td class="c"><code>drm-usage-stats</code> 없음, 제외</td></tr>
+      <tr><td>지연 통계</td><td class="c"><code>TASKSTATS</code>는 Linux 전용, 제외</td></tr>
+      <tr><td>I/O 우선순위 (<code>i</code>)</td><td class="c"><code>ioprio_set</code> 없음, 패널이 안내</td></tr>
+      <tr><td>파일 잠금 패널 (<code>x</code>)</td><td class="c">잠금 테이블 없음, <code>lsof</code> 안내</td></tr>
+      <tr><td>CPU 선호도, 환경, 열린 파일</td><td class="c yes">지원</td></tr>
+      <tr><td>호스트 전체 디스크 처리량</td><td class="c yes">지원, 두 수치를 모두 갖춘 유일한 플랫폼</td></tr>
+    </tbody>
+  </table>
+  <p>jail은 흥미로운 생략입니다. <code>kinfo_proc.ki_jid</code>는 읽어 두었고 사용할 수 있지만, 이를 렌더링하는 곳은 없습니다. jail은 커널을 공유하고 이미지 레이어도, 작은 정수 너머의 식별자도 없으므로 <code>CONTAINER</code>로 표기하는 것은 거짓 등식이 됩니다. 흔한 경우인 <code>jid 0</code>은 호스트라서, 이 열은 몇 개의 예외를 제외하면 0의 나열이 될 것입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>테스트 방법</h2>
+  <p>FreeBSD에는 GitHub 호스티드 러너가 없으므로 두 가지 방법으로 확인합니다. 모든 push에서 crate 전체를 <code>x86_64-unknown-freebsd</code>로 크로스컴파일하고, QEMU 위의 FreeBSD 14 VM 안에서 전체 테스트를 실행합니다. 중요한 것은 VM 잡입니다. 라이브 테스트가 게스트 안에서 gander의 수치를 <code>ps(1)</code>, <code>sysctl(8)</code>, <code>swapinfo(8)</code>, <code>netstat(1)</code>과 비교합니다. 위에 나열한 버그 대부분은 크로스컴파일로는 보이지 않는 것들입니다.</p>
+  <p>각 플랫폼에서 의도적으로 빠진 행까지 모두 담은 전체 매트릭스는 <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>에 있습니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD에 설치</h2>
+  <p>모든 Release에 <code>x86_64-unknown-freebsd</code> 압축 파일과 그 옆의 <code>.sha256</code> 파일이 포함됩니다:</p>
+<pre><code>tar -xzf gander-&lt;version&gt;-x86_64-unknown-freebsd.tar.gz
+./gander-&lt;version&gt;-x86_64-unknown-freebsd/gander</code></pre>
+  <p>Rust 툴체인이 있다면:</p>
+<pre><code>cargo install gander-bin</code></pre>
+  <p>현재 압축 파일은 <a href="https://github.com/pandasir/gander/releases">Release</a>에서, <a href="index.html#install">모든 설치 방법</a>은 설치 절에서 확인하세요.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>이어서 읽기</h2>
+  <div class="next">
+    <a class="card" href="htop-for-macos.html">
+      <h3>macOS에서 htop</h3>
+      <p>libproc과 Mach이 주는 것, 그리고 거절하는 것.</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>같은 키, 그리고 매일 쓰는 방식을 바꾸는 레이아웃 차이.</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>플랫폼 지원이 곧 결정인 비교.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">이식성</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">변경 이력</a></p>
+  <p>GPL-2.0-or-later. Rust로 만들었습니다.</p>
+</div>
+</footer>
+
+</body>
+</html>

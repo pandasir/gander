@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs htop — htop のキーを引き継ぐ htop 代替</title>
+<meta name="description" content="gander vs htop:/proc データもキーバインドも同じ。違うのは、選択中プロセスの詳細が一覧の横に置かれる点です。--import-htoprc による移行も紹介します。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/vs-htop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs htop">
+<meta property="og:description" content="同じプロセスデータ、同じキーバインド、そして違うレイアウト。詳細パネルは別画面に置かず、カーソルに追従して表の隣にあります。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/vs-htop.html">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:title" content="gander vs htop">
+<meta name="twitter:description" content="同じプロセスデータ、同じキーバインド、そして違うレイアウト。詳細パネルは別画面に置かず、カーソルに追従して表の隣にあります。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs htop — htop のキーを引き継ぐ htop 代替",
+  "description": "gander vs htop:/proc データもキーバインドも同じ。違うのは、選択中プロセスの詳細が一覧の横に置かれる点です。--import-htoprc による移行も紹介します。",
+  "url": "https://pandasir.github.io/gander/ja/vs-htop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ja",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ja/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../vs-htop.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/vs-htop.html">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/vs-htop.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / htop との比較</p>
+  <h1>gander vs htop</h1>
+  <p class="lede">プロセスデータもキーバインドも同じです。違うのは、選択したプロセスの詳細の置き場所。テーブルの隣にあり、キーを押して別画面を呼び出す方式ではありません。</p>
+  <div class="verdict">
+    <p>ディストリビューションに同梱されているツールだけで足りるなら htop を。htop のキーをすでに知っていて、テーブルを手放さずに詳細パネルも欲しいなら gander を。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">インストール</a>
+    <a class="btn" href="https://github.com/pandasir/gander">ソース</a>
+  </div>
+</header>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1800" height="800" alt="gander の panels レイアウト:プロセステーブルが表示されたまま、右の詳細パネルに選択中プロセスのコマンドライン、状態、メモリ、実行時間が表示されています。">
+  <figcaption>行を選べば、一覧から離れずに答えが得られます。<code>L</code> を押せば htop 本来の配置になります。</figcaption>
+</figure>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>作業の仕方が変わる、たった一つの違い</h2>
+  <p>htop は「今何が動いているか」に、すべてのプロセスを一度に並べて答えます。そして「このプロセスは<em>何を</em>しているのか」には別画面で答えます。旧バージョンの info パネル、新バージョンでは独立したビューです。いずれにせよ、読んでいる間はテーブルが消えます。</p>
+  <p>gander は両方を同時に画面に置きます。詳細パネルはテーブルの隣の列で、カーソルに追従します。一覧を下へ移動するたびに詳細が読み直され、プロセスごとにキーを押す必要はありません。広い端末では空き領域が働いてくれ、狭い端末では要素が重なるのではなく、レイアウトが幅に合わせて変わります。</p>
+  <p>htop の配置のほうが良ければ、<code>L</code> を押してください。全幅レイアウトは組み込みで、選択は記憶されます。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>並べて比較</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">htop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Linux で <code>/proc</code> を読む</td><td class="c yes">はい</td><td class="c yes">はい</td></tr>
+      <tr><td>Linux、macOS、FreeBSD</td><td class="c yes">3 つすべて</td><td class="c yes">3 つすべて</td></tr>
+      <tr><td>htop のキーバインド(<code>F1</code>–<code>F10</code>、<code>t</code>、<code>k</code>、<code>/</code>、<code>\</code>)</td><td class="c yes">はい</td><td class="c yes">—</td></tr>
+      <tr><td>既存の <code>htoprc</code> を読み込む</td><td class="c yes"><code>--import-htoprc</code></td><td class="c yes">—</td></tr>
+      <tr><td>テーブルを表示したまま選択プロセスの詳細が見える</td><td class="c yes">はい</td><td class="c no">いいえ</td></tr>
+      <tr><td>ツリー表示</td><td class="c yes">はい</td><td class="c yes">はい</td></tr>
+      <tr><td>検索、フィルター、ソート、renice、シグナル送信</td><td class="c yes">はい</td><td class="c yes">はい</td></tr>
+      <tr><td>ヘッダーメーター、コアごとのグリッド、テーマ</td><td class="c yes">はい</td><td class="c yes">はい</td></tr>
+      <tr><td>CPUアフィニティの編集</td><td class="c">Linux、FreeBSD</td><td class="c yes">Linux、FreeBSD</td></tr>
+      <tr><td>TUI なしの <code>--json</code> バッチモード</td><td class="c yes">はい</td><td class="c no">いいえ</td></tr>
+      <tr><td>PSS/EPSS、PSI、zram/zswap、GPU、遅延統計、コンテナ</td><td class="c yes">Linux</td><td class="c no">いいえ</td></tr>
+      <tr><td>実装言語</td><td class="c">Rust</td><td class="c">C</td></tr>
+      <tr><td>ライセンス</td><td class="c">GPL-2.0-or-later</td><td class="c">GPL-2.0-or-later</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">「—」は「そもそも適用対象がない」という意味です。htop は定義上、htop 自身のキーバインドを持ち、自身の設定を読みます。</p>
+  <p>この表の多くの行で基準になっているのは htop で、gander は列の意味とキーバインドを意図的に htop から取っています。gander が単なる「htop + パネル」ではない行は末尾の 3 行です。バッチモード、Linux 専用の追加列、そして htop に詳細パネル相当のものが存在しないという点。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>設定をやり直さずに切り替える</h2>
+  <p>htop の設定は <code>htoprc</code> に保存されます。gander はこのファイルを読み、そこから独自の TOML を書き出します。長年かけて調整した列とソート順が引き継がれます。</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p><code>--save</code> を付けない場合、インポートはドライランになり、変更内容を表示するだけです。<code>htoprc</code> は変更されないので、htop は今までどおりに動作し続け、両者を並べて比較できます。</p>
+  <p>インポーターは htop の 1 起点の列 ID を処理します。素朴な変換が失敗するのはここです。gander に対応するものがない設定は、黙って捨てずに報告します。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>キーバインドが違うところ</h2>
+  <p>htop のファンクションバーにある操作は、htop が置いた場所のままです。違うのはこれらです。</p>
+  <table>
+    <tbody>
+      <tr><td><code>I</code></td><td>htop ではソート順を反転します。gander では選択中のヘッダーメーターの表示モードを切り替えます。ソートの変更は <code>F6</code> / <code>&lt;</code> <code>&gt;</code> を使ってください。</td></tr>
+      <tr><td><code>L</code></td><td><code>panels</code> レイアウトと <code>htop</code> レイアウトを切り替えます。htop にはないキーです。</td></tr>
+      <tr><td><code>+</code> / <code>-</code></td><td>サンプリングを速く、または遅くします。</td></tr>
+      <tr><td><code>Shift+Left</code> / <code>Shift+Right</code></td><td>ヘッダーメーターのカーソルを移動します。</td></tr>
+    </tbody>
+  </table>
+  <p>バッチモードのフラグを含む全キーバインドは <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">docs/KEYS.md</a> にあります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>インストール</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust が入っている任意のプラットフォーム</span></code></pre>
+  <p>Debian、Ubuntu、Fedora、RHEL 向けの Linux パッケージは署名付きリポジトリで提供しています。すべての Release には、macOS(Apple Silicon と Intel)、Linux(x86_64 と arm64)、FreeBSD 向けのアーカイブが付属します。<a href="index.html#install">すべてのインストール方法</a>を参照してください。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>さらに読む</h2>
+  <div class="next">
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>独自のレイアウトを持つグラフィカルなモニター。gander との違い。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>クロスプラットフォームのグラフとウィジェット、そして公式サポートの対象プラットフォーム。</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>htop on FreeBSD</h3>
+      <p><code>libkvm</code> バックエンド、そして FreeBSD で代替ツールが減っていく理由。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">キーマップ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

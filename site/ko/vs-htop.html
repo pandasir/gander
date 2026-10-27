@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs htop — htop의 키를 지키는 htop 대체제</title>
+<meta name="description" content="gander vs htop: 같은 /proc 데이터와 같은 키 바인딩, 하지만 선택한 프로세스의 세부 정보는 목록 바로 옆에 있습니다. --import-htoprc 마이그레이션 포함.">
+<link rel="canonical" href="https://pandasir.github.io/gander/ko/vs-htop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs htop">
+<meta property="og:description" content="같은 프로세스 데이터, 같은 키 바인딩, 다른 레이아웃: 상세 정보 패널이 별도 화면이 아니라 커서를 따라갑니다.">
+<meta property="og:url" content="https://pandasir.github.io/gander/ko/vs-htop.html">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<meta name="twitter:title" content="gander vs htop">
+<meta name="twitter:description" content="같은 프로세스 데이터, 같은 키 바인딩, 다른 레이아웃: 상세 정보 패널이 별도 화면이 아니라 커서를 따라갑니다.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs htop — htop의 키를 지키는 htop 대체제",
+  "description": "gander vs htop: 같은 /proc 데이터와 같은 키 바인딩, 하지만 선택한 프로세스의 세부 정보는 목록 바로 옆에 있습니다. --import-htoprc 마이그레이션 포함.",
+  "url": "https://pandasir.github.io/gander/ko/vs-htop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ko",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ko/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="언어">
+    <a lang="en" hreflang="en" href="../vs-htop.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/vs-htop.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="../ja/vs-htop.html">日本語</a>
+    <span aria-current="true">한국어</span>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / htop과의 비교</p>
+  <h1>gander vs htop</h1>
+  <p class="lede">같은 프로세스 데이터, 같은 키 바인딩입니다. 다른 점은 선택한 프로세스의 세부 정보가 사는 위치입니다. 키 입력 한 번 거리가 아니라 표 바로 옆에 있습니다.</p>
+  <div class="verdict">
+    <p>모든 배포판에 기본으로 들어 있는 도구면 충분하다면 htop을 쓰세요. htop 키에 이미 익숙하고 표를 포기하지 않고 상세 정보 패널을 원한다면 gander를 쓰세요.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">설치</a>
+    <a class="btn" href="https://github.com/pandasir/gander">소스</a>
+  </div>
+</header>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1800" height="800" alt="gander의 panels 레이아웃: 프로세스 표는 화면에 그대로 있고, 오른쪽 상세 정보 패널에는 선택한 프로세스의 명령줄, 상태, 메모리, 실행 시간이 표시됩니다.">
+  <figcaption>행을 선택하면 목록을 떠나지 않고 답을 얻습니다. <code>L</code>을 누르면 htop 고유의 배치가 됩니다.</figcaption>
+</figure>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>일하는 방식을 바꾸는 단 하나의 차이</h2>
+  <p>htop은 모든 프로세스를 한꺼번에 보여 줌으로써 “지금 뭐가 돌고 있나”에 답하고, “<em>그</em> 프로세스는 뭘 하고 있나”는 다른 화면에서 답합니다. 구버전의 info 패널, 신버전의 별도 뷰입니다. 어느 쪽이든 읽는 동안 표는 사라집니다.</p>
+  <p>gander는 둘 다 화면에 둡니다. 상세 정보 패널은 표 옆의 한 열이고 커서를 따라가므로, 목록을 내려가면 프로세스마다 키를 누르는 대신 세부 정보가 다시 읽힙니다. 넓은 터미널에서는 놀고 있는 공간이 일을 하는 것이고, 좁은 터미널에서는 겹쳐 보이는 대신 레이아웃이 단순해집니다.</p>
+  <p>htop의 배치가 더 낫다면 <code>L</code>을 누르세요. 전체 너비 레이아웃이 내장되어 있고 선택은 기억됩니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>한눈에 비교</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">htop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Linux에서 <code>/proc</code> 읽기</td><td class="c yes">예</td><td class="c yes">예</td></tr>
+      <tr><td>Linux, macOS, FreeBSD</td><td class="c yes">셋 모두</td><td class="c yes">셋 모두</td></tr>
+      <tr><td>htop 키 바인딩 (<code>F1</code>–<code>F10</code>, <code>t</code>, <code>k</code>, <code>/</code>, <code>\</code>)</td><td class="c yes">예</td><td class="c yes">—</td></tr>
+      <tr><td>기존 <code>htoprc</code> 읽기</td><td class="c yes"><code>--import-htoprc</code></td><td class="c yes">—</td></tr>
+      <tr><td>표가 보이는 동안 선택한 프로세스의 세부 정보도 표시</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>트리 보기</td><td class="c yes">예</td><td class="c yes">예</td></tr>
+      <tr><td>검색, 필터, 정렬, renice, 시그널 전송</td><td class="c yes">예</td><td class="c yes">예</td></tr>
+      <tr><td>헤더 미터, 코어별 그리드, 테마</td><td class="c yes">예</td><td class="c yes">예</td></tr>
+      <tr><td>CPU 선호도 편집</td><td class="c">Linux, FreeBSD</td><td class="c yes">Linux, FreeBSD</td></tr>
+      <tr><td>TUI 없이 <code>--json</code> 배치 모드</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>PSS/EPSS, PSI, zram/zswap, GPU, 지연 통계, 컨테이너</td><td class="c yes">Linux</td><td class="c no">아니요</td></tr>
+      <tr><td>작성 언어</td><td class="c">Rust</td><td class="c">C</td></tr>
+      <tr><td>라이선스</td><td class="c">GPL-2.0-or-later</td><td class="c">GPL-2.0-or-later</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">대시(—)는 해당 사항 없음입니다. htop은 정의상 htop의 키 바인딩을 쓰고 htop의 설정을 읽습니다.</p>
+  <p>이 표의 대부분은 htop이 기준이고, gander는 열의 의미와 키 바인딩을 htop에서 의도적으로 가져왔습니다. gander가 단순히 “htop에 패널을 얹은 것”이 아닌 행은 마지막 세 개입니다. 배치 모드, Linux 전용 추가 열, 그리고 htop에는 상세 정보 패널에 해당하는 것이 없다는 사실입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>설정을 다시 하지 않고 전환하기</h2>
+  <p>htop은 설정을 <code>htoprc</code>에 저장합니다. gander는 이 파일을 읽고 자체 TOML로 변환해 기록하므로, 여러 해에 걸쳐 다듬은 열 구성과 정렬 순서가 그대로 넘어옵니다:</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p><code>--save</code> 없이는 가져오기가 드라이런으로 동작하며 무엇을 바꿀지 출력만 합니다. <code>htoprc</code>는 수정되지 않으므로 htop은 그대로 동작하고, 두 도구를 나란히 비교할 수 있습니다.</p>
+  <p>가져오기는 htop의 1부터 시작하는 열 id를 처리합니다. 성급한 변환이 틀어지는 지점이 바로 여기입니다. gander에 대응하는 설정이 없으면 조용히 버리는 대신 알려 줍니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>다른 키</h2>
+  <p>htop 함수 표시줄의 나머지 키는 htop이 둔 자리에 그대로 있습니다. 다음은 다릅니다:</p>
+  <table>
+    <tbody>
+      <tr><td><code>I</code></td><td>htop에서는 정렬 순서를 반전합니다. gander에서는 선택한 헤더 미터의 표시 모드를 전환합니다. 정렬 변경에는 <code>F6</code> / <code>&lt;</code> <code>&gt;</code>를 사용하세요.</td></tr>
+      <tr><td><code>L</code></td><td><code>panels</code>와 <code>htop</code> 레이아웃 사이를 전환합니다. htop에는 없는 키입니다.</td></tr>
+      <tr><td><code>+</code> / <code>-</code></td><td>샘플링 속도를 높이거나 낮춥니다.</td></tr>
+      <tr><td><code>Shift+Left</code> / <code>Shift+Right</code></td><td>헤더 미터 커서를 이동합니다.</td></tr>
+    </tbody>
+  </table>
+  <p>배치 모드 플래그를 포함한 전체 키 맵은 <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">docs/KEYS.md</a>에 있습니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>설치</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust가 있는 모든 플랫폼</span></code></pre>
+  <p>Debian, Ubuntu, Fedora, RHEL용 Linux 패키지는 서명된 저장소에서 제공하고, 모든 Release에 macOS(Apple Silicon 및 Intel), Linux(x86_64 및 arm64), FreeBSD용 압축 파일이 포함됩니다. <a href="index.html#install">모든 설치 방법</a>을 보세요.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>이어서 읽기</h2>
+  <div class="next">
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>자체 레이아웃을 가진 그래픽 모니터. gander와의 차이점.</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>크로스플랫폼 그래프와 위젯, 그리고 공식 지원이 닿는 플랫폼.</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD에서 htop</h3>
+      <p><code>libkvm</code> 백엔드, 그리고 대체 도구가 드물어지는 지점이라는 것.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">키 맵</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">변경 이력</a></p>
+  <p>GPL-2.0-or-later. Rust로 만들었습니다.</p>
+</div>
+</footer>
+
+</body>
+</html>

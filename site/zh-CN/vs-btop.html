@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs btop —— 「不是 htop」的两种答案</title>
+<meta name="description" content="btop 和 gander 从两个方向拒绝了 htop 的布局:btop 画机器,gander 列进程。怎么选,为什么。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs btop">
+<meta property="og:description" content="btop 是一台机器的仪表盘。gander 是一份进程列表。它们不抢同一块屏幕。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="gander vs btop">
+<meta name="twitter:description" content="btop 是一台机器的仪表盘。gander 是一份进程列表。它们不抢同一块屏幕。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs btop —— 「不是 htop」的两种答案",
+  "description": "btop 和 gander 从两个方向拒绝了 htop 的布局:btop 画机器,gander 列进程。怎么选,为什么。",
+  "url": "https://pandasir.github.io/gander/zh-CN/vs-btop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../vs-btop.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/vs-btop.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/vs-btop.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 与 btop 对比</p>
+  <h1>gander vs btop</h1>
+  <p class="lede">两者都拒绝了 htop 的布局,但在用什么取代上各执一词:btop 画机器,gander 列进程。</p>
+  <div class="verdict">
+    <p>问「这台机器怎么样」,选 btop。问「是哪个进程干的」,选 gander——或者,当你想在脚本里拿到这个答案时,也选 gander。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装</a>
+    <a class="btn" href="https://github.com/pandasir/gander">源码</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>看起来同类,其实是不同的工具</h2>
+  <p>btop 是资源监控器:CPU、内存、网络、磁盘和温度都以图表和盲文点阵呈现,进程列表只是其中一格。它把自己做的事做得很好;要仪表盘,它就是正确答案。</p>
+  <p>gander 是进程列表——和 htop 同属一类——把选中进程的细节从单独的界面挪进旁边一列。截图就是全部论证:</p>
+  <div class="shot3">
+    <div>
+      <img src="../screenshot-panels.png" width="1800" height="800" loading="lazy" alt="gander 的 panels 布局:一条合计 CPU 柱、内存和 swap 仪表、压成一列的紧凑每核网格,以及带检视面板的进程表。">
+      <span>gander <code>panels</code> —— 仪表压进一列</span>
+    </div>
+    <div>
+      <img src="../screenshot-htop.png" width="1800" height="800" loading="lazy" alt="gander 的 htop 布局:顶部一排横向仪表,下方是全宽进程表。">
+      <span>gander <code>htop</code> 布局(<code>L</code>)</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>并排对比</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">btop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>它主要回答的问题</td><td class="c">哪个进程</td><td class="c">机器怎么样</td></tr>
+      <tr><td>不是 htop 的那种布局</td><td class="c yes"><code>panels</code></td><td class="c yes">有</td></tr>
+      <tr><td>沿用 htop 的按键</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>读取现有的 <code>htoprc</code></td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>选中进程的细节就在列表旁边</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>CPU / 内存 / 网络 / 磁盘图表</td><td class="c">CPU、内存、磁盘、网络、PSI</td><td class="c yes">全部四项,外加温度</td></tr>
+      <tr><td>Linux、macOS、FreeBSD</td><td class="c yes">三个平台,全部支持</td><td class="c yes">三个平台,CI 中构建(另有 NetBSD、OpenBSD)</td></tr>
+      <tr><td><code>--json</code> 批处理模式(不用 TUI)</td><td class="c yes">有</td><td class="c no">无</td></tr>
+      <tr><td>编写语言</td><td class="c">Rust</td><td class="c">C++</td></tr>
+      <tr><td>许可证</td><td class="c">GPL-2.0-or-later</td><td class="c">Apache-2.0</td></tr>
+    </tbody>
+  </table>
+  <p>btop 的平台列表有一个方向更宽——它还能为 NetBSD 和 OpenBSD 构建,gander 不能。如果你用的是那些系统,选 btop,这页不是为你写的。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>脚本的差别才是实用的差别</h2>
+  <p>btop 是一块屏幕。没有受支持的方式向它要一份机器可读的快照,自动化只能要么抓屏幕,要么自己去读 <code>/proc</code>。</p>
+  <p>gander 的批处理模式是同一个二进制,关掉 TUI:</p>
+<pre><code>gander --json --limit 10                   <span class="c"># 一次 JSON 采样,前 10 行</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># 内存最高的 20 个</span>
+gander -F "python|node" -n 5               <span class="c"># 5 次采样,带过滤</span></code></pre>
+  <p>这不是天天用的功能。它是「用眼睛看的工具」和「能塞进 cron 的工具」之间的差别。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>安装</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># 任何有 Rust 的平台</span></code></pre>
+  <p>签名 <code>apt</code> 和 <code>dnf</code> 软件源,外加七个目标的压缩包,都在<a href="index.html#install">安装一节</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>gander 沿用其按键和列语义的那个参照物。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>跨平台图表与小部件,以及「官方支持」覆盖什么。</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD 上的 htop</h3>
+      <p><code>libkvm</code> 后端,以及跳过 FreeBSD 的那些替代品。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">按键表</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

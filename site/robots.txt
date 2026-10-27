@@ -16,6 +16,10 @@ Allow: /htop-for-macos.html
 Allow: /htop-for-freebsd.html
 Allow: /json-process-list.html
 Allow: /llms.txt
+# Translated sites: same seven pages, in their own directories.
+Allow: /zh-CN/
+Allow: /ja/
+Allow: /ko/
 Allow: /site.css
 Allow: /analytics.js
 Allow: /screenshot-

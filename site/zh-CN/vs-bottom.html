@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs bottom —— FreeBSD 支持、JSON 与布局</title>
+<meta name="description" content="bottom 把 FreeBSD 列为非官方支持;gander 有在 CI 中测试过的 libkvm 后端。两个 Rust 进程查看器的差别。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs bottom">
+<meta property="og:description" content="两者都是覆盖 Linux、macOS 和 FreeBSD 的 Rust TUI。bottom 是小部件仪表盘;gander 是带实时检视面板的进程列表。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/vs-bottom.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="gander vs bottom">
+<meta name="twitter:description" content="两者都是覆盖 Linux、macOS 和 FreeBSD 的 Rust TUI。bottom 是小部件仪表盘;gander 是带实时检视面板的进程列表。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs bottom —— FreeBSD 支持、JSON 与布局",
+  "description": "bottom 把 FreeBSD 列为非官方支持;gander 有在 CI 中测试过的 libkvm 后端。两个 Rust 进程查看器的差别。",
+  "url": "https://pandasir.github.io/gander/zh-CN/vs-bottom.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../vs-bottom.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/vs-bottom.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/vs-bottom.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 与 bottom 对比</p>
+  <h1>gander vs bottom</h1>
+  <p class="lede">三者中最接近的一组对比:都是 Rust,都覆盖 Linux、macOS 和 FreeBSD,都拒绝了 htop 的布局。差别在屏幕是拿来做什么的。</p>
+  <div class="verdict">
+    <p>bottom 给你一块自己排布的小部件仪表盘;gander 给你 htop 的进程列表,细节挪到同一块屏幕上。要图表和可配置性,bottom 走得更远;要 htop 的肌肉记忆和可脚本化的输出,选 gander。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装</a>
+    <a class="btn" href="https://github.com/pandasir/gander">源码</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>并排对比</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">bottom</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>编写语言</td><td class="c yes">Rust</td><td class="c yes">Rust</td></tr>
+      <tr><td>Linux 和 macOS,官方支持</td><td class="c yes">是</td><td class="c yes">是</td></tr>
+      <tr><td>FreeBSD</td><td class="c yes">受支持,<code>libkvm</code> 后端</td><td class="c">非官方,可能缺功能</td></tr>
+      <tr><td>Windows</td><td class="c no">否</td><td class="c yes">是</td></tr>
+      <tr><td>沿用 htop 的按键</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>读取现有的 <code>htoprc</code></td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>选中进程的细节就在列表旁边</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>随时间变化的图表(CPU、内存、网络、磁盘、温度)</td><td class="c">CPU、内存、磁盘、网络、PSI</td><td class="c yes">全部五项</td></tr>
+      <tr><td>运行时可重排的布局</td><td class="c">两种内置布局</td><td class="c yes">小部件,完全可配置</td></tr>
+      <tr><td><code>--json</code> 批处理模式(不用 TUI)</td><td class="c yes">有</td><td class="c no">无</td></tr>
+      <tr><td>配置文件格式</td><td class="c">TOML,另可导入 <code>htoprc</code></td><td class="c">TOML</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD:「能编译」不等于「受支持」</h2>
+  <p>bottom 的 README 对此写得很明白。它的官方平台是 macOS、Linux 和 Windows;FreeBSD <code>x86_64</code> 出现在第二张列表里,原话是:</p>
+  <div class="note">
+    <p><em>可能没有在 CI 中测试构建或测试是否通过。稳定版发布前可能未经维护者适当测试。可能只获得有限支持,例如缺少功能,或存在可能不被修复的 bug。</em></p>
+  </div>
+  <p>bottom 在描述自己的边界,这也是本项目努力做的事。但这意味着 FreeBSD 不是一个你可以放心依赖 bottom 的平台。</p>
+  <p>gander 有专门的 FreeBSD 后端,读取 <code>sysctl</code> 和 <code>libkvm</code>;还有一条 CI 任务,在 QEMU 的 FreeBSD 14 虚拟机里跑完整测试套件,把 gander 的数值与虚拟机内的 <code>ps(1)</code>、<code>sysctl(8)</code>、<code>swapinfo(8)</code> 和 <code>netstat(1)</code> 逐一对照。在 FreeBSD 上确实缺失的能力都列了出来,不做暗示:没有容器列、没有 PSS、没有 GPU 列、没有磁盘吞吐 meter。见 <a href="htop-for-freebsd.html">FreeBSD 上的 htop</a>。</p>
+  <p>如果你用 FreeBSD,这就是本页最实在的差别。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>脚本:gander 有批处理模式</h2>
+  <p>bottom 没有任何可供脚本调用的东西:要自动采集,你得自己去读 <code>/proc</code>(或等价物)。这没问题——直到你想拿到和 TUI 一样的口径。</p>
+  <p>gander 的批处理模式是同一个二进制、关掉界面,脚本看到的数字就是屏幕本来会画的数字:</p>
+<pre><code>gander --json --limit 10
+gander --sort PERCENT_MEM --limit 20
+gander -F "python|node" -n 5</code></pre>
+  <p>退出码是有含义的:扫描失败会返回非零退出码,而不是一个空数组。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>从 htop 过来</h2>
+  <p>两者之中只有 gander 读 <code>htoprc</code>。如果你在 htop 里攒了多年的列和排序,这是你最先注意到的差别:</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p>不带 <code>--save</code> 时导入是试运行,<code>htoprc</code> 永远不会被改动。有差别的按键见 <a href="vs-htop.html">vs htop</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>安装</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># 任何有 Rust 的平台</span></code></pre>
+  <p>签名 <code>apt</code> 和 <code>dnf</code> 软件源,以及包含 <code>x86_64-unknown-freebsd</code> 在内的压缩包,都在<a href="index.html#install">安装一节</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD 上的 htop</h3>
+      <p><code>libkvm</code> 后端读什么,读不到什么。</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>gander 借用其按键的那个参照物。</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>另一个仪表盘,以及它更宽的 BSD 覆盖。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">按键表</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

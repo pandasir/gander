@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeBSD 上的 htop —— 以及那些只算部分支持它的查看器</title>
+<meta name="description" content="htop 支持 FreeBSD;几个更新的进程查看器却不行。gander 通过 sysctl 和 libkvm 读什么,以及它如何在真实内核上测试。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="FreeBSD 上的 htop,以及各替代品的支持情况">
+<meta property="og:description" content="sysctl 和 libkvm 在 FreeBSD 上给你完整的进程表。这些是真正用它们的查看器。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="FreeBSD 上的 htop,以及各替代品的支持情况">
+<meta name="twitter:description" content="sysctl 和 libkvm 在 FreeBSD 上给你完整的进程表。这些是真正用它们的查看器。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "FreeBSD 上的 htop —— 以及那些只算部分支持它的查看器",
+  "description": "htop 支持 FreeBSD;几个更新的进程查看器却不行。gander 通过 sysctl 和 libkvm 读什么,以及它如何在真实内核上测试。",
+  "url": "https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-23",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../htop-for-freebsd.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/htop-for-freebsd.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/htop-for-freebsd.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 在 FreeBSD 上</p>
+  <h1>FreeBSD 上的进程查看器</h1>
+  <p class="lede">新的终端进程查看器到了 FreeBSD 就变得稀少——不是数据难拿,而是没几个项目在那里测试。</p>
+  <div class="verdict">
+    <p>htop 支持 FreeBSD 已经多年,gander 有专门的 <code>sysctl</code>/<code>libkvm</code> 后端,在 CI 里的真实 FreeBSD 内核上测试。如果你在 FreeBSD 上挑新工具,平台支持那一行往往就是全部决定。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装 gander</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">后端说明</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>谁真正支持 FreeBSD</h2>
+  <table class="compare">
+    <thead><tr><th></th><th class="c">FreeBSD 支持</th></tr></thead>
+    <tbody>
+      <tr><td>htop</td><td class="c yes">是,在 ports 树里</td></tr>
+      <tr><td>gander</td><td class="c yes">是,<code>libkvm</code> 后端,CI 虚机中测试</td></tr>
+      <tr><td>btop</td><td class="c yes">是,CI 中构建(另有 NetBSD、OpenBSD)</td></tr>
+      <tr><td>bottom</td><td class="c">列为非官方;「可能只获得有限支持」</td></tr>
+    </tbody>
+  </table>
+  <p>这不是给工具排名。bottom 是个好程序,而且明明白白写清了自己的 FreeBSD 支持是什么。这里的意思更窄:在 FreeBSD 上,你应该先看这一行再看别的——一个能编译、却没在平台上跑过的查看器,迟早给你看一个错误的数字,而不是缺失的数字。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>gander 在 FreeBSD 上读什么</h2>
+  <p>后端用两个接口。<code>sysctl</code> 提供进程表和系统数字;<code>libkvm</code>(<code>kvm_getswapinfo</code>、<code>devstat_getdevs</code>)补上 <code>sysctl</code> 不暴露的部分。</p>
+  <table>
+    <thead><tr><th>数字</th><th>来源</th></tr></thead>
+    <tbody>
+      <tr><td>进程列表</td><td><code>sysctl(KERN_PROC_PROC)</code> → <code>kinfo_proc[]</code></td></tr>
+      <tr><td>CPU 时间、启动时间</td><td><code>ki_runtime</code>(微秒)、<code>ki_start</code></td></tr>
+      <tr><td>常驻与虚拟大小</td><td><code>ki_rssize</code>(页)、<code>ki_size</code>(字节)</td></tr>
+      <tr><td>状态字母</td><td><code>ki_stat</code> 加 <code>ki_tdflags</code>/<code>ki_slptime</code></td></tr>
+      <tr><td>命令行、环境变量</td><td><code>sysctl(KERN_PROC_ARGS)</code>、<code>KERN_PROC_ENV</code></td></tr>
+      <tr><td>可执行文件、cwd</td><td><code>KERN_PROC_PATHNAME</code>、<code>KERN_PROC_CWD</code></td></tr>
+      <tr><td>打开的文件</td><td><code>KERN_PROC_FILEDESC</code></td></tr>
+      <tr><td>每核 CPU</td><td><code>kern.cp_times</code></td></tr>
+      <tr><td>内存</td><td><code>vm.stats.vm.v_*</code> 配 <code>v_page_count</code></td></tr>
+      <tr><td>Swap</td><td><code>kvm_getswapinfo(3)</code></td></tr>
+      <tr><td>磁盘吞吐</td><td><code>devstat_getdevs(3)</code></td></tr>
+      <tr><td>网络吞吐</td><td><code>sysctl(NET_RT_IFLIST)</code></td></tr>
+      <tr><td>CPU 亲和性</td><td><code>cpuset_getaffinity</code> / <code>cpuset_setaffinity</code></td></tr>
+    </tbody>
+  </table>
+  <p>上面每一行都在开发期出过一个 bug,而且只有和别的工具对照才抓得到。挑几个值得知道的:</p>
+  <ul>
+    <li><code>ki_runtime</code> 是<strong>微秒</strong>,而 Linux 和 macOS 上每个 CPU 时间字段都是 tick 计数。拿它除以 <code>HZ</code> 之类的除数,得到的百分比会差四个数量级。</li>
+    <li><code>ki_rssize</code> 是页,<code>ki_size</code> 是字节。它们看起来是一对,其实不是;忘了页大小,就会把 1.2 GB 的进程报成 300 MB——错得足够合理,能活过评审。</li>
+    <li><code>ki_stat</code> 不是状态字母。<code>SSLEEP</code> 会按 <code>ki_tdflags &amp; TDF_SINTR</code> 和 <code>ki_slptime</code> 一分为三;按算术映射,新生的进程会显示成 <code>I</code>,被锁住的显示成 <code>X</code>。</li>
+    <li><code>kvm_getswapinfo</code> 报告的是<strong>页</strong>。htop 自己的 FreeBSD 后端乘的是 1024 而不是页大小,把 1 GiB 的 swap 文件报成 4 MiB,还标成字节。gander 按 <code>swapinfo(8)</code> 的做法来。</li>
+    <li><code>hw.physmem</code> 比虚拟机实际管理的内存大,拿它当内存条的总量,内存条就永远差一截满不了——在一台真的内存见底的机器上,这看起来像渲染 bug。</li>
+  </ul>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD 没有的东西,gander 会明说</h2>
+  <p>和 macOS 同一条规则:只会渲染 <code>-</code> 的列从列清单里移除,meter 留在原处显示 <code>n/a here</code>,配置文件在机器之间挪动仍能加载。</p>
+  <table>
+    <thead><tr><th></th><th class="c">在 FreeBSD 上</th></tr></thead>
+    <tbody>
+      <tr><td>PSS / EPSS</td><td class="c">没有 <code>smaps_rollup</code>;被排除</td></tr>
+      <tr><td>PSI、zram、zswap、HugePages</td><td class="c">meter 显示 <code>n/a here</code></td></tr>
+      <tr><td>容器列</td><td class="c">jails 不是容器;被排除</td></tr>
+      <tr><td>GPU 列</td><td class="c">没有 <code>drm-usage-stats</code>;被排除</td></tr>
+      <tr><td>延迟统计</td><td class="c"><code>TASKSTATS</code> 只在 Linux 有;被排除</td></tr>
+      <tr><td>I/O 优先级(<code>i</code>)</td><td class="c">没有 <code>ioprio_set</code>;面板会说明</td></tr>
+      <tr><td>文件锁面板(<code>x</code>)</td><td class="c">没有锁表;指向 <code>lsof</code></td></tr>
+      <tr><td>CPU 亲和性、环境变量、打开的文件</td><td class="c yes">受支持</td></tr>
+      <tr><td>主机级磁盘吞吐</td><td class="c yes">受支持,唯一同时有两个数字的平台</td></tr>
+    </tbody>
+  </table>
+  <p>jails 是有意思的那个空缺。<code>kinfo_proc.ki_jid</code> 有读到、也拿得到,但没有任何东西渲染它:jail 与内核共享,没有镜像层,除一个小整数外没有别的身份,把它列成 <code>CONTAINER</code> 会是虚假的等价。<code>jid 0</code> 是宿主,也是常见情形,所以那一列会是一排零带几个例外。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>它怎么测试</h2>
+  <p>FreeBSD 没有 GitHub 托管的 runner,所以用两种方式检查:每次 push 都把整个 crate 交叉编译到 <code>x86_64-unknown-freebsd</code>;以及在 QEMU 的 FreeBSD 14 虚拟机里完整跑一遍测试。真正要紧的是虚拟机那条任务——实时测试在虚拟机内把 gander 的数字与 <code>ps(1)</code>、<code>sysctl(8)</code>、<code>swapinfo(8)</code> 和 <code>netstat(1)</code> 对照。上面列出的大多数 bug,交叉编译是看不见的。</p>
+  <p>完整矩阵——包括每个平台上刻意缺失的每一行——在 <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>在 FreeBSD 上安装</h2>
+  <p>每个 Release 都有 <code>x86_64-unknown-freebsd</code> 压缩包,旁边带 <code>.sha256</code> 文件:</p>
+<pre><code>tar -xzf gander-&lt;version&gt;-x86_64-unknown-freebsd.tar.gz
+./gander-&lt;version&gt;-x86_64-unknown-freebsd/gander</code></pre>
+  <p>有 Rust 工具链的话:</p>
+<pre><code>cargo install gander-bin</code></pre>
+  <p>当前压缩包见 <a href="https://github.com/pandasir/gander/releases">Release</a>,全部安装方式见<a href="index.html#install">安装一节</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="htop-for-macos.html">
+      <h3>macOS 上的 htop</h3>
+      <p>libproc 和 Mach 给你什么,不肯给什么。</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>同样的按键,以及唯一影响日常使用的布局差别。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>平台支持就是全部决定的那次对比。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">可移植性</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

@@ -6,6 +6,11 @@
 <title>htop on macOS — what works, and what macOS will not give you</title>
 <meta name="description" content="htop works on macOS, but several Linux figures have no Darwin equivalent. What a process viewer can read, what it cannot, and how gander handles it.">
 <link rel="canonical" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html">
 <meta name="robots" content="index, follow">
 <link rel="stylesheet" href="site.css">
 
@@ -34,7 +39,7 @@
   "url": "https://pandasir.github.io/gander/htop-for-macos.html",
   "image": "https://pandasir.github.io/gander/social-preview.png",
   "inLanguage": "en",
-  "dateModified": "2026-10-23",
+  "dateModified": "2026-10-27",
   "isPartOf": {
     "@type": "WebSite",
     "name": "gander",
@@ -55,11 +60,17 @@
 
 <div class="wrap">
 <header>
+  <nav class="lang" aria-label="Language">
+    <span aria-current="true">English</span>
+    <a lang="zh-CN" hreflang="zh-CN" href="zh-CN/htop-for-macos.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="ja/htop-for-macos.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="ko/htop-for-macos.html">한국어</a>
+  </nav>
   <p class="crumbs"><a href="index.html">gander</a> / on macOS</p>
   <h1>A process viewer on macOS</h1>
   <p class="lede">htop works on macOS. What trips people up is not htop — it is that several numbers they expect on Linux have no macOS equivalent, and a viewer that shows them anyway is guessing.</p>
   <div class="verdict">
-    <p>This page is the honest inventory: what macOS will tell a process viewer, what it will not, and what gander does about each gap. It applies to htop and gander alike, because they read the same interfaces.</p>
+    <p>This page is the inventory: what macOS will tell a process viewer, what it will not, and what gander does about each gap. It applies to htop and gander alike, because they read the same interfaces.</p>
   </div>
   <div class="cta">
     <a class="btn primary" href="index.html#install">Install gander</a>
@@ -97,7 +108,7 @@
 <section>
 <div class="wrap">
   <h2>What macOS will not give you</h2>
-  <p>Every row here is a Linux-only mechanism with no Darwin counterpart. The question is what a viewer does about it.</p>
+  <p>Every row here is a Linux-only mechanism with no Darwin counterpart.</p>
   <table>
     <thead><tr><th></th><th class="c">gander on macOS</th></tr></thead>
     <tbody>
@@ -123,14 +134,14 @@
 <pre><code>used      = (internal - purgeable) + wired + compressed
 available = total - used</code></pre>
   <p>That is the same number <code>htop</code> prints, derived the same way, and the same number Activity Monitor and <code>top</code> report. So gander and htop agree with each other on a Mac. What neither agrees with is a naive <code>total - free</code> from <code>vm_stat</code>, which is the comparison that makes either tool look wrong.</p>
-  <p>The other thing worth knowing: <code>inactive</code> and <code>speculative</code> count as cache, not as used. A machine that has been up for a week is not out of memory because <code>inactive</code> is large — that is reclaimable.</p>
+  <p>Count <code>inactive</code> and <code>speculative</code> as cache, not as used. A machine that has been up for a week is not out of memory because <code>inactive</code> is large — that is reclaimable.</p>
 </div>
 </section>
 
 <section>
 <div class="wrap">
   <h2>Where gander differs from htop on a Mac</h2>
-  <p>Not in the figures — in the screen. htop's panels for details are full-screen modes: <code>e</code> for environment, <code>l</code> for open files, <code>s</code> for system calls each replace the process list, and coming back means finding your place again. gander keeps the selected process's command line, state, memory and runtime in a column beside the table, so the list stays where it was.</p>
+  <p>The figures agree; the screen does not. htop's panels for details are full-screen modes: <code>e</code> for environment, <code>l</code> for open files, <code>s</code> for system calls each replace the process list, and coming back means finding your place again. gander keeps the selected process's command line, state, memory and runtime in a column beside the table, so the list stays where it was.</p>
   <p>The keybindings are the same, the <code>htoprc</code> import is the same, and <code>L</code> gives you htop's layout if that is what you came for. See <a href="vs-htop.html">vs htop</a> for the keys that differ.</p>
 </div>
 </section>
@@ -142,7 +153,7 @@ available = total - used</code></pre>
 
 <span class="c"># or, with a Rust toolchain</span>
 cargo install gander-bin</code></pre>
-  <p>There are also prebuilt archives for both Apple Silicon and Intel in <a href="https://github.com/pandasir/gander/releases">Releases</a>. Requires macOS on Apple Silicon or Intel; no ncurses headers, no Xcode project.</p>
+  <p>There are also prebuilt archives for both Apple Silicon and Intel in <a href="https://github.com/pandasir/gander/releases">Releases</a>.</p>
   <div class="note">
     <p>Live testing on macOS reads the real process table, so the test suite may need to run outside a restricted sandbox. The backend comparison for all three platforms is in <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>.</p>
   </div>

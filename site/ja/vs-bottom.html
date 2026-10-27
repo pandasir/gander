@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs bottom — FreeBSD 対応、JSON、そしてレイアウト</title>
+<meta name="description" content="bottom は FreeBSD を非公式扱い、gander は CI で検証済みの libkvm バックエンドを持っています。2 つの Rust プロセスビューアの違い。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/vs-bottom.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs bottom">
+<meta property="og:description" content="どちらも Linux・macOS・FreeBSD 向けの Rust TUI です。bottom はウィジェットのダッシュボード、gander はリアルタイムの詳細パネル付きプロセス一覧。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/vs-bottom.html">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:title" content="gander vs bottom">
+<meta name="twitter:description" content="どちらも Linux・macOS・FreeBSD 向けの Rust TUI です。bottom はウィジェットのダッシュボード、gander はリアルタイムの詳細パネル付きプロセス一覧。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs bottom — FreeBSD 対応、JSON、そしてレイアウト",
+  "description": "bottom は FreeBSD を非公式扱い、gander は CI で検証済みの libkvm バックエンドを持っています。2 つの Rust プロセスビューアの違い。",
+  "url": "https://pandasir.github.io/gander/ja/vs-bottom.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ja",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ja/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../vs-bottom.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/vs-bottom.html">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/vs-bottom.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / bottom との比較</p>
+  <h1>gander vs bottom</h1>
+  <p class="lede">3 つの比較の中でいちばん近い相手です。どちらも Rust 製、どちらも Linux・macOS・FreeBSD をカバーし、どちらも htop のレイアウトを拒みます。違うのは、画面を何のために使うかです。</p>
+  <div class="verdict">
+    <p>bottom は自分で配置するウィジェットのダッシュボードをくれます。gander は htop のプロセス一覧に、詳細を同じ画面へ移したものをくれます。グラフと自由な設定を優先するなら bottom のほうが進んでいます。htop の指の感覚とスクリプトで使える出力を優先するなら gander です。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">インストール</a>
+    <a class="btn" href="https://github.com/pandasir/gander">ソース</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>並べて比較</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">bottom</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>実装言語</td><td class="c yes">Rust</td><td class="c yes">Rust</td></tr>
+      <tr><td>Linux と macOS を公式サポート</td><td class="c yes">あり</td><td class="c yes">あり</td></tr>
+      <tr><td>FreeBSD</td><td class="c yes">対応、<code>libkvm</code> バックエンド</td><td class="c">非公式、機能が欠けている場合あり</td></tr>
+      <tr><td>Windows</td><td class="c no">いいえ</td><td class="c yes">はい</td></tr>
+      <tr><td>htop のキーバインドを継承</td><td class="c yes">する</td><td class="c no">しない</td></tr>
+      <tr><td>既存の <code>htoprc</code> を取り込む</td><td class="c yes">できる</td><td class="c no">できない</td></tr>
+      <tr><td>選択プロセスの詳細が一覧の隣にある</td><td class="c yes">あり</td><td class="c no">なし</td></tr>
+      <tr><td>時間軸のグラフ(CPU、メモリ、ネットワーク、ディスク、温度)</td><td class="c">CPU、メモリ、ディスク、ネットワーク、PSI</td><td class="c yes">5 つすべて</td></tr>
+      <tr><td>実行時にレイアウトを組み替えられる</td><td class="c">組み込みレイアウト 2 種</td><td class="c yes">ウィジェット、完全に設定可能</td></tr>
+      <tr><td>TUI なしの <code>--json</code> バッチモード</td><td class="c yes">あり</td><td class="c no">なし</td></tr>
+      <tr><td>設定ファイルの形式</td><td class="c">TOML、<code>htoprc</code> 取り込みに対応</td><td class="c">TOML</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD:「ビルドできる」は「対応している」ではない</h2>
+  <p>bottom の README はこの点を明確にしています。公式プラットフォームは macOS、Linux、Windows。FreeBSD <code>x86_64</code> は別のリストに現れ、次のような前置き付きです。</p>
+  <div class="note">
+    <p><em>CI でビルドやテストが実行されていない可能性があります。安定版リリース前にメンテナーによる十分なテストが行われていない可能性があります。機能の欠落や修正されないバグなど、限定的なサポートしか受けられない場合があります。</em></p>
+  </div>
+  <p>bottom は自分自身の限界を正直に説明しています。それはこのプロジェクトも目指すところです。ただ、その意味は「FreeBSD は当てにできないプラットフォーム」ということです。</p>
+  <p>gander は <code>sysctl</code> と <code>libkvm</code> を読む専用の FreeBSD バックエンドを持ち、QEMU 上の FreeBSD 14 VM でテストスイート全体を実行する CI ジョブがあります。ゲスト内で <code>ps(1)</code>、<code>sysctl(8)</code>、<code>swapinfo(8)</code>、<code>netstat(1)</code> と数値を突き合わせます。FreeBSD に存在しない機能は、ぼかさずに一覧として示しています。コンテナ列なし、PSS なし、GPU 列なし、ディスク転送速度のメーターなし。<a href="htop-for-freebsd.html">htop on FreeBSD</a> を参照してください。</p>
+  <p>FreeBSD を使っているなら、このページでいちばん具体的な違いはここです。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>スクリプト:gander にはバッチモードがある</h2>
+  <p>bottom にはスクリプトから呼べるものがありません。自動収集には <code>/proc</code>(または同等のもの)を自分で読みます。TUI と同じ整形で出力したくなるまでは、それで足ります。</p>
+  <p>gander のバッチモードは、インターフェースを切った同じバイナリです。スクリプトが受け取る数値は、画面に描かれたはずの数値と同じです。</p>
+<pre><code>gander --json --limit 10
+gander --sort PERCENT_MEM --limit 20
+gander -F "python|node" -n 5</code></pre>
+  <p>終了ステータスにも意味があります。スキャンの失敗は空配列ではなく、非ゼロの終了コードで返ります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>htop から移る場合</h2>
+  <p>2 つのうち <code>htoprc</code> を読めるのは gander だけです。htop で長年かけて調整した列とソート順があるなら、最初に気づく違いはここです。</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p><code>--save</code> を付けなければインポートはドライランで、<code>htoprc</code> は決して変更されません。キーの違いは <a href="vs-htop.html">vs htop</a> を参照してください。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>インストール</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust が入っている任意のプラットフォーム</span></code></pre>
+  <p>署名付きの <code>apt</code> / <code>dnf</code> リポジトリと、<code>x86_64-unknown-freebsd</code> を含むアーカイブは、<a href="index.html#install">インストールの節</a>にあります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>さらに読む</h2>
+  <div class="next">
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>htop on FreeBSD</h3>
+      <p><code>libkvm</code> バックエンドが読めるものと、読めないもの。</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>gander がキーバインドの基準にしているツール。</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>もう一つのダッシュボードと、その広い BSD 対応。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">キーマップ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

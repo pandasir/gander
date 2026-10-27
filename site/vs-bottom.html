@@ -6,6 +6,11 @@
 <title>gander vs bottom — FreeBSD support, JSON, and layout</title>
 <meta name="description" content="bottom treats FreeBSD as unofficial support; gander has a libkvm backend tested in CI. How the two Rust process viewers differ.">
 <link rel="canonical" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-bottom.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-bottom.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-bottom.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-bottom.html">
 <meta name="robots" content="index, follow">
 <link rel="stylesheet" href="site.css">
 
@@ -34,7 +39,7 @@
   "url": "https://pandasir.github.io/gander/vs-bottom.html",
   "image": "https://pandasir.github.io/gander/social-preview.png",
   "inLanguage": "en",
-  "dateModified": "2026-10-23",
+  "dateModified": "2026-10-27",
   "isPartOf": {
     "@type": "WebSite",
     "name": "gander",
@@ -55,6 +60,12 @@
 
 <div class="wrap">
 <header>
+  <nav class="lang" aria-label="Language">
+    <span aria-current="true">English</span>
+    <a lang="zh-CN" hreflang="zh-CN" href="zh-CN/vs-bottom.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="ja/vs-bottom.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="ko/vs-bottom.html">한국어</a>
+  </nav>
   <p class="crumbs"><a href="index.html">gander</a> / compared with bottom</p>
   <h1>gander vs bottom</h1>
   <p class="lede">The closest comparison of the three: both are Rust, both cover Linux, macOS and FreeBSD, and both refuse htop's layout. They differ in what the screen is for.</p>
@@ -89,7 +100,6 @@
       <tr><td>Config file format</td><td class="c">TOML, plus <code>htoprc</code> import</td><td class="c">TOML</td></tr>
     </tbody>
   </table>
-  <p>Two rows deserve the detail rather than a checkmark.</p>
 </div>
 </section>
 
@@ -100,8 +110,8 @@
   <div class="note">
     <p><em>Might not be tested in CI to build or pass tests. Might not be properly tested by maintainers prior to a stable release. May only receive limited support, such as missing features or bugs that may not be fixed.</em></p>
   </div>
-  <p>That is an honest description, not a criticism — it is exactly the kind of statement this project tries to make about its own gaps. But it means FreeBSD is not a platform you can depend on bottom for.</p>
-  <p>gander has a dedicated FreeBSD backend that reads <code>sysctl</code> and <code>libkvm</code>, and a CI job that runs the whole test suite in a FreeBSD 14 VM on QEMU, comparing its figures against <code>ps(1)</code>, <code>sysctl(8)</code>, <code>swapinfo(8)</code> and <code>netstat(1)</code> inside the guest. The capabilities that are genuinely missing there are listed rather than implied: no container columns, no PSS, no GPU columns, no disk throughput meter. See <a href="htop-for-freebsd.html">htop on FreeBSD</a>.</p>
+  <p>bottom is describing its own limits, which is what this project tries to do too. But it means FreeBSD is not a platform you can depend on it for.</p>
+  <p>gander has a dedicated FreeBSD backend that reads <code>sysctl</code> and <code>libkvm</code>, and a CI job that runs the whole test suite in a FreeBSD 14 VM on QEMU, comparing its figures against <code>ps(1)</code>, <code>sysctl(8)</code>, <code>swapinfo(8)</code> and <code>netstat(1)</code> inside the guest. The capabilities that are missing there are listed rather than implied: no container columns, no PSS, no GPU columns, no disk throughput meter. See <a href="htop-for-freebsd.html">htop on FreeBSD</a>.</p>
   <p>If you run FreeBSD, that is the most concrete difference on this page.</p>
 </div>
 </section>
@@ -109,7 +119,7 @@
 <section>
 <div class="wrap">
   <h2>Scripts: gander has a batch mode</h2>
-  <p>bottom is a screen. For automated collection you read <code>/proc</code> (or the equivalent) yourself, which is fine until you want the same formatting the TUI uses.</p>
+  <p>bottom has nothing for a script to call: for automated collection you read <code>/proc</code> (or the equivalent) yourself, which is fine until you want the same formatting the TUI uses.</p>
   <p>gander's batch mode is the same binary with the interface turned off, so the numbers a script sees are the numbers the screen would have drawn:</p>
 <pre><code>gander --json --limit 10
 gander --sort PERCENT_MEM --limit 20
@@ -121,7 +131,7 @@ gander -F "python|node" -n 5</code></pre>
 <section>
 <div class="wrap">
   <h2>Coming from htop</h2>
-  <p>Neither tool reads <code>htoprc</code> except gander. If you have years of tuned columns and sort order in htop, that is the difference you notice first:</p>
+  <p>Of the two, only gander reads <code>htoprc</code>. If you have years of tuned columns and sort order in htop, that is the difference you notice first:</p>
 <pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
   <p>The import is a dry run without <code>--save</code>, and <code>htoprc</code> is never modified. See <a href="vs-htop.html">vs htop</a> for the keys that differ.</p>
 </div>

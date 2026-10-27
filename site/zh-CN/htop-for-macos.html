@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS 上的 htop —— 哪些能用,哪些 macOS 不给你</title>
+<meta name="description" content="htop 在 macOS 上能用,但几个 Linux 数字没有 Darwin 对应物。进程查看器能读到什么、读不到什么,gander 如何处理。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="macOS 上的 htop:真正能用的部分">
+<meta property="og:description" content="libproc、sysctl 和 Mach 在 macOS 上给你 htop 的大部分。这些是它们不肯给的数字。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="macOS 上的 htop:真正能用的部分">
+<meta name="twitter:description" content="libproc、sysctl 和 Mach 在 macOS 上给你 htop 的大部分。这些是它们不肯给的数字。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "macOS 上的 htop —— 哪些能用,哪些 macOS 不给你",
+  "description": "htop 在 macOS 上能用,但几个 Linux 数字没有 Darwin 对应物。进程查看器能读到什么、读不到什么,gander 如何处理。",
+  "url": "https://pandasir.github.io/gander/zh-CN/htop-for-macos.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../htop-for-macos.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/htop-for-macos.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/htop-for-macos.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 在 macOS 上</p>
+  <h1>macOS 上的进程查看器</h1>
+  <p class="lede">htop 在 macOS 上是能用的。让人栽跟头的不是 htop——而是他们期待中的几个 Linux 数字在 macOS 上没有对应物,谁照样显示谁就是在猜。</p>
+  <div class="verdict">
+    <p>这一页是一份清单:macOS 会告诉进程查看器什么、不肯告诉什么,以及 gander 对每处空缺怎么处理。它对 htop 和 gander 同样适用,因为两者读的是同一批接口。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装 gander</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">后端说明</a>
+  </div>
+</header>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1800" height="800" alt="gander 在 macOS 上的 panels 布局:进程表带着选中进程,细节显示在右侧检视面板里。">
+  <figcaption>gander 的 <code>panels</code> 布局。内存数字是 macOS 口径,下文有解释。</figcaption>
+</figure>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>macOS 肯给你的</h2>
+  <p>htop 进程表里的东西几乎都来自三个地方,这三处在 macOS 上都可用:</p>
+  <table>
+    <thead><tr><th>数字</th><th>来源</th></tr></thead>
+    <tbody>
+      <tr><td>进程列表</td><td><code>proc_listallpids</code> 加 <code>PROC_PIDTASKALLINFO</code></td></tr>
+      <tr><td>命令行</td><td><code>sysctl(KERN_PROCARGS2)</code></td></tr>
+      <tr><td>可执行文件路径</td><td><code>proc_pidpath</code></td></tr>
+      <tr><td>工作目录</td><td><code>proc_pidinfo(PROC_PIDVNODEPATHINFO)</code></td></tr>
+      <tr><td>线程</td><td><code>PROC_PIDLISTTHREADS</code> + <code>PROC_PIDTHREADINFO</code></td></tr>
+      <tr><td>内存总量、swap</td><td><code>host_statistics64</code>、<code>hw.memsize</code>、<code>sysctl(vm.swapusage)</code></td></tr>
+      <tr><td>每核 CPU</td><td><code>host_processor_info</code></td></tr>
+      <tr><td>网络吞吐</td><td><code>sysctl(NET_RT_IFLIST2)</code></td></tr>
+    </tbody>
+  </table>
+  <p>所以「htop 在 macOS 上其实用不了」这个常见说法是错的。能用。有意思的是第二张表。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>macOS 不肯给的</h2>
+  <p>这里的每一行都是只有 Linux 才有的机制,没有 Darwin 对应物。</p>
+  <table>
+    <thead><tr><th></th><th class="c">gander 在 macOS 上</th></tr></thead>
+    <tbody>
+      <tr><td>每进程 PSS / EPSS</td><td class="c">没有这一列,而不是显示 <code>-</code></td></tr>
+      <tr><td>PSI 压力 meter</td><td class="c">meter 显示 <code>n/a here</code></td></tr>
+      <tr><td>Zram / Zswap / HugePages</td><td class="c">meter 显示 <code>n/a here</code></td></tr>
+      <tr><td>容器 / cgroup 身份</td><td class="c">没有 cgroup 概念;这一列被排除</td></tr>
+      <tr><td>CPU 延迟统计</td><td class="c">列被排除</td></tr>
+      <tr><td>I/O 优先级(<code>i</code>)</td><td class="c">没有 <code>ioprio_set</code>;面板会说明</td></tr>
+      <tr><td>GPU 列</td><td class="c">需要 IOKit;被排除</td></tr>
+      <tr><td>主机级磁盘吞吐</td><td class="c">meter 显示 <code>n/a here</code></td></tr>
+      <tr><td>CPU 亲和性编辑</td><td class="c">仅提示</td></tr>
+    </tbody>
+  </table>
+  <p>要紧的区分是「没有这一列」和「这一列显示 <code>-</code>」。列里的 <code>-</code> 读作「这个进程此刻没有这个值」;没有这一列读作「这个系统没有这个概念」。在 macOS 上,gander 把这些列从设置界面整个排除,meter 则留在原处显示 <code>n/a here</code>——因为在 Linux 上写好的配置文件还得能在 Mac 上加载,消失的 meter 是坏配置,不是诚实的配置。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>内存:那个被人当成 bug 的数字</h2>
+  <p>macOS 的内存记账不是 Linux 那一套,硬把一套映射到另一套的查看器会错得很显眼。<code>vm_statistics64</code> 暴露了两个互相重叠的计数家族——按使用(<code>active</code>、<code>inactive</code>、<code>wire</code>、<code>compressor</code>、<code>free</code>、<code>speculative</code>)和按后端存储(<code>internal</code>、<code>external</code>)——跨家族相加就会重复计数。gander 用后端存储家族加上它没覆盖的两类页来构建这个数字:</p>
+<pre><code>used      = (internal - purgeable) + wired + compressed
+available = total - used</code></pre>
+  <p>这个数字和 htop 打印的一致,推导方式也一致,和「活动监视器」与 top 报告的也一致。所以在 Mac 上 gander 和 htop 互相吻合。两者都不吻合的,是从 <code>vm_stat</code> 天真地算 <code>total - free</code>——正是那种让谁看都像错了的对比。</p>
+  <p>把 <code>inactive</code> 和 <code>speculative</code> 算作缓存,不算已用。开机一周的机器不会因为 <code>inactive</code> 很大就内存告急——那是可以回收的。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>在 Mac 上 gander 和 htop 的差别</h2>
+  <p>数字一致,屏幕不一致。htop 的细节面板都是全屏模式:<code>e</code> 看环境变量、<code>l</code> 看打开的文件、<code>s</code> 看系统调用,每个都会顶掉进程表,回来还得重新找位置。gander 把选中进程的命令行、状态、内存和运行时间放在表格旁边的一列里,列表原地不动。</p>
+  <p>按键相同,htoprc 导入相同;按 <code>L</code> 就能得到 htop 的布局,如果你要的就是那个。有差别的按键见 <a href="vs-htop.html">vs htop</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>在 macOS 上安装</h2>
+<pre><code>brew install pandasir/tap/gander
+
+<span class="c"># 或者,有 Rust 工具链的话</span>
+cargo install gander-bin</code></pre>
+  <p><a href="https://github.com/pandasir/gander/releases">Release</a> 里也有 Apple Silicon 和 Intel 两个架构的预编译压缩包。</p>
+  <div class="note">
+    <p>macOS 上的实时测试会读真实的进程表,测试套件可能需要在非受限沙箱之外运行。三个平台的后端对比见 <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>。</p>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD 上的 htop</h3>
+      <p><code>libkvm</code> 后端,以及为什么替代品到了 FreeBSD 就变少。</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>同样的按键,不同的屏幕:唯一影响日常使用的布局差别。</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>换成仪表盘的进程列表,以及两者为何不是对手。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">可移植性</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

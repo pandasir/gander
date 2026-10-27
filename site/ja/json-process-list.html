@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>スクリプトのための JSON プロセス一覧 — gander のバッチモード</title>
+<meta name="description" content="gander --json はプロセス一覧を JSON として出力します。--sort、--filter、--limit 付きで、Linux・macOS・FreeBSD に対応。htop や btop にはできないスクリプト連携です。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/json-process-list.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="スクリプトのための JSON プロセス一覧">
+<meta property="og:description" content="ライブの CPU とメモリの数値、完全なコマンドライン、バイト単位のサイズを JSON で。固定幅の ps 出力をパースする代わりに。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/json-process-list.html">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:title" content="スクリプトのための JSON プロセス一覧">
+<meta name="twitter:description" content="ライブの CPU とメモリの数値、完全なコマンドライン、バイト単位のサイズを JSON で。固定幅の ps 出力をパースする代わりに。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "スクリプトのための JSON プロセス一覧 — gander のバッチモード",
+  "description": "gander --json はプロセス一覧を JSON として出力します。--sort、--filter、--limit 付きで、Linux・macOS・FreeBSD に対応。htop や btop にはできないスクリプト連携です。",
+  "url": "https://pandasir.github.io/gander/ja/json-process-list.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ja",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ja/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../json-process-list.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/json-process-list.html">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/json-process-list.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / スクリプトのための JSON プロセス一覧</p>
+  <h1>スクリプトのための JSON プロセス一覧</h1>
+  <p class="lede">TUI が表示する数値を、サンプルごとに 1 つの JSON ドキュメントとして。cron ジョブやモニター、そして今までは固定幅の ps 出力をパースしていたあらゆる場面のために。</p>
+  <div class="verdict">
+    <p>一回きりの列出力には <code>ps</code> を。そこでは依然として ps が正解です。メモリ使用率、完全なコマンドライン、バイト単位のサイズをデータとして Linux・macOS・FreeBSD 上で得たいなら <code>gander --json</code> を。ライブの CPU 使用率には、同一呼び出しで 2 つ以上のサンプルを取ってください。最初のサンプルには CPU の基準がありません。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">インストール</a>
+    <a class="btn" href="https://github.com/pandasir/gander">ソース</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>他のツールがスクリプトにくれるもの</h2>
+  <p><code>ps</code> は空白で揃えた列のスナップショットを 1 つ出力します。あらゆるサーバーのスクリプトの半分に <code>awk</code> の呼び出しが潜っているのはこのせいで、列が改名された日に壊れます。CPU の数値はプロセスの生涯平均で、いま何をしているかではありません。切り詰められない <code>comm</code> と完全なコマンドラインの両方を取るには、procps と Darwin で違うフラグが必要です。</p>
+  <p><code>top</code> にはバッチモード(<code>-b</code>)がありますが、バッチ化されるのは描画済みの curses 画面です。表示のテキスト採取であって、データではありません。<code>htop</code> にはバッチモードがまったくなく、何かのサンプルを 1 つ頼む方法もありません。<code>btop</code> も同じ立場で、<code>bottom</code> もそうです。</p>
+  <p>この不足があるから、シェルスクリプトは結局 <code>/proc</code> をプラットフォームごとに手で読み直すことになります。gander の TUI とバッチモードは同じバックエンドを読みます。Linux では <code>/proc</code>、macOS では <code>sysctl</code>/Mach/libproc、FreeBSD では <code>sysctl</code>/<code>libkvm</code> です。スクリプトが見る数値は、対話ビューが表示する数値と同じです。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>バッチモード</h2>
+<pre><code>gander --json                       <span class="c"># JSON を 1 回出力して終了</span>
+gander --json --limit 5             <span class="c"># 最大 5 行</span>
+gander --json --sort PERCENT_MEM    <span class="c"># TUI の F6 と同じソート</span>
+gander --json -F "postgres|nginx"    <span class="c"># 固定文字列フィルタ。正規表現ではない</span>
+gander -n 60 -d 1000 --json         <span class="c"># 60 サンプル、約 1 秒間隔</span></code></pre>
+  <p>1 回の呼び出しがプロセス行の JSON 配列を 1 つ出力して終了します。<code>-n N</code> では N 個の配列を続けて出力します。ドキュメントのストリームなので、<code>jq -s 'add'</code> で 1 回の実行を 1 つのリストに平らにできます。ソートとフィルタは JSON 生成の前に行われるので、<code>--limit 5</code> は 5 行を出力して止まります。全テーブルを作ってから削る、ということはしません。</p>
+  <p><code>cpu_percent</code> には同じプロセスの 2 つの連続サンプルが必要です。呼び出しは毎回新しいサンプラーから始まるので、最初のサンプルでは全行の CPU が 0 になります。後から現れたプロセスも、以降のサンプルでは 0 から始まります。メモリの数値にこの基準は要りません。スクリプトや cron で CPU サンプルを取るには、1 秒間隔で 2 サンプル取って 2 つ目の配列だけを使います:</p>
+<pre><code>gander -n 2 -d 1000 --json | jq -s '.[1]'</code></pre>
+  <p><code>jq</code> で、メモリの上位 5 消費者をタブ区切りで:</p>
+<pre><code>gander --json --sort PERCENT_MEM --limit 5 |
+  jq -r '.[] | [.pid, .mem_percent, .rss, .cmdline] | @tsv'</code></pre>
+  <p>同じ行集合を 1 分間の実行で統合し、急に跳ねて消えるものを捉えます:</p>
+<pre><code>gander -n 60 -d 1000 --json | jq -s 'add |
+  group_by(.comm) | map({comm: .[0].comm, max_rss: (map(.rss) | max)}) |
+  sort_by(-.max_rss) | .[0:10]'</code></pre>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>フィールド</h2>
+  <p>実物の 1 行。macOS から:</p>
+<pre><code>{"pid":407,"ppid":1,"uid":0,"comm":"loginwindow","state":"S",
+  "cpu_percent":0.00,"mem_percent":0.18,"rss":15613952,
+  "vsize":446144643072,"nice":0,"priority":0,"threads":6,
+  "elapsed":479475,"is_thread":false,"identity":407,
+  "cmdline":"/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console",
+  "memory":null}</code></pre>
+  <table>
+    <thead>
+      <tr><th>フィールド</th><th>意味</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>pid</code>、<code>ppid</code>、<code>uid</code></td><td>各 ID。カーネルが報告するまま。</td></tr>
+      <tr><td><code>comm</code></td><td>実行ファイルのベース名。TUI が既定でソートする列。</td></tr>
+      <tr><td><code>cmdline</code></td><td>引数を含む完全なコマンドライン。決して切り詰めません。ps が手こずらせるフィールドです。</td></tr>
+      <tr><td><code>state</code></td><td>カーネルの状態文字。<code>R</code> は実行中、<code>S</code> はスリープ、<code>Z</code> はゾンビ、など。</td></tr>
+      <tr><td><code>cpu_percent</code></td><td>このプロセスの連続サンプル間の CPU 使用量。生涯平均ではありません。前のサンプルが得られるまで 0 で、呼び出しの最初のサンプルの全行も 0 です。</td></tr>
+      <tr><td><code>mem_percent</code></td><td>サンプル時点での常駐メモリの総物理メモリに対する割合。最初のサンプルでも利用できます。</td></tr>
+      <tr><td><code>rss</code>、<code>vsize</code></td><td>常駐サイズと仮想サイズ。バイト単位です。「KB、たぶん」ではありません。ps 出力のパースを信頼できなくする単位の曖昧さのことです。</td></tr>
+      <tr><td><code>nice</code>、<code>priority</code>、<code>threads</code></td><td>スケジューリングの数値。カーネルが報告するまま。</td></tr>
+      <tr><td><code>elapsed</code></td><td>プロセス開始からの秒数。</td></tr>
+      <tr><td><code>is_thread</code></td><td>その行がプロセスではなく別のプロセスのスレッドである場合に true。<code>--threads</code> を付けるとスレッドごとの行も出力されます。</td></tr>
+      <tr><td><code>identity</code></td><td>数値の行識別子。プロセス行では PID、スレッド行ではスレッド固有の ID。macOS で PID を共有するスレッドを区別するためのもので、コンテナ識別子ではなく、常に存在します。</td></tr>
+      <tr><td><code>memory</code></td><td>プラットフォーム依存の、入れ子になったメモリとリソースの詳細。macOS と FreeBSD では null。Linux では、要求されなかった読み取りや取得できなかったデータの値が null になります。</td></tr>
+    </tbody>
+  </table>
+  <p>ソートには TUI の列名を受け付けます。<code>PERCENT_CPU</code>、<code>PERCENT_MEM</code>、<code>M_RESIDENT</code>、<code>PID</code> など。これらは JSON のキーではありません。<code>rss</code> でソートするには <code>--sort M_RESIDENT</code> を使います。<code>-F</code> はコマンドラインに対して、大文字小文字を区別しない固定文字列を <code>|</code> で区切って照合します。意図的に正規表現にしていません。定期的に走るフィルタが、一文字の違いで全部にマッチする状態になってはいけないからです。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>何ではないか</h2>
+  <p>監視エージェントではありません。呼び出しごとに完結します。デーモンも、ストレージも、ダッシュボードも、依存もありません。cron ジョブはメモリのスナップショットのために <code>gander --json</code> をファイルに追記できます。CPU の計測には、代わりに上の 2 サンプルのコマンドを使ってください。ファイルは <code>jq</code> で読めるままです。保持とアラート付きの継続収集が必要なら、すでに走らせているツールをこの出力に向けてください。gander がサーバーを生やすことは期待しないでください。</p>
+  <p><code>ps</code> でもありません。一回きりの列出力、プロセスグループの選択、セッション ID は <code>ps</code> の得意分野で、ps で動いているスクリプトが変わる理由はありません。バッチモードは、ps が追いつかない場面のためのものです。ライブの使用率、バイト単位のサイズ、そして対話ビューと一致する数値。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>インストール</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust の入った任意のプラットフォーム</span></code></pre>
+  <p>Debian・Ubuntu・Fedora・RHEL の Linux パッケージは署名付きリポジトリにあります。リリースごとに macOS(Apple Silicon と Intel)、Linux(x86_64 と arm64)、FreeBSD のアーカイブも出します。<a href="index.html#install">すべてのインストール方法</a>を見てください。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>このあと読む</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>同じキーとデータで、詳細パネルがテーブルの隣に。</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>独自のレイアウトを持つグラフィカルモニター。gander との違い。</p>
+    </a>
+    <a class="card" href="htop-for-macos.html">
+      <h3>macOS の htop</h3>
+      <p>libproc・sysctl・Mach がプロセスビューアに渡すものと渡さないもの。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">キーマップ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

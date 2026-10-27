@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs btop — “htop이 아닌 것”에 대한 두 가지 답</title>
+<meta name="description" content="btop과 gander는 htop의 레이아웃을 정반대 방향으로 거부합니다. btop은 시스템을 그리고, gander는 프로세스를 나열합니다. 무엇을 고를지, 왜.">
+<link rel="canonical" href="https://pandasir.github.io/gander/ko/vs-btop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs btop">
+<meta property="og:description" content="btop은 시스템에 관한 대시보드입니다. gander는 프로세스 목록입니다. 둘은 같은 화면을 두고 다투지 않습니다.">
+<meta property="og:url" content="https://pandasir.github.io/gander/ko/vs-btop.html">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<meta name="twitter:title" content="gander vs btop">
+<meta name="twitter:description" content="btop은 시스템에 관한 대시보드입니다. gander는 프로세스 목록입니다. 둘은 같은 화면을 두고 다투지 않습니다.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs btop — \"htop이 아닌 것\"에 대한 두 가지 답",
+  "description": "btop과 gander는 htop의 레이아웃을 정반대 방향으로 거부합니다. btop은 시스템을 그리고, gander는 프로세스를 나열합니다. 무엇을 고를지, 왜.",
+  "url": "https://pandasir.github.io/gander/ko/vs-btop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ko",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ko/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="언어">
+    <a lang="en" hreflang="en" href="../vs-btop.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/vs-btop.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="../ja/vs-btop.html">日本語</a>
+    <span aria-current="true">한국어</span>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / btop과의 비교</p>
+  <h1>gander vs btop</h1>
+  <p class="lede">둘 다 htop의 레이아웃을 거부합니다. 무엇으로 대체할지는 의견이 다릅니다. btop은 시스템을 그리고, gander는 프로세스를 나열합니다.</p>
+  <div class="verdict">
+    <p>질문이 “이 시스템이 어떻게 돌아가고 있나”라면 btop을 고르세요. 질문이 “어떤 프로세스가 그렇게 하고 있나”이거나 그 답을 스크립트에서 필요로 한다면 gander를 고르세요.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">설치</a>
+    <a class="btn" href="https://github.com/pandasir/gander">소스</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>같은 부류처럼 보이는 다른 도구</h2>
+  <p>btop은 리소스 모니터입니다. CPU, 메모리, 네트워크, 디스크, 온도를 그래프와 점자 플롯으로 보여 주고, 프로세스 목록은 여러 상자 가운데 하나입니다. 하는 일은 잘하고, 대시보드가 필요하다면 맞는 답입니다.</p>
+  <p>gander는 프로세스 목록입니다. htop과 같은 부류로, 선택한 프로세스의 세부 정보를 별도 화면에서 한 열로 옮겼을 뿐입니다. 스크린샷이 설명의 전부입니다:</p>
+  <div class="shot3">
+    <div>
+      <img src="../screenshot-panels.png" width="1800" height="800" loading="lazy" alt="gander의 panels 레이아웃: 하나로 합친 CPU 막대 하나, 메모리와 스왑 미터, 한 열로 압축한 코어별 그리드, 그리고 상세 정보 패널이 있는 프로세스 표.">
+      <span>gander <code>panels</code> — 미터를 한 열로 압축</span>
+    </div>
+    <div>
+      <img src="../screenshot-htop.png" width="1800" height="800" loading="lazy" alt="gander의 htop 레이아웃: 상단에 가로 미터가 가로지르고 전체 너비 프로세스 표가 있는 모습.">
+      <span>gander <code>htop</code> 레이아웃 (<code>L</code>)</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>한눈에 비교</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">btop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>답하는 기본 질문</td><td class="c">어떤 프로세스</td><td class="c">시스템 상태</td></tr>
+      <tr><td>htop이 아닌 레이아웃</td><td class="c yes"><code>panels</code></td><td class="c yes">예</td></tr>
+      <tr><td>htop 키 바인딩 계승</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>기존 <code>htoprc</code> 읽기</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>선택한 프로세스의 세부 정보가 목록 옆에</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>CPU / 메모리 / 네트워크 / 디스크 그래프</td><td class="c">CPU, 메모리, 디스크, 네트워크, PSI</td><td class="c yes">네 가지 모두, 온도까지</td></tr>
+      <tr><td>Linux, macOS, FreeBSD</td><td class="c yes">셋 모두 지원</td><td class="c yes">셋 모두, CI에서 빌드 (NetBSD, OpenBSD도)</td></tr>
+      <tr><td>TUI 없이 <code>--json</code> 배치 모드</td><td class="c yes">예</td><td class="c no">아니요</td></tr>
+      <tr><td>작성 언어</td><td class="c">Rust</td><td class="c">C++</td></tr>
+      <tr><td>라이선스</td><td class="c">GPL-2.0-or-later</td><td class="c">Apache-2.0</td></tr>
+    </tbody>
+  </table>
+  <p>btop의 플랫폼 목록이 한 방향으로는 더 넓습니다. gander가 지원하지 않는 NetBSD와 OpenBSD로도 빌드됩니다. 시스템이 그쪽이라면 답은 btop이고 이 페이지는 대상이 아닙니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>실용적인 차이는 스크립팅입니다</h2>
+  <p>btop은 화면입니다. 기계가 읽을 수 있는 스냅샷을 요청하는 지원되는 방법이 없으므로, 자동화하려면 화면을 긁거나 <code>/proc</code>을 직접 읽어야 합니다.</p>
+  <p>gander의 배치 모드는 같은 바이너리에서 TUI를 끈 것입니다:</p>
+<pre><code>gander --json --limit 10                   <span class="c"># JSON 샘플 1회, 상위 10행</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># 메모리 기준 무거운 20개</span>
+gander -F "python|node" -n 5               <span class="c"># 샘플 5회, 필터 적용</span></code></pre>
+  <p>매일 쓰는 기능은 아닙니다. 보기만 하는 도구와 cron 잡에 넣을 수 있는 도구의 차이입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>설치</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust가 있는 모든 플랫폼</span></code></pre>
+  <p>서명된 <code>apt</code>, <code>dnf</code> 저장소와 일곱 타깃용 압축 파일은 <a href="index.html#install">설치 절</a>에 있습니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>이어서 읽기</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>gander가 키 바인딩과 열의 의미를 빌려 온 도구.</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>크로스플랫폼 그래프와 위젯, 그리고 “공식 지원”의 의미.</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD에서 htop</h3>
+      <p><code>libkvm</code> 백엔드, 그리고 FreeBSD를 건너뛰는 대체 도구들.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">키 맵</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">변경 이력</a></p>
+  <p>GPL-2.0-or-later. Rust로 만들었습니다.</p>
+</div>
+</footer>
+
+</body>
+</html>

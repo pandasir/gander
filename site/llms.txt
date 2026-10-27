@@ -1,10 +1,9 @@
 # gander
 
 > gander is a cross-platform interactive process viewer for Linux, macOS and
-> FreeBSD, written in Rust. Think htop, with a layout that shows you one process
-> instead of all of them at once: a live inspector sits beside the process table
-> and follows the selection. It keeps most of htop's keybindings, samples in the
-> background, and ships a JSON batch mode for scripts.
+> FreeBSD, written in Rust. Think htop, with a live inspector beside the process
+> table that follows the selection. It keeps most of htop's keybindings, samples
+> in the background, and ships a JSON batch mode for scripts.
 
 gander's default `panels` layout puts a compact system column on the left, the
 process table in the middle and a live inspector on the right showing the
@@ -16,8 +15,13 @@ are available as optional columns or meters.
 
 Current release: v0.6.7 (October 2026).
 
+This site is also available in [简体中文](https://pandasir.github.io/gander/zh-CN/),
+[日本語](https://pandasir.github.io/gander/ja/) and
+[한국어](https://pandasir.github.io/gander/ko/): the same seven pages, translated,
+each under its own language directory.
+
 Install: `brew install pandasir/tap/gander` (macOS), `cargo install gander-bin`
-(any platform with Rust). There is no published AUR package yet. On Arch Linux,
+(any platform with Rust). On Arch Linux,
 build from the PKGBUILD in this repository:
 
 ```bash

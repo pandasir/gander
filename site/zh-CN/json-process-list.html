@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>给脚本用的 JSON 进程列表 —— gander 的批处理模式</title>
+<meta name="description" content="gander --json 把进程列表输出成 JSON,带 --sort、--filter 和 --limit,支持 Linux、macOS 和 FreeBSD。htop 和 btop 给不了你脚本的东西。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/json-process-list.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/json-process-list.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/json-process-list.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/json-process-list.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/json-process-list.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="给脚本用的 JSON 进程列表">
+<meta property="og:description" content="实时 CPU 和内存数字、完整命令行、字节精确的大小,直接是 JSON,不用再解析等宽的 ps 输出。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/json-process-list.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="给脚本用的 JSON 进程列表">
+<meta name="twitter:description" content="实时 CPU 和内存数字、完整命令行、字节精确的大小,直接是 JSON,不用再解析等宽的 ps 输出。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "给脚本用的 JSON 进程列表 —— gander 的批处理模式",
+  "description": "gander --json 把进程列表输出成 JSON,带 --sort、--filter 和 --limit,支持 Linux、macOS 和 FreeBSD。htop 和 btop 给不了你脚本的东西。",
+  "url": "https://pandasir.github.io/gander/zh-CN/json-process-list.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../json-process-list.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/json-process-list.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/json-process-list.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 给脚本用的 JSON 进程列表</p>
+  <h1>给脚本用的 JSON 进程列表</h1>
+  <p class="lede">TUI 显示的数字,每次采样一份 JSON 文档——给 cron 任务、监控,以及一切本来要去解析等宽 ps 输出的东西。</p>
+  <div class="verdict">
+    <p>要一次性的列输出,用 <code>ps</code>;那仍是它的主场。要在 Linux、macOS 和 FreeBSD 上把内存百分比、完整命令行和字节精确的大小当数据用,用 <code>gander --json</code>。要实时 CPU 百分比,同一次调用里至少采两个样;第一个样本没有 CPU 基线。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装</a>
+    <a class="btn" href="https://github.com/pandasir/gander">源码</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>别的工具能给脚本什么</h2>
+  <p><code>ps</code> 输出一份用空格对齐的列的快照,所以每台服务器上总有一半脚本藏着一句 <code>awk</code>,列一改名就断。它的 CPU 数字是进程一生的平均值,不是现在在干什么;想同时拿到不截断的 <code>comm</code> 和完整命令行,procps 和 Darwin 的参数还各不相同。</p>
+  <p><code>top</code> 有批处理模式(<code>-b</code>),但它批处理的是渲染出来的 curses 屏幕——是显示屏的文字刮取,不是数据。<code>htop</code> 完全没有批处理模式:没法向它要任何东西的一个采样。<code>btop</code> 处境相同,<code>bottom</code> 也是。</p>
+  <p>这个空缺就是 shell 脚本最后都自己手读 <code>/proc</code>、每个平台读一遍的原因。gander 的 TUI 和批处理模式读的是同一批后端——Linux 用 <code>/proc</code>,macOS 用 <code>sysctl</code>/Mach/libproc,FreeBSD 用 <code>sysctl</code>/<code>libkvm</code>——脚本看到的数字就是交互视图显示的数字。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>批处理模式</h2>
+<pre><code>gander --json                       <span class="c"># 一次 JSON 采样,然后退出</span>
+gander --json --limit 5             <span class="c"># 最多五行</span>
+gander --json --sort PERCENT_MEM    <span class="c"># 和 TUI 的 F6 同样排序</span>
+gander --json -F "postgres|nginx"    <span class="c"># 固定字符串过滤,不是正则</span>
+gander -n 60 -d 1000 --json         <span class="c"># 六十次采样,间隔约一秒</span></code></pre>
+  <p>一次调用打印一个 JSON 进程行数组然后退出。用 <code>-n N</code> 会连着打印 N 个数组——一串文档,所以 <code>jq -s 'add'</code> 能把整次运行摊平成一个列表。排序和过滤发生在生成 JSON 之前,所以 <code>--limit 5</code> 打印五行就停——不会先建出整张表再裁掉。</p>
+  <p><code>cpu_percent</code> 需要同一进程的两次连续采样。每次调用都从全新的采样器开始,所以第一个样本里每行的 CPU 都是零;后到的进程在后续采样里也从零开始。内存数字不需要这条基线。要给脚本或 cron 拿一个 CPU 采样,隔一秒采两个样,只留第二个数组:</p>
+<pre><code>gander -n 2 -d 1000 --json | jq -s '.[1]'</code></pre>
+  <p>用 <code>jq</code>,内存最高的五个进程,制表符分隔:</p>
+<pre><code>gander --json --sort PERCENT_MEM --limit 5 |
+  jq -r '.[] | [.pid, .mem_percent, .rss, .cmdline] | @tsv'</code></pre>
+  <p>同一批行,合并一次一分钟的运行,抓那些突然冒头又消失的:</p>
+<pre><code>gander -n 60 -d 1000 --json | jq -s 'add |
+  group_by(.comm) | map({comm: .[0].comm, max_rss: (map(.rss) | max)}) |
+  sort_by(-.max_rss) | .[0:10]'</code></pre>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>字段</h2>
+  <p>一行真实数据,来自 macOS:</p>
+<pre><code>{"pid":407,"ppid":1,"uid":0,"comm":"loginwindow","state":"S",
+  "cpu_percent":0.00,"mem_percent":0.18,"rss":15613952,
+  "vsize":446144643072,"nice":0,"priority":0,"threads":6,
+  "elapsed":479475,"is_thread":false,"identity":407,
+  "cmdline":"/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console",
+  "memory":null}</code></pre>
+  <table>
+    <thead>
+      <tr><th>字段</th><th>含义</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>pid</code>、<code>ppid</code>、<code>uid</code></td><td>各 id,按内核报告的。</td></tr>
+      <tr><td><code>comm</code></td><td>可执行文件的基名,TUI 默认排序的那一列。</td></tr>
+      <tr><td><code>cmdline</code></td><td>完整命令行含参数,永不截断。这是 ps 让你费劲才能拿到的字段。</td></tr>
+      <tr><td><code>state</code></td><td>内核的状态字母:<code>R</code> 运行、<code>S</code> 睡眠、<code>Z</code> 僵尸,等等。</td></tr>
+      <tr><td><code>cpu_percent</code></td><td>相邻两次采样之间的 CPU 用量,不是一生平均值。没有上一次采样之前是零,包括每次调用的第一个样本里的每一行。</td></tr>
+      <tr><td><code>mem_percent</code></td><td>采样当时的常驻内存占总物理内存的百分比;第一个样本就有。</td></tr>
+      <tr><td><code>rss</code>、<code>vsize</code></td><td>常驻与虚拟大小,单位字节。不是「KB,大概吧」——正是那种让解析 ps 输出不可信的单位含糊。</td></tr>
+      <tr><td><code>nice</code>、<code>priority</code>、<code>threads</code></td><td>调度数字,按内核报告的。</td></tr>
+      <tr><td><code>elapsed</code></td><td>进程启动至今的秒数。</td></tr>
+      <tr><td><code>is_thread</code></td><td>行是别的进程的线程而非进程本身时为 true;用 <code>--threads</code> 时逐线程的行也会输出。</td></tr>
+      <tr><td><code>identity</code></td><td>数字行标识:进程行是 PID,线程行是线程专属 id。它用来区分 macOS 上共享 PID 的线程;不是容器标识,且始终存在。</td></tr>
+      <tr><td><code>memory</code></td><td>随平台嵌套的内存与资源细节。macOS 和 FreeBSD 上为 null;Linux 上,未请求或拿不到的可选读取,各自的值为 null。</td></tr>
+    </tbody>
+  </table>
+  <p>排序接受 TUI 的列名——<code>PERCENT_CPU</code>、<code>PERCENT_MEM</code>、<code>M_RESIDENT</code>、<code>PID</code> 等。它们不是 JSON 键名:想按 <code>rss</code> 排,用 <code>--sort M_RESIDENT</code>。<code>-F</code> 对命令行匹配大小写不敏感的固定字符串,用 <code>|</code> 分隔;它刻意不是正则——因为一个要按计划跑的过滤器,不该离「匹配一切」只差一个字符。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>它不是什么</h2>
+  <p>它不是监控 agent。每次调用自成一体:没有守护进程、没有存储、没有仪表盘、没有依赖。cron 任务可以把 <code>gander --json</code> 追加到文件里做内存快照;CPU 测量则改用上面的两次采样命令。文件仍然能被 <code>jq</code> 读。要带保留和告警的持续采集,把你已经在跑的工具指向这份输出,别指望 gander 长出服务器。</p>
+  <p>它也不是 <code>ps</code>。一次性的列输出、进程组选择和会话 id 是 <code>ps</code> 的强项,已经在用 <code>ps</code> 的脚本没有理由改。批处理模式留给 ps 不够用的场合:实时百分比、字节精确的大小,以及和交互视图一致的数字。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>安装</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># 任何有 Rust 的平台</span></code></pre>
+  <p>Debian、Ubuntu、Fedora 和 RHEL 的 Linux 包在签名软件源上;每个 Release 附带 macOS(Apple Silicon 和 Intel)、Linux(x86_64 和 arm64)和 FreeBSD 的压缩包。见<a href="index.html#install">所有安装方式</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>同样的按键和数据,检视面板就在表格旁边。</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>一个有自己布局的图形监控器。它和 gander 差在哪。</p>
+    </a>
+    <a class="card" href="htop-for-macos.html">
+      <h3>macOS 上的 htop</h3>
+      <p>libproc、sysctl 和 Mach 肯给进程查看器什么,不肯给什么。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">按键表</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

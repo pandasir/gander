@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs htop —— 保留 htop 按键的 htop 替代品</title>
+<meta name="description" content="gander vs htop:同样的 /proc 数据、同样的按键,选中进程的细节就贴在列表旁边。支持 --import-htoprc 迁移。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-htop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-htop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-htop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs htop">
+<meta property="og:description" content="同样的进程数据,同样的按键,不同的布局:检视面板跟着光标走,不再藏在另一个界面。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/vs-htop.html">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:title" content="gander vs htop">
+<meta name="twitter:description" content="同样的进程数据,同样的按键,不同的布局:检视面板跟着光标走,不再藏在另一个界面。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs htop —— 保留 htop 按键的 htop 替代品",
+  "description": "gander vs htop:同样的 /proc 数据、同样的按键,选中进程的细节就贴在列表旁边。支持 --import-htoprc 迁移。",
+  "url": "https://pandasir.github.io/gander/zh-CN/vs-htop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "zh-CN",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/zh-CN/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../vs-htop.html">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/vs-htop.html">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/vs-htop.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / 与 htop 对比</p>
+  <h1>gander vs htop</h1>
+  <p class="lede">同样的进程数据,同样的按键。区别在于选中进程的细节放在哪:就在表格旁边,不用再按一次键。</p>
+  <div class="verdict">
+    <p>如果只想要每个发行版都自带的那件工具,用 htop。如果已经记熟了 htop 的按键,又想要检视面板、还不想放弃表格,用 gander。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">安装</a>
+    <a class="btn" href="https://github.com/pandasir/gander">源码</a>
+  </div>
+</header>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1800" height="800" alt="gander 的 panels 布局:进程表保持可见,右侧检视面板显示选中进程的命令行、状态、内存和运行时间。">
+  <figcaption>选中一行,答案就在眼前,不用离开列表。按 <code>L</code> 得到 htop 原本的排布。</figcaption>
+</figure>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>唯一改变工作方式的差别</h2>
+  <p>htop 回答「现在在跑什么」的方式是把所有进程一次铺开;至于「那个进程在干什么」,它放到另一个界面回答——老版本靠信息面板,新版本靠单独的视图。无论哪种,读细节的时候表格都不见了。</p>
+  <p>gander 让两者同屏。检视面板是表格旁边的一列,跟着光标走:沿着列表往下移,细节就跟着重读,不用每个进程按一次键。宽终端上,这是顺手干活的空白区域;窄终端上,布局会自行收缩,不会互相重叠。</p>
+  <p>如果你更想要 htop 的排布,按 <code>L</code>。全宽布局是内置的,选择会被记住。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>并排对比</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">htop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>在 Linux 上读取 <code>/proc</code></td><td class="c yes">是</td><td class="c yes">是</td></tr>
+      <tr><td>Linux、macOS 和 FreeBSD</td><td class="c yes">三者全是</td><td class="c yes">三者全是</td></tr>
+      <tr><td>htop 的按键(<code>F1</code>–<code>F10</code>、<code>t</code>、<code>k</code>、<code>/</code>、<code>\</code>)</td><td class="c yes">是</td><td class="c yes">—</td></tr>
+      <tr><td>读取现有的 <code>htoprc</code></td><td class="c yes"><code>--import-htoprc</code></td><td class="c yes">—</td></tr>
+      <tr><td>表格可见时,选中进程的细节也可见</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>树状视图</td><td class="c yes">是</td><td class="c yes">是</td></tr>
+      <tr><td>搜索、过滤、排序、renice、发信号</td><td class="c yes">是</td><td class="c yes">是</td></tr>
+      <tr><td>表头 meter、每核网格、主题</td><td class="c yes">是</td><td class="c yes">是</td></tr>
+      <tr><td>CPU 亲和性编辑</td><td class="c">Linux、FreeBSD</td><td class="c yes">Linux、FreeBSD</td></tr>
+      <tr><td><code>--json</code> 批处理模式(不用 TUI)</td><td class="c yes">是</td><td class="c no">否</td></tr>
+      <tr><td>PSS/EPSS、PSI、zram/zswap、GPU、延迟统计、容器</td><td class="c yes">Linux</td><td class="c no">否</td></tr>
+      <tr><td>编写语言</td><td class="c">Rust</td><td class="c">C</td></tr>
+      <tr><td>许可证</td><td class="c">GPL-2.0-or-later</td><td class="c">GPL-2.0-or-later</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">「—」表示不适用——htop 的按键和 htoprc 本来就是它自己的。</p>
+  <p>这张表的大部分以 htop 为基准,gander 刻意沿用它的列语义和按键。gander 超出「htop 加一列」的部分是最后三行:批处理模式、Linux 独有的额外列,以及 htop 没有对应物的检视面板。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>切换过去,不用重调设置</h2>
+  <p>htop 把设置存在 <code>htoprc</code> 里。gander 读取这个文件并写成自己的 TOML,你调了多年的列和排序就这样跟过来:</p>
+<pre><code>gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p>不带 <code>--save</code> 时,导入是一次试运行,只打印会改什么。你的 <code>htoprc</code> 不会被改动,htop 照常工作,两边可以并排比较。</p>
+  <p>导入器能处理 htop 从 1 开始计数的列 id,天真的转换正是在这里出错。没有 gander 对应项的设置会被报告,而不是悄悄丢掉。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>有差别的按键</h2>
+  <p>htop 功能栏里的键都留在 htop 放它们的地方。下面这些不一样:</p>
+  <table>
+    <tbody>
+      <tr><td><code>I</code></td><td>htop 用它反转排序。gander 用它切换选中表头 meter 的显示模式;改排序用 <code>F6</code> / <code>&lt;</code> <code>&gt;</code>。</td></tr>
+      <tr><td><code>L</code></td><td>在 <code>panels</code> 和 <code>htop</code> 布局之间切换。htop 没有这个键。</td></tr>
+      <tr><td><code>+</code> / <code>-</code></td><td>加快或放慢采样。</td></tr>
+      <tr><td><code>Shift+Left</code> / <code>Shift+Right</code></td><td>移动表头 meter 光标。</td></tr>
+    </tbody>
+  </table>
+  <p>完整按键表(含批处理模式参数)在 <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">docs/KEYS.md</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>安装</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># 任何有 Rust 的平台</span></code></pre>
+  <p>Debian、Ubuntu、Fedora 和 RHEL 的 Linux 包在签名软件源上;每个 Release 附带 macOS(Apple Silicon 和 Intel)、Linux(x86_64 和 arm64)和 FreeBSD 的压缩包。见<a href="index.html#install">所有安装方式</a>。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>继续阅读</h2>
+  <div class="next">
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>一个有自己布局的图形监控器。它和 gander 差在哪。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>跨平台的图表和小部件,以及官方支持覆盖哪些平台。</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD 上的 htop</h3>
+      <p><code>libkvm</code> 后端,以及为什么替代品到了 FreeBSD 就变少。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">按键表</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

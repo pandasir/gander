@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander — 适用于 Linux、macOS 和 FreeBSD 的跨平台交互式进程查看器</title>
+<meta name="description" content="gander 是用 Rust 编写的跨平台进程查看器,支持 Linux、macOS 和 FreeBSD。沿用 htop 的按键,检视面板就贴在进程表旁边。">
+<link rel="canonical" href="https://pandasir.github.io/gander/zh-CN/">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/">
+<meta name="keywords" content="gander, 进程查看器, htop 替代品, Linux 进程查看器, macOS 进程查看器, FreeBSD 进程查看器, Rust TUI, ratatui, 系统监控, 终端">
+<meta name="author" content="gander contributors">
+<meta name="robots" content="index, follow">
+<meta name="google-site-verification" content="e_qm2NqH2LDMhZ5Z9J4h5Stz3K6V_SBZiNap80q0Tx8">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander — 跨平台交互式进程查看器">
+<meta property="og:description" content="用 Rust 编写的进程查看器,支持 Linux、macOS 和 FreeBSD。沿用 htop 的按键,默认布局则刻意不同于 htop。">
+<meta property="og:url" content="https://pandasir.github.io/gander/zh-CN/">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="gander — 跨平台交互式进程查看器">
+<meta name="twitter:description" content="用 Rust 编写的进程查看器,支持 Linux、macOS 和 FreeBSD。沿用 htop 的按键,默认布局则刻意不同于 htop。">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="写着「gander」的深色卡片,标语是「An interactive process viewer for Linux, macOS and FreeBSD」,旁边是进程表的截图。">
+
+<link rel="stylesheet" href="../site.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "gander",
+  "alternateName": "gander 进程查看器",
+  "applicationCategory": "SystemApplication",
+  "applicationSubCategory": "进程查看器",
+  "operatingSystem": "Linux, macOS, FreeBSD",
+  "description": "gander 是用 Rust 编写的跨平台交互式进程查看器,可在 Linux、macOS 和 FreeBSD 上运行。它沿用 htop 的按键,可以导入现有的 htoprc,并在进程表旁边显示实时检视面板。",
+  "url": "https://pandasir.github.io/gander/zh-CN/",
+  "downloadUrl": "https://github.com/pandasir/gander/releases",
+  "codeRepository": "https://github.com/pandasir/gander",
+  "programmingLanguage": "Rust",
+  "license": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
+  "isAccessibleForFree": true,
+  "softwareVersion": "0.6.7",
+  "screenshot": "https://pandasir.github.io/gander/screenshot-panels.png",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "gander 能替代 htop 吗?",
+      "acceptedAnswer": { "@type": "Answer", "text": "能,也不能。它读的是同一份 /proc 数据,按键也照 htop 摆,你现在的工作方式不用改;--import-htoprc 能把你的 htop 设置直接搬过来。但默认布局刻意不是 htop 那种,因为「全宽表格 + 第二个界面看细节」并不是读进程列表的唯一方式。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander 支持 Windows 吗?",
+      "acceptedAnswer": { "@type": "Answer", "text": "不支持。三个后端分别是 /proc(Linux)、sysctl/Mach/libproc(macOS)和 sysctl/libkvm(FreeBSD)。没有 Windows 后端;依赖 Linux 内核接口的列(PSS、PSI、zram、延迟统计、容器)也只在 Linux 上有。" }
+    },
+    {
+      "@type": "Question",
+      "name": "crates.io 上的包为什么叫 gander-bin?",
+      "acceptedAnswer": { "@type": "Answer", "text": "因为 crates.io 上的 gander 是一个无关的、早已 yank 的包。装完命令仍然是 gander。" }
+    },
+    {
+      "@type": "Question",
+      "name": "为什么 gander 不用 ncurses?",
+      "acceptedAnswer": { "@type": "Answer", "text": "渲染用的是 ratatui 和 crossterm,编译前不需要装 ncurses 开发头文件。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander 能用在脚本里吗?",
+      "acceptedAnswer": { "@type": "Answer", "text": "能。gander --json、-n、--sort、--filter 和 --limit 不启动 TUI,直接输出每个进程一行。字段说明和 jq 示例在 JSON 进程列表页。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander 用什么许可证?",
+      "acceptedAnswer": { "@type": "Answer", "text": "GPL-2.0-or-later。gander 的行为、按键绑定和列语义取自 htop;请保持许可证兼容并注明出处。" }
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="语言">
+    <a lang="en" hreflang="en" href="../">English</a>
+    <span aria-current="true">简体中文</span>
+    <a lang="ja" hreflang="ja" href="../ja/">日本語</a>
+    <a lang="ko" hreflang="ko" href="../ko/">한국어</a>
+  </nav>
+  <h1>gander<span class="ver">0.6.7</span></h1>
+  <p class="lede">一个用 Rust 编写的跨平台交互式进程查看器,支持 Linux、macOS 和 FreeBSD。</p>
+  <p class="sub">它读取的数据和 htop 相同,沿用 htop 的按键,并把选中进程的细节放在列表旁边;htop 把它们放在另一块屏幕上。</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/pandasir/gander/releases">下载</a>
+    <a class="btn" href="https://github.com/pandasir/gander">GitHub 源码</a>
+    <a class="btn" href="#install">安装</a>
+  </div>
+</header>
+
+<figure>
+  <video controls muted loop playsinline autoplay width="1200" height="570" poster="../screenshot-panels.png">
+    <source src="../demo.webm" type="video/webm">
+    <source src="../demo.mp4" type="video/mp4">
+  </video>
+  <figcaption>gander 的十秒钟:一个过滤器收窄列表,检视面板跟着光标往下走,<code>t</code> 折叠成树状视图,<code>L</code> 切到全宽的 htop 排布。</figcaption>
+</figure>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1600" height="760"
+       alt="gander 的 panels 布局:左侧是系统栏,中间是进程表,右侧的检视面板显示选中进程的命令行、状态、内存和运行时间。">
+  <figcaption><code>panels</code> 布局,gander 打开时的默认样子。按 <code>L</code> 切到经典的全宽 htop 排布。</figcaption>
+</figure>
+</div>
+
+<section id="what">
+<div class="wrap">
+  <h2>它能做什么</h2>
+  <p>gander 显示系统里正在运行什么、各自消耗多少。它支持 Linux、macOS 和 FreeBSD,沿用 htop 的大部分按键,已经在你手指上的键继续有效。</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>检视面板跟着光标走</h3>
+      <p>选中一行,右侧面板随即填入:命令行、状态、内存、运行时间、用户、线程数。</p>
+    </div>
+    <div class="card">
+      <h3>采样不在渲染路径上</h3>
+      <p>后台线程负责采样,渲染端只读快照。机器最忙、正是你盯着看的时候,表格也不会卡顿。</p>
+    </div>
+    <div class="card">
+      <h3>htop 的设置跟着走</h3>
+      <p><code>--import-htoprc</code> 读取现有的 <code>htoprc</code>,<code>--save</code> 把它写成 gander 自己的 TOML。你调好的列和排序都搬得过来。</p>
+    </div>
+    <div class="card">
+      <h3>不开 TUI 也能用</h3>
+      <p><code>--json</code>、<code>-n</code>、<code>--sort</code>、<code>--filter</code> 和 <code>--limit</code> 输出进程行后直接退出,不用再从 curses 屏幕里抠数据。字段说明和 jq 示例见<a href="json-process-list.html">批处理模式页</a>。</p>
+    </div>
+    <div class="card">
+      <h3>Linux 上能读的更多</h3>
+      <p>PSS/EPSS、PSI、zram/zswap、GPU、延迟统计和容器识别可作为可选列或表头 meter,从 <code>/proc</code> 和 <code>/sys</code> 读取。</p>
+    </div>
+    <div class="card">
+      <h3>不用装 ncurses</h3>
+      <p>渲染用 ratatui 和 crossterm。构建前不需要装开发头文件,也没有要链接的终端库。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="layouts">
+<div class="wrap">
+  <h2>同一台机器的三种看法</h2>
+  <div class="shot3">
+    <div>
+      <a href="../screenshot-panels.png" target="_blank" rel="noopener" aria-label="查看 panels 布局原图(在新标签页中打开)">
+        <img src="../screenshot-panels.png" width="1600" height="760" loading="lazy" alt="panels 布局:选中一个进程,右侧检视面板显示它的细节。">
+        <span><code>panels</code> —— 默认布局</span>
+        <span class="shot-action">查看原图(新标签页)</span>
+      </a>
+    </div>
+    <div>
+      <a href="../screenshot-tree.png" target="_blank" rel="noopener" aria-label="查看进程树原图(在新标签页中打开)">
+        <img src="../screenshot-tree.png" width="1600" height="760" loading="lazy" alt="树状视图:进程嵌在各自父进程之下,检视面板仍固定在右侧。">
+        <span><code>t</code> —— 树状视图</span>
+        <span class="shot-action">查看原图(新标签页)</span>
+      </a>
+    </div>
+    <div>
+      <a href="../screenshot-htop.png" target="_blank" rel="noopener" aria-label="查看 htop 布局原图(在新标签页中打开)">
+        <img src="../screenshot-htop.png" width="1600" height="760" loading="lazy" alt="htop 布局:顶部一排横向仪表,下方是全宽进程表。">
+        <span><code>L</code> —— htop 布局</span>
+        <span class="shot-action">查看原图(新标签页)</span>
+      </a>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="compare">
+<div class="wrap">
+  <h2>和其他进程查看器比起来怎么样</h2>
+  <table>
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">htop</th><th class="c">btop</th><th class="c">bottom</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Linux / macOS / FreeBSD</td><td class="c yes">三个平台,全部支持</td><td class="c yes">三个平台,全部支持</td><td class="c yes">三个平台,CI 中构建</td><td class="c">FreeBSD 非官方</td></tr>
+      <tr><td>沿用 htop 的按键</td><td class="c yes">是</td><td class="c no">—</td><td class="c no">否</td><td class="c no">否</td></tr>
+      <tr><td>导入现有的 <code>htoprc</code></td><td class="c yes">是</td><td class="c no">—</td><td class="c no">否</td><td class="c no">否</td></tr>
+      <tr><td>选中进程留在屏幕上,细节可见</td><td class="c yes">是</td><td class="c no">否</td><td class="c no">否</td><td class="c no">否</td></tr>
+      <tr><td>不是 htop 的那种布局</td><td class="c"><code>panels</code></td><td class="c no">—</td><td class="c yes">有</td><td class="c yes">有</td></tr>
+      <tr><td><code>--json</code> 批处理模式</td><td class="c yes">有</td><td class="c no">无</td><td class="c no">无</td><td class="c no">无</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">「—」表示不适用——htop 的按键和 htoprc 本来就是它自己的。</p>
+  <p>日常使用里真正要紧的是关于选中进程的那一行。htop、btop 和 bottom 回答「现在在跑什么」的方式是把所有进程铺开,你关心的那个进程的细节要么在另一个界面,要么没有。gander 把检视面板放在表格旁边,选中一行,答案就在眼前,不用离开列表。</p>
+  <p>更长的对比,每个工具一页:<a href="vs-htop.html">gander vs htop</a>、<a href="vs-btop.html">gander vs btop</a>、<a href="vs-bottom.html">gander vs bottom</a>。平台相关:<a href="htop-for-macos.html">macOS 上</a>、<a href="htop-for-freebsd.html">FreeBSD 上</a>。</p>
+</div>
+</section>
+
+<section id="install">
+<div class="wrap">
+  <h2>安装</h2>
+
+  <h3>macOS(Homebrew)</h3>
+<pre><code>brew install pandasir/tap/gander</code></pre>
+
+  <h3>任何有 Rust 的平台</h3>
+<pre><code>cargo install gander-bin   <span class="c"># 安装后的命令是 `gander`</span></code></pre>
+
+  <h3>Arch Linux</h3>
+<pre><code>git clone https://github.com/pandasir/gander
+cd gander/packaging/aur &amp;&amp; makepkg -si</code></pre>
+
+  <h3>Debian、Ubuntu</h3>
+<pre><code>curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update &amp;&amp; sudo apt install gander</code></pre>
+
+  <h3>Fedora、RHEL</h3>
+<pre><code>sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo curl -fsSL https://pandasir.github.io/gander/gander.repo \
+  -o /etc/yum.repos.d/gander.repo
+sudo dnf install gander</code></pre>
+
+  <h3>预编译压缩包</h3>
+  <p>每个 Release 都附带 macOS(Apple Silicon 和 Intel)、Linux(x86_64 和 arm64,glibc 与静态 musl)以及 FreeBSD 的 <code>.tar.gz</code> 压缩包,旁边各有 <code>.sha256</code> 文件。见 <a href="https://github.com/pandasir/gander/releases">GitHub Releases</a>。</p>
+
+  <h3>从源码构建</h3>
+  <p>需要 Rust 1.89 或更新版本。</p>
+<pre><code>git clone https://github.com/pandasir/gander
+cd gander
+cargo install --locked --path crates/bin</code></pre>
+</div>
+</section>
+
+<section id="usage">
+<div class="wrap">
+  <h2>使用</h2>
+<pre><code>gander                                     <span class="c"># 交互式 TUI</span>
+gander --delay 500                         <span class="c"># 每 500 毫秒采样一次</span>
+gander -n 5 -d 1000                        <span class="c"># 输出 5 次文本采样</span>
+gander --json --limit 10                   <span class="c"># 输出一次 JSON</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># 按内存排序取前 20</span>
+gander -F "python|node"                    <span class="c"># 过滤命令行</span>
+gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p>过滤词是大小写不敏感的固定字符串,用 <code>|</code> 分隔;不是正则表达式。全部选项见 <code>gander --help</code>。</p>
+
+  <h3>按键</h3>
+  <table>
+    <tbody>
+      <tr><td><code>F1</code> / <code>h</code> / <code>?</code></td><td>帮助</td></tr>
+      <tr><td><code>F2</code></td><td>设置</td></tr>
+      <tr><td><code>F3</code> / <code>/</code></td><td>搜索</td></tr>
+      <tr><td><code>F4</code> / <code>\</code></td><td>过滤</td></tr>
+      <tr><td><code>F5</code> / <code>t</code></td><td>树状视图</td></tr>
+      <tr><td><code>F6</code> / <code>&lt;</code> <code>&gt;</code></td><td>切换排序列</td></tr>
+      <tr><td><code>F9</code> / <code>k</code></td><td>发送信号</td></tr>
+      <tr><td><code>F10</code> / <code>q</code></td><td>退出</td></tr>
+      <tr><td><code>L</code></td><td>在 <code>panels</code> 和 <code>htop</code> 布局之间切换</td></tr>
+      <tr><td><code>I</code></td><td>切换当前选中表头 meter 的显示模式</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="faq">
+<div class="wrap">
+  <h2>常见问题</h2>
+
+  <h3>gander 能替代 htop 吗?</h3>
+  <p>能,也不能。它读的是同一份 <code>/proc</code> 数据,按键也照 htop 摆,你现在的工作方式不用改;<code>--import-htoprc</code> 能把你的 htop 设置直接搬过来。但默认布局刻意不是 htop 那种,因为「全宽表格 + 第二个界面看细节」并不是读进程列表的唯一方式。</p>
+
+  <h3>gander 支持 Windows 吗?</h3>
+  <p>不支持。三个后端分别是 <code>/proc</code>(Linux)、<code>sysctl</code>/Mach/libproc(macOS)和 <code>sysctl</code>/<code>libkvm</code>(FreeBSD)。没有 Windows 后端;依赖 Linux 内核接口的列(PSS、PSI、zram、延迟统计、容器)也只在 Linux 上有。</p>
+
+  <h3>crates.io 上的包为什么叫 <code>gander-bin</code>?</h3>
+  <p>因为 crates.io 上的 <code>gander</code> 是一个无关的、早已 yank 的包。装完命令仍然是 <code>gander</code>。</p>
+
+  <h3>为什么不用 ncurses?</h3>
+  <p>渲染用的是 <a href="https://ratatui.rs">ratatui</a> 和 <a href="https://github.com/crossterm-rs/crossterm">crossterm</a>,编译前不需要装 ncurses 开发头文件。</p>
+
+  <h3>能用在脚本里吗?</h3>
+  <p>能。<code>gander --json</code>、<code>-n</code>、<code>--sort</code>、<code>--filter</code> 和 <code>--limit</code> 不启动 TUI,直接输出每个进程一行。字段说明和 jq 示例在 <a href="json-process-list.html">JSON 进程列表页</a>。</p>
+
+  <h3>gander 用什么许可证?</h3>
+  <p>GPL-2.0-or-later。gander 的行为、按键绑定和列语义取自 htop;请保持许可证兼容并注明出处。</p>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">按键表</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">更新日志</a> ·
+     <a href="https://crates.io/crates/gander-bin">crates.io</a></p>
+  <p>GPL-2.0-or-later。用 Rust 构建。</p>
+</div>
+</footer>
+
+</body>
+</html>

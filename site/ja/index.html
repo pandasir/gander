@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander — Linux・macOS・FreeBSD 向けのクロスプラットフォーム対話型プロセスビューア</title>
+<meta name="description" content="gander は Rust 製のクロスプラットフォーム・プロセスビューアで、Linux・macOS・FreeBSD で動作します。htop のキーバインドを引き継ぎ、プロセステーブルの横にリアルタイムの詳細パネルを表示します。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/">
+<meta name="keywords" content="gander, プロセスビューア, htop 代替, Linux プロセスビューア, macOS プロセスビューア, FreeBSD プロセスビューア, Rust TUI, ratatui, システムモニター, ターミナル">
+<meta name="author" content="gander contributors">
+<meta name="robots" content="index, follow">
+<meta name="google-site-verification" content="e_qm2NqH2LDMhZ5Z9J4h5Stz3K6V_SBZiNap80q0Tx8">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander — クロスプラットフォーム対話型プロセスビューア">
+<meta property="og:description" content="Linux・macOS・FreeBSD 向けの Rust 製プロセスビューア。htop のキーバインドはそのまま、パネル構成はあえて htop 流ではありません。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="gander — クロスプラットフォーム対話型プロセスビューア">
+<meta name="twitter:description" content="Linux・macOS・FreeBSD 向けの Rust 製プロセスビューア。htop のキーバインドはそのまま、パネル構成はあえて htop 流ではありません。">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+
+<link rel="stylesheet" href="../site.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "gander",
+  "alternateName": "gander プロセスビューア",
+  "applicationCategory": "SystemApplication",
+  "applicationSubCategory": "プロセスビューア",
+  "operatingSystem": "Linux, macOS, FreeBSD",
+  "description": "gander は Rust で書かれたクロスプラットフォームの対話型プロセスビューアです。Linux・macOS・FreeBSD で動作し、htop のキーバインドを引き継ぎ、既存の htoprc を取り込み、プロセステーブルの横にリアルタイムの詳細パネルを表示します。",
+  "url": "https://pandasir.github.io/gander/ja/",
+  "downloadUrl": "https://github.com/pandasir/gander/releases",
+  "codeRepository": "https://github.com/pandasir/gander",
+  "programmingLanguage": "Rust",
+  "license": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
+  "isAccessibleForFree": true,
+  "softwareVersion": "0.6.7",
+  "screenshot": "https://pandasir.github.io/gander/screenshot-panels.png",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "gander は htop の代わりになりますか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "はい、そして「いいえ」でもあります。同じ /proc を読み、キーも htop の位置にあるので、今の使い方はそのまま通ります。--import-htoprc で htop の設定をそのまま持ち込めます。ただし既定のレイアウトは意図的に htop と違います。「全幅の表 + 別画面の詳細」がプロセス一覧の読み方の唯一の正解ではないからです。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander は Windows で動きますか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "動きません。バックエンドは /proc（Linux）、sysctl/Mach/libproc（macOS）、sysctl/libkvm（FreeBSD）の 3 つで、Windows 向けはありません。Linux のカーネルインターフェースに依存する列（PSS、PSI、zram、遅延統計、コンテナ）も Linux 専用です。" }
+    },
+    {
+      "@type": "Question",
+      "name": "crates.io のパッケージ名が gander-bin なのはなぜですか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "crates.io の gander は無関係な、とうに yank されたクレートだからです。インストールされるコマンド名は gander のままです。" }
+    },
+    {
+      "@type": "Question",
+      "name": "なぜ gander は ncurses を使わないのですか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "描画は ratatui と crossterm で行うので、ビルド前に ncurses の開発ヘッダを入れる必要はありません。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander はスクリプトから使えますか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "使えます。gander --json、-n、--sort、--filter、--limit は TUI を起動せず、プロセスごとに 1 行を出力します。フィールドのリファレンスと jq の例は JSON プロセス一覧のページにあります。" }
+    },
+    {
+      "@type": "Question",
+      "name": "gander のライセンスは何ですか？",
+      "acceptedAnswer": { "@type": "Answer", "text": "GPL-2.0-or-later です。gander の動作、キーバインド、列の意味は htop から取っています。ライセンスの互換性を維持し、出典を明記してください。" }
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/">한국어</a>
+  </nav>
+  <h1>gander<span class="ver">0.6.7</span></h1>
+  <p class="lede">Rust で書かれた、Linux・macOS・FreeBSD 向けのクロスプラットフォーム対話型プロセスビューアです。</p>
+  <p class="sub">htop と同じプロセスデータを読み、htop のキーバインドを引き継ぎ、選択中のプロセスの詳細を一覧の横に置きます。htop は詳細を別画面に置きます。</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/pandasir/gander/releases">ダウンロード</a>
+    <a class="btn" href="https://github.com/pandasir/gander">GitHub のソースコード</a>
+    <a class="btn" href="#install">インストール</a>
+  </div>
+</header>
+
+<figure>
+  <video controls muted loop playsinline autoplay width="1200" height="570" poster="../screenshot-panels.png">
+    <source src="../demo.webm" type="video/webm">
+    <source src="../demo.mp4" type="video/mp4">
+  </video>
+  <figcaption>gander の 10 秒間:フィルターで一覧を絞り込み、詳細パネルがカーソルに追従し、<code>t</code> でツリー表示に折りたたみ、<code>L</code> で全幅の htop レイアウトに切り替えます。</figcaption>
+</figure>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1600" height="760"
+       alt="panels レイアウトの gander:左にシステム情報の列、中央にプロセステーブル、右にリアルタイムの詳細パネル。選択中のプロセスのコマンドライン、状態、メモリ、実行時間が表示されています。">
+  <figcaption>gander が起動時に使う <code>panels</code> レイアウト。従来の全幅 htop 配置にするには <code>L</code> を押します。</figcaption>
+</figure>
+</div>
+
+<section id="what">
+<div class="wrap">
+  <h2>できること</h2>
+  <p>gander はシステム上で何が動いていて、どれだけリソースを使っているかを表示します。Linux・macOS・FreeBSD で動作し、htop のキーバインドの多くを引き継ぐので、指に覚えがあるキーはそのまま使えます。</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>詳細パネルはカーソルに追従する</h3>
+      <p>行を選ぶと右のパネルに情報が入ります。コマンドライン、状態、メモリ、実行時間、ユーザー、スレッドです。</p>
+    </div>
+    <div class="card">
+      <h3>サンプリングは描画経路の外にある</h3>
+      <p>サンプリングはバックグラウンドスレッドが行い、描画側はスナップショットを読みます。マシンが高負荷でもテーブルはカクつきません。負荷が上がるのは、まさに画面を見ているときです。</p>
+    </div>
+    <div class="card">
+      <h3>htop の設定はそのまま持ち込める</h3>
+      <p><code>--import-htoprc</code> が既存の <code>htoprc</code> を読み込み、<code>--save</code> で gander 独自の TOML として書き出します。調整した列とソート順は切り替え後も残ります。</p>
+    </div>
+    <div class="card">
+      <h3>TUI なしでスクリプトから使える</h3>
+      <p><code>--json</code>、<code>-n</code>、<code>--sort</code>、<code>--filter</code>、<code>--limit</code> はプロセスの行を出力して終了します。curses 画面をパースする必要はありません。<a href="json-process-list.html">フィールドと jq の例</a>はバッチモードのページにあります。</p>
+    </div>
+    <div class="card">
+      <h3>Linux ではさらに多くの情報を扱える</h3>
+      <p>PSS/EPSS、PSI、zram/zswap、GPU、遅延統計、コンテナ識別情報はオプションの列やヘッダーメーターで、<code>/proc</code> と <code>/sys</code> から読み取ります。</p>
+    </div>
+    <div class="card">
+      <h3>ncurses のインストールは不要</h3>
+      <p>描画は ratatui と crossterm によるものです。ビルド前に開発ヘッダを入れる必要も、ターミナルライブラリをリンクする必要もありません。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="layouts">
+<div class="wrap">
+  <h2>同じマシンを見る 3 つの方法</h2>
+  <div class="shot3">
+    <div>
+      <a href="../screenshot-panels.png" target="_blank" rel="noopener" aria-label="panels レイアウトをフルサイズで表示(新しいタブで開きます)">
+        <img src="../screenshot-panels.png" width="1600" height="760" loading="lazy" alt="panels レイアウト。プロセスを選択し、その詳細が右の詳細パネルに表示されています。">
+        <span><code>panels</code> — デフォルト</span>
+        <span class="shot-action">画像をフルサイズで表示(新しいタブ)</span>
+      </a>
+    </div>
+    <div>
+      <a href="../screenshot-tree.png" target="_blank" rel="noopener" aria-label="プロセスツリーをフルサイズで表示(新しいタブで開きます)">
+        <img src="../screenshot-tree.png" width="1600" height="760" loading="lazy" alt="ツリー表示:プロセスが親の下に階層化され、右の詳細パネルはそのまま表示されています。">
+        <span><code>t</code> — プロセスツリー</span>
+        <span class="shot-action">画像をフルサイズで表示(新しいタブ)</span>
+      </a>
+    </div>
+    <div>
+      <a href="../screenshot-htop.png" target="_blank" rel="noopener" aria-label="htop レイアウトをフルサイズで表示(新しいタブで開きます)">
+        <img src="../screenshot-htop.png" width="1600" height="760" loading="lazy" alt="htop レイアウト:上部に横並びのメーター、全幅のプロセステーブル。">
+        <span><code>L</code> — htop レイアウト</span>
+        <span class="shot-action">画像をフルサイズで表示(新しいタブ)</span>
+      </a>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="compare">
+<div class="wrap">
+  <h2>他のプロセスビューアとの比較</h2>
+  <table>
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">htop</th><th class="c">btop</th><th class="c">bottom</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Linux / macOS / FreeBSD</td><td class="c yes">3 つすべて、対応</td><td class="c yes">3 つすべて、対応</td><td class="c yes">3 つすべて、CI でビルド</td><td class="c">FreeBSD は非公式</td></tr>
+      <tr><td>htop のキーバインドを継承</td><td class="c yes">する</td><td class="c no">—</td><td class="c no">しない</td><td class="c no">しない</td></tr>
+      <tr><td>既存の <code>htoprc</code> を取り込む</td><td class="c yes">できる</td><td class="c no">—</td><td class="c no">できない</td><td class="c no">できない</td></tr>
+      <tr><td>選択中のプロセスが詳細とともに画面に残る</td><td class="c yes">残る</td><td class="c no">残らない</td><td class="c no">残らない</td><td class="c no">残らない</td></tr>
+      <tr><td>htop ではないレイアウト</td><td class="c"><code>panels</code></td><td class="c no">—</td><td class="c yes">あり</td><td class="c yes">あり</td></tr>
+      <tr><td><code>--json</code> バッチモード</td><td class="c yes">あり</td><td class="c no">なし</td><td class="c no">なし</td><td class="c no">なし</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">「—」は「そもそも適用対象がない」という意味です。htop は定義上、htop 自身のキーバインドを持ち、自身の設定を読みます。</p>
+  <p>日常的に差が出るのは選択プロセスの行です。htop、btop、bottom は「今何が動いているか」に、すべてのプロセスを一度に並べて答えます。気になっているプロセスの詳細は別画面にあるか、そもそもありません。gander は詳細パネルをテーブルの隣に置くので、行を選んだ時点で答えがそこにあり、一覧から離れる必要はありません。</p>
+  <p>より長い比較は各ツールごとのページにあります:<a href="vs-htop.html">gander vs htop</a>、<a href="vs-btop.html">gander vs btop</a>、<a href="vs-bottom.html">gander vs bottom</a>。プラットフォーム固有の注記は <a href="htop-for-macos.html">macOS 向け</a>と <a href="htop-for-freebsd.html">FreeBSD 向け</a>にあります。</p>
+</div>
+</section>
+
+<section id="install">
+<div class="wrap">
+  <h2>インストール</h2>
+
+  <h3>macOS(Homebrew)</h3>
+<pre><code>brew install pandasir/tap/gander</code></pre>
+
+  <h3>Rust が入っている任意のプラットフォーム</h3>
+<pre><code>cargo install gander-bin   <span class="c"># インストールされるコマンドは `gander`</span></code></pre>
+
+  <h3>Arch Linux</h3>
+<pre><code>git clone https://github.com/pandasir/gander
+cd gander/packaging/aur &amp;&amp; makepkg -si</code></pre>
+
+  <h3>Debian、Ubuntu</h3>
+<pre><code>curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
+echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
+  | sudo tee /etc/apt/sources.list.d/gander.list
+sudo apt update &amp;&amp; sudo apt install gander</code></pre>
+
+  <h3>Fedora、RHEL</h3>
+<pre><code>sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo curl -fsSL https://pandasir.github.io/gander/gander.repo \
+  -o /etc/yum.repos.d/gander.repo
+sudo dnf install gander</code></pre>
+
+  <h3>ビルド済みアーカイブ</h3>
+  <p>すべての Release には <code>.tar.gz</code> アーカイブが付属します。macOS(Apple Silicon と Intel)、Linux(x86_64 と arm64、glibc と静的リンクの musl)、FreeBSD 向けで、それぞれに <code>.sha256</code> ファイルがあります。<a href="https://github.com/pandasir/gander/releases">GitHub Releases</a> を参照してください。</p>
+
+  <h3>ソースからビルド</h3>
+  <p>Rust 1.89 以降が必要です。</p>
+<pre><code>git clone https://github.com/pandasir/gander
+cd gander
+cargo install --locked --path crates/bin</code></pre>
+</div>
+</section>
+
+<section id="usage">
+<div class="wrap">
+  <h2>使い方</h2>
+<pre><code>gander                                     <span class="c"># 対話型 TUI</span>
+gander --delay 500                         <span class="c"># 500 ミリ秒ごとにサンプリング</span>
+gander -n 5 -d 1000                        <span class="c"># テキスト形式で 5 回出力</span>
+gander --json --limit 10                   <span class="c"># JSON 形式で 1 回出力</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># メモリ使用率の上位 20 件</span>
+gander -F "python|node"                    <span class="c"># コマンドラインで絞り込み</span>
+gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
+  <p>フィルターは大文字と小文字を区別しない固定文字列で、<code>|</code> で区切ります。正規表現ではありません。すべてのオプションは <code>gander --help</code> で確認できます。</p>
+
+  <h3>キー</h3>
+  <table>
+    <tbody>
+      <tr><td><code>F1</code> / <code>h</code> / <code>?</code></td><td>ヘルプ</td></tr>
+      <tr><td><code>F2</code></td><td>設定</td></tr>
+      <tr><td><code>F3</code> / <code>/</code></td><td>検索</td></tr>
+      <tr><td><code>F4</code> / <code>\</code></td><td>フィルター</td></tr>
+      <tr><td><code>F5</code> / <code>t</code></td><td>ツリー表示</td></tr>
+      <tr><td><code>F6</code> / <code>&lt;</code> <code>&gt;</code></td><td>ソート列の変更</td></tr>
+      <tr><td><code>F9</code> / <code>k</code></td><td>シグナルの送信</td></tr>
+      <tr><td><code>F10</code> / <code>q</code></td><td>終了</td></tr>
+      <tr><td><code>L</code></td><td><code>panels</code> と <code>htop</code> のレイアウトを切り替え</td></tr>
+      <tr><td><code>I</code></td><td>選択中のヘッダーメーターの表示モードを切り替え</td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<section id="faq">
+<div class="wrap">
+  <h2>よくある質問</h2>
+
+  <h3>gander は htop の代わりになりますか？</h3>
+  <p>はい、そして「いいえ」でもあります。同じ <code>/proc</code> を読み、キーも htop の位置にあるので、今の使い方はそのまま通ります。<code>--import-htoprc</code> で htop の設定をそのまま持ち込めます。ただし既定のレイアウトは意図的に htop と違います。「全幅の表 + 別画面の詳細」がプロセス一覧の読み方の唯一の正解ではないからです。</p>
+
+  <h3>gander は Windows で動きますか？</h3>
+  <p>動きません。バックエンドは <code>/proc</code>(Linux)、<code>sysctl</code>/Mach/libproc(macOS)、<code>sysctl</code>/<code>libkvm</code>(FreeBSD)の 3 つで、Windows 向けはありません。Linux のカーネルインターフェースに依存する列(PSS、PSI、zram、遅延統計、コンテナ)も Linux 専用です。</p>
+
+  <h3>crates.io のパッケージ名が <code>gander-bin</code> なのはなぜですか？</h3>
+  <p>crates.io の <code>gander</code> は無関係な、とうに yank されたクレートだからです。インストールされるコマンド名は <code>gander</code> のままです。</p>
+
+  <h3>なぜ gander は ncurses を使わないのですか？</h3>
+  <p>描画は <a href="https://ratatui.rs">ratatui</a> と <a href="https://github.com/crossterm-rs/crossterm">crossterm</a> で行うので、ビルド前に ncurses の開発ヘッダを入れる必要はありません。</p>
+
+  <h3>gander はスクリプトから使えますか？</h3>
+  <p>使えます。<code>gander --json</code>、<code>-n</code>、<code>--sort</code>、<code>--filter</code>、<code>--limit</code> は TUI を起動せず、プロセスごとに 1 行を出力します。フィールドのリファレンスと jq の例は <a href="json-process-list.html">JSON プロセス一覧のページ</a>にあります。</p>
+
+  <h3>gander のライセンスは何ですか？</h3>
+  <p>GPL-2.0-or-later です。gander の動作、キーバインド、列の意味は htop から取っています。ライセンスの互換性を維持し、出典を明記してください。</p>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">キーマップ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a> ·
+     <a href="https://crates.io/crates/gander-bin">crates.io</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

@@ -4,8 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gander — a cross-platform interactive process viewer for Linux, macOS and FreeBSD</title>
-<meta name="description" content="gander is a cross-platform process viewer in Rust for Linux, macOS and FreeBSD. htop's keybindings, a live inspector beside the process table.">
+<meta name="description" content="gander is a cross-platform process viewer in Rust for Linux, macOS and FreeBSD. It keeps htop's keybindings and shows a live inspector beside the process table.">
 <link rel="canonical" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/">
 <meta name="keywords" content="gander, process viewer, htop alternative, Linux process viewer, macOS process viewer, FreeBSD process viewer, Rust TUI, ratatui, system monitor, terminal">
 <meta name="author" content="gander contributors">
 <meta name="robots" content="index, follow">
@@ -79,7 +84,7 @@
     {
       "@type": "Question",
       "name": "Can gander be used in scripts?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. gander --json, -n, --sort, --filter and --limit run without the TUI and print one row per process." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. gander --json, -n, --sort, --filter and --limit run without the TUI and print one row per process. The field reference and jq examples are on the JSON process list page." }
     },
     {
       "@type": "Question",
@@ -94,9 +99,15 @@
 
 <div class="wrap">
 <header>
+  <nav class="lang" aria-label="Language">
+    <span aria-current="true">English</span>
+    <a lang="zh-CN" hreflang="zh-CN" href="zh-CN/">简体中文</a>
+    <a lang="ja" hreflang="ja" href="ja/">日本語</a>
+    <a lang="ko" hreflang="ko" href="ko/">한국어</a>
+  </nav>
   <h1>gander<span class="ver">0.6.7</span></h1>
   <p class="lede">A cross-platform interactive process viewer for Linux, macOS and FreeBSD, written in Rust.</p>
-  <p class="sub">It reads the same process data htop reads, keeps htop's keybindings, and puts the details of the process you selected beside the list instead of on a screen you have to leave it to reach.</p>
+  <p class="sub">It reads the same process data htop reads, keeps htop's keybindings, and puts the details of the selected process beside the list; htop puts them on a second screen.</p>
   <div class="cta">
     <a class="btn primary" href="https://github.com/pandasir/gander/releases">Download</a>
     <a class="btn" href="https://github.com/pandasir/gander">Source on GitHub</a>
@@ -127,7 +138,7 @@
   <div class="grid">
     <div class="card">
       <h3>The inspector follows the cursor</h3>
-      <p>Selecting a row fills in the panel on the right: command line, state, memory, runtime, user, threads. You do not leave the list to read it.</p>
+      <p>Selecting a row fills in the panel on the right: command line, state, memory, runtime, user, threads.</p>
     </div>
     <div class="card">
       <h3>Sampling is off the render path</h3>
@@ -190,7 +201,6 @@
       <tr><th></th><th class="c">gander</th><th class="c">htop</th><th class="c">btop</th><th class="c">bottom</th></tr>
     </thead>
     <tbody>
-      <tr><td>Terminal UI</td><td class="c yes">yes</td><td class="c yes">yes</td><td class="c yes">yes</td><td class="c yes">yes</td></tr>
       <tr><td>Linux / macOS / FreeBSD</td><td class="c yes">all three, supported</td><td class="c yes">all three, supported</td><td class="c yes">all three, built in CI</td><td class="c">FreeBSD unofficial</td></tr>
       <tr><td>Keeps htop's keybindings</td><td class="c yes">yes</td><td class="c no">—</td><td class="c no">no</td><td class="c no">no</td></tr>
       <tr><td>Imports an existing <code>htoprc</code></td><td class="c yes">yes</td><td class="c no">—</td><td class="c no">no</td><td class="c no">no</td></tr>
@@ -199,7 +209,8 @@
       <tr><td><code>--json</code> batch mode</td><td class="c yes">yes</td><td class="c no">no</td><td class="c no">no</td><td class="c no">no</td></tr>
     </tbody>
   </table>
-  <p>The row that matters in daily use is the fifth one. htop, btop and bottom all answer "what is running" by showing you every process at once, and the details of the one you care about live on a separate screen or nowhere. gander puts the inspector beside the table, so selecting a row answers the question without leaving the list.</p>
+  <p class="sub">A dash means not applicable — htop has htop's keybindings and reads htop's config by definition.</p>
+  <p>The row that matters in daily use is the one about the selected process. htop, btop and bottom all answer "what is running" by showing you every process at once, and the details of the one you care about live on a separate screen or nowhere. gander puts the inspector beside the table, so selecting a row answers the question without leaving the list.</p>
   <p>Longer comparisons, one per tool, are here: <a href="vs-htop.html">gander vs htop</a>, <a href="vs-btop.html">gander vs btop</a>, <a href="vs-bottom.html">gander vs bottom</a>. For platform-specific notes: <a href="htop-for-macos.html">on macOS</a> and <a href="htop-for-freebsd.html">on FreeBSD</a>.</p>
 </div>
 </section>
@@ -217,21 +228,25 @@
   <h3>Arch Linux</h3>
 <pre><code>git clone https://github.com/pandasir/gander
 cd gander/packaging/aur &amp;&amp; makepkg -si</code></pre>
-  <p class="sub">There is no AUR package: AUR account registration has been closed since the <a href="https://archlinux.org/news/active-aur-malicious-packages-incident/">June 2026 malicious-packages incident</a>, and there is no manual process to create one. This builds the same <code>PKGBUILD</code> that would have been published.</p>
 
-  <h3>Debian, Ubuntu, Fedora, RHEL</h3>
-<pre><code><span class="c"># Debian, Ubuntu, Linux Mint</span>
-curl -fsSL https://pandasir.github.io/gander/gander.gpg \
+  <h3>Debian, Ubuntu</h3>
+<pre><code>curl -fsSL https://pandasir.github.io/gander/gander.gpg \
   | sudo gpg --dearmor -o /usr/share/keyrings/gander.gpg
 echo "deb [signed-by=/usr/share/keyrings/gander.gpg] https://pandasir.github.io/gander stable main" \
   | sudo tee /etc/apt/sources.list.d/gander.list
 sudo apt update &amp;&amp; sudo apt install gander</code></pre>
 
+  <h3>Fedora, RHEL</h3>
+<pre><code>sudo rpm --import https://pandasir.github.io/gander/RPM-GPG-KEY-gander
+sudo curl -fsSL https://pandasir.github.io/gander/gander.repo \
+  -o /etc/yum.repos.d/gander.repo
+sudo dnf install gander</code></pre>
+
   <h3>Prebuilt archives</h3>
   <p>Every release ships <code>.tar.gz</code> archives for macOS (Apple Silicon and Intel), Linux (x86_64 and arm64, glibc and static musl), and FreeBSD, each with a <code>.sha256</code> file. See <a href="https://github.com/pandasir/gander/releases">GitHub Releases</a>.</p>
 
   <h3>From source</h3>
-  <p>Requires Rust 1.89 or newer. No ncurses or libcurses development headers.</p>
+  <p>Requires Rust 1.89 or newer.</p>
 <pre><code>git clone https://github.com/pandasir/gander
 cd gander
 cargo install --locked --path crates/bin</code></pre>
@@ -275,19 +290,19 @@ gander --import-htoprc ~/.config/htop/htoprc --save</code></pre>
   <h3>Is gander an htop replacement?</h3>
   <p>Yes and no. It reads the same <code>/proc</code> data and keeps htop's keys, so it drops into the way you already work, and <code>--import-htoprc</code> copies your htop settings over. But the default layout is deliberately not htop's, because a full-width table with the details on a second screen is not the only way to read a process list.</p>
 
-  <h3>Does it run on Windows?</h3>
+  <h3>Does gander run on Windows?</h3>
   <p>No. The three backends are <code>/proc</code> (Linux), <code>sysctl</code>/Mach/libproc (macOS) and <code>sysctl</code>/<code>libkvm</code> (FreeBSD). There is no Windows backend, and the columns that depend on Linux kernel interfaces (PSS, PSI, zram, delay accounting, containers) are Linux only.</p>
 
   <h3>Why is the crates.io package called <code>gander-bin</code>?</h3>
   <p>Because <code>gander</code> on crates.io is an unrelated, long-yanked crate. The installed command is still <code>gander</code>.</p>
 
-  <h3>Why not ncurses?</h3>
+  <h3>Why does gander not use ncurses?</h3>
   <p>It renders with <a href="https://ratatui.rs">ratatui</a> and <a href="https://github.com/crossterm-rs/crossterm">crossterm</a>, so there is no ncurses development header to install before building.</p>
 
-  <h3>Can I use it in scripts?</h3>
+  <h3>Can gander be used in scripts?</h3>
   <p>Yes. <code>gander --json</code>, <code>-n</code>, <code>--sort</code>, <code>--filter</code> and <code>--limit</code> run without the TUI and print one row per process. The field reference and jq examples are on the <a href="json-process-list.html">JSON process list page</a>.</p>
 
-  <h3>What is the license?</h3>
+  <h3>What is gander's license?</h3>
   <p>GPL-2.0-or-later. gander takes its behaviour, keybindings and column semantics from htop, so keep the license compatible and credit it.</p>
 </div>
 </section>

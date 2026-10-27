@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS에서 htop — 동작하는 것, 그리고 macOS가 주지 않는 것</title>
+<meta name="description" content="htop은 macOS에서 동작하지만, 여러 Linux 수치에는 Darwin에 상응하는 것이 없습니다. 프로세스 뷰어가 읽을 수 있는 것과 없는 것, 그리고 gander의 처리 방식.">
+<link rel="canonical" href="https://pandasir.github.io/gander/ko/htop-for-macos.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-macos.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-macos.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-macos.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-macos.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="macOS에서 htop: 실제로 동작하는 것">
+<meta property="og:description" content="libproc, sysctl, Mach이 macOS에서 htop의 대부분을 가능하게 합니다. 주지 않는 수치도 있습니다.">
+<meta property="og:url" content="https://pandasir.github.io/gander/ko/htop-for-macos.html">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<meta name="twitter:title" content="macOS에서 htop: 실제로 동작하는 것">
+<meta name="twitter:description" content="libproc, sysctl, Mach이 macOS에서 htop의 대부분을 가능하게 합니다. 주지 않는 수치도 있습니다.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="어두운 배경의 카드에 “gander”와 태그라인 “An interactive process viewer for Linux, macOS and FreeBSD”가 적혀 있고, 그 옆에 프로세스 표 스크린샷이 있는 이미지.">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "macOS에서 htop — 동작하는 것, 그리고 macOS가 주지 않는 것",
+  "description": "htop은 macOS에서 동작하지만, 여러 Linux 수치에는 Darwin에 상응하는 것이 없습니다. 프로세스 뷰어가 읽을 수 있는 것과 없는 것, 그리고 gander의 처리 방식.",
+  "url": "https://pandasir.github.io/gander/ko/htop-for-macos.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ko",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ko/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="언어">
+    <a lang="en" hreflang="en" href="../htop-for-macos.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/htop-for-macos.html">简体中文</a>
+    <a lang="ja" hreflang="ja" href="../ja/htop-for-macos.html">日本語</a>
+    <span aria-current="true">한국어</span>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / macOS 편</p>
+  <h1>macOS에서의 프로세스 뷰어</h1>
+  <p class="lede">htop은 macOS에서 동작합니다. 사람을 헷갈리게 하는 것은 htop이 아닙니다. Linux에서 익숙한 여러 수치에 macOS에 상응하는 것이 없고, 그런 수치를 그래도 보여 주는 뷰어는 추측을 표시하고 있다는 점입니다.</p>
+  <div class="verdict">
+    <p>이 페이지는 목록입니다. macOS가 프로세스 뷰어에 알려 주는 것, 주지 않는 것, 그리고 각 공백에 대해 gander가 취하는 처리입니다. 같은 인터페이스를 읽으므로 htop에도 그대로 적용됩니다.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">gander 설치</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">백엔드 참고 사항</a>
+  </div>
+</header>
+
+<figure>
+  <img src="../screenshot-panels.png" width="1800" height="800" alt="macOS에서의 gander panels 레이아웃: 프로세스 표와 함께 선택한 프로세스의 세부 정보가 오른쪽 상세 정보 패널에 표시되어 있습니다.">
+  <figcaption>gander의 <code>panels</code> 레이아웃입니다. 메모리 수치는 macOS 기준이며 아래에서 설명합니다.</figcaption>
+</figure>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>macOS가 주는 것</h2>
+  <p>htop 프로세스 표의 거의 모든 것은 세 곳에서 나오고, 세 곳 모두 macOS에서 동작합니다:</p>
+  <table>
+    <thead><tr><th>수치</th><th>출처</th></tr></thead>
+    <tbody>
+      <tr><td>프로세스 목록</td><td><code>proc_listallpids</code>와 <code>PROC_PIDTASKALLINFO</code></td></tr>
+      <tr><td>명령줄</td><td><code>sysctl(KERN_PROCARGS2)</code></td></tr>
+      <tr><td>실행 파일 경로</td><td><code>proc_pidpath</code></td></tr>
+      <tr><td>작업 디렉터리</td><td><code>proc_pidinfo(PROC_PIDVNODEPATHINFO)</code></td></tr>
+      <tr><td>스레드</td><td><code>PROC_PIDLISTTHREADS</code> + <code>PROC_PIDTHREADINFO</code></td></tr>
+      <tr><td>메모리 총량, 스왑</td><td><code>host_statistics64</code>, <code>hw.memsize</code>, <code>sysctl(vm.swapusage)</code></td></tr>
+      <tr><td>코어별 CPU</td><td><code>host_processor_info</code></td></tr>
+      <tr><td>네트워크 처리량</td><td><code>sysctl(NET_RT_IFLIST2)</code></td></tr>
+    </tbody>
+  </table>
+  <p>그러니 htop이 “macOS에서는 제대로 동작하지 않는다”는 흔한 주장은 틀렸습니다. 동작합니다. 흥미로운 부분은 두 번째 표입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>macOS가 주지 않는 것</h2>
+  <p>여기의 모든 행은 Darwin에 대응물이 없는 Linux 전용 메커니즘입니다.</p>
+  <table>
+    <thead><tr><th></th><th class="c">macOS에서의 gander</th></tr></thead>
+    <tbody>
+      <tr><td>프로세스별 PSS / EPSS</td><td class="c">열 자체가 없음, <code>-</code> 아님</td></tr>
+      <tr><td>PSI 압력 미터</td><td class="c">미터에 <code>n/a here</code> 표시</td></tr>
+      <tr><td>Zram / Zswap / HugePages</td><td class="c">미터에 <code>n/a here</code> 표시</td></tr>
+      <tr><td>컨테이너 / cgroup 식별 정보</td><td class="c">cgroup 개념 없음, 열 제외</td></tr>
+      <tr><td>CPU 지연 통계</td><td class="c">열 제외</td></tr>
+      <tr><td>I/O 우선순위 (<code>i</code>)</td><td class="c"><code>ioprio_set</code> 없음, 패널이 그렇게 안내</td></tr>
+      <tr><td>GPU 열</td><td class="c">IOKit 필요, 제외</td></tr>
+      <tr><td>호스트 전체 디스크 처리량</td><td class="c">미터에 <code>n/a here</code> 표시</td></tr>
+      <tr><td>CPU 선호도 편집</td><td class="c">힌트만 제공</td></tr>
+    </tbody>
+  </table>
+  <p>중요한 구분은 <em>없는</em> 열과 <code>-</code>를 렌더링하는 열 사이의 차이입니다. 열의 <code>-</code>는 “지금 이 프로세스에는 해당 값이 없다”로 읽힙니다. 없는 열은 “이 시스템에는 그 개념 자체가 없다”로 읽힙니다. gander는 macOS에서 해당 열을 설정 화면에서 아예 빼고, 미터는 제자리에 두고 <code>n/a here</code>를 표시합니다. Linux에서 작성한 설정 파일도 Mac에서 불러와야 하고, 사라진 미터는 정직한 설정이 아니라 깨진 설정이 되기 때문입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>메모리: 버그로 오해받는 수치</h2>
+  <p>macOS의 메모리 계산 방식은 Linux의 것과 다릅니다. 한쪽을 다른 쪽에 대응해 보여 주는 뷰어는 눈에 보일 만큼 틀린 수치를 냅니다. <code>vm_statistics64</code>는 <strong>서로 겹치는 두 부류의 카운터</strong>를 노출합니다. 사용 용도 기준(<code>active</code>, <code>inactive</code>, <code>wire</code>, <code>compressor</code>, <code>free</code>, <code>speculative</code>)과 백킹 스토어 기준(<code>internal</code>, <code>external</code>)이며, 부류를 넘어 더하면 이중 계산이 됩니다. gander는 백킹 스토어 부류에 이 부류가 다루지 않는 두 페이지 범주를 더해 수치를 만듭니다:</p>
+<pre><code>used      = (internal - purgeable) + wired + compressed
+available = total - used</code></pre>
+  <p><code>htop</code>이 출력하는 것과 같은 수치이고, 같은 방식으로 도출되며, Activity Monitor와 <code>top</code>이 보고하는 것과도 같은 수치입니다. Mac에서는 gander와 htop이 서로 일치합니다. 둘 다 일치하지 않는 것은 <code>vm_stat</code>에서 계산한 성급한 <code>total - free</code>이며, 이 비교가 어느 쪽 도구든 틀리게 보이게 만듭니다.</p>
+  <p><code>inactive</code>와 <code>speculative</code>는 사용량이 아니라 캐시로 세세요. 일주일 동안 켜져 있던 시스템이 <code>inactive</code>가 크다는 이유로 메모리가 부족한 게 아닙니다. 회수 가능한 영역입니다.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Mac에서 gander와 htop이 다른 점</h2>
+  <p>수치는 일치하지만 화면은 다릅니다. htop의 세부 정보 패널은 전체 화면 모드입니다. 환경 변수는 <code>e</code>, 열린 파일은 <code>l</code>, 시스템 콜은 <code>s</code>이며 각각 프로세스 목록을 대체하고, 돌아오면 자리를 다시 찾아야 합니다. gander는 선택한 프로세스의 명령줄, 상태, 메모리, 실행 시간을 표 옆의 한 열에 유지하므로 목록은 제자리에 있습니다.</p>
+  <p>키 바인딩도 같고 <code>htoprc</code> 가져오기도 같습니다. 원래 목적이 htop 레이아웃이었다면 <code>L</code>로 얻을 수 있습니다. 달라지는 키는 <a href="vs-htop.html">vs htop</a>을 보세요.</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>macOS에 설치</h2>
+<pre><code>brew install pandasir/tap/gander
+
+<span class="c"># 또는 Rust 툴체인으로</span>
+cargo install gander-bin</code></pre>
+  <p>Apple Silicon과 Intel 양쪽용으로 미리 빌드된 압축 파일도 <a href="https://github.com/pandasir/gander/releases">Release</a>에 있습니다.</p>
+  <div class="note">
+    <p>macOS 라이브 테스트는 실제 프로세스 표를 읽으므로, 테스트 스위트는 제한된 샌드박스 밖에서 실행해야 할 수 있습니다. 세 플랫폼 모두의 백엔드 비교는 <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a>에 있습니다.</p>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>이어서 읽기</h2>
+  <div class="next">
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>FreeBSD에서 htop</h3>
+      <p><code>libkvm</code> 백엔드, 그리고 대체 도구가 드물어지는 이유.</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>같은 키, 다른 화면: 매일 쓰는 방식을 바꾸는 유일한 레이아웃 차이.</p>
+    </a>
+    <a class="card" href="vs-btop.html">
+      <h3>vs btop</h3>
+      <p>목록 대신 대시보드, 그리고 둘의 경쟁 관계가 아닌 지점.</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">이식성</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">변경 이력</a></p>
+  <p>GPL-2.0-or-later. Rust로 만들었습니다.</p>
+</div>
+</footer>
+
+</body>
+</html>

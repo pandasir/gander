@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gander vs btop — 「htop 以外」への 2 つの異なる答え</title>
+<meta name="description" content="btop と gander は htop のレイアウトを正反対の方向で拒みます。btop はマシンを描き、gander はプロセスを並べます。どちらを選ぶべきか、その理由。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/vs-btop.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/vs-btop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/vs-btop.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/vs-btop.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/vs-btop.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="gander vs btop">
+<meta property="og:description" content="btop はマシンについてのダッシュボード。gander はプロセスの一覧です。同じ画面を取り合う関係ではありません。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/vs-btop.html">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:title" content="gander vs btop">
+<meta name="twitter:description" content="btop はマシンについてのダッシュボード。gander はプロセスの一覧です。同じ画面を取り合う関係ではありません。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "gander vs btop — 「htop 以外」への 2 つの異なる答え",
+  "description": "btop と gander は htop のレイアウトを正反対の方向で拒みます。btop はマシンを描き、gander はプロセスを並べます。どちらを選ぶべきか、その理由。",
+  "url": "https://pandasir.github.io/gander/ja/vs-btop.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ja",
+  "dateModified": "2026-10-27",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ja/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../vs-btop.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/vs-btop.html">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/vs-btop.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / btop との比較</p>
+  <h1>gander vs btop</h1>
+  <p class="lede">どちらも htop のレイアウトを拒みます。ただ、その代わりに何を置くかは意見が分かれます。btop はマシンを描き、gander はプロセスを並べます。</p>
+  <div class="verdict">
+    <p>「このマシンは今どんな調子か」が知りたいなら btop を。「どのプロセスがやっているのか」が知りたいなら gander を。その答えをスクリプトで欲しい場合も gander です。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">インストール</a>
+    <a class="btn" href="https://github.com/pandasir/gander">ソース</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>同じカテゴリに見える別のツール</h2>
+  <p>btop はリソースモニターです。CPU、メモリ、ネットワーク、ディスク、温度をグラフと点字プロットで描き、プロセス一覧はそのうちの 1 ボックス。得意なことは得意で、ダッシュボードが欲しいなら正しい選択です。</p>
+  <p>gander はプロセス一覧です。htop と同じものに、選択プロセスの詳細を別画面から列へ移した構成です。スクリーンショットが説明のすべてです。</p>
+  <div class="shot3">
+    <div>
+      <img src="../screenshot-panels.png" width="1800" height="800" loading="lazy" alt="gander の panels レイアウト:集計 CPU バー 1 本、メモリとスワップのメーター、1 列にまとめたコンパクトなコアごとのグリッド、そして詳細パネル付きのプロセステーブル。">
+      <span>gander の <code>panels</code> — メーターを 1 列に圧縮</span>
+    </div>
+    <div>
+      <img src="../screenshot-htop.png" width="1800" height="800" loading="lazy" alt="gander の htop レイアウト:上部に横並びのメーター、全幅のプロセステーブル。">
+      <span>gander の <code>htop</code> レイアウト(<code>L</code>)</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>並べて比較</h2>
+  <table class="compare">
+    <thead>
+      <tr><th></th><th class="c">gander</th><th class="c">btop</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>答える主な質問</td><td class="c">どのプロセスか</td><td class="c">マシンの調子はどうか</td></tr>
+      <tr><td>htop ではないレイアウト</td><td class="c yes"><code>panels</code></td><td class="c yes">あり</td></tr>
+      <tr><td>htop のキーバインドを継承</td><td class="c yes">する</td><td class="c no">しない</td></tr>
+      <tr><td>既存の <code>htoprc</code> を取り込む</td><td class="c yes">できる</td><td class="c no">できない</td></tr>
+      <tr><td>選択プロセスの詳細が一覧の隣にある</td><td class="c yes">あり</td><td class="c no">なし</td></tr>
+      <tr><td>CPU / メモリ / ネットワーク / ディスクのグラフ</td><td class="c">CPU、メモリ、ディスク、ネットワーク、PSI</td><td class="c yes">4 つすべて、さらに温度</td></tr>
+      <tr><td>Linux、macOS、FreeBSD</td><td class="c yes">3 つすべて、対応</td><td class="c yes">3 つすべて、CI でビルド(NetBSD、OpenBSD も)</td></tr>
+      <tr><td>TUI なしの <code>--json</code> バッチモード</td><td class="c yes">あり</td><td class="c no">なし</td></tr>
+      <tr><td>実装言語</td><td class="c">Rust</td><td class="c">C++</td></tr>
+      <tr><td>ライセンス</td><td class="c">GPL-2.0-or-later</td><td class="c">Apache-2.0</td></tr>
+    </tbody>
+  </table>
+  <p>btop のプラットフォーム対応はその点で広く、NetBSD と OpenBSD 向けにもビルドされます。gander はされません。これらのシステムを主戦場にするなら、選ぶのは btop で、このページは対象外です。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>実用面で効いてくるのはスクリプト対応</h2>
+  <p>btop は「画面」です。機械可読なスナップショットを受け取る公式の方法はなく、自動化するには表示をスクレイプするか、<code>/proc</code> を自分で読むしかありません。</p>
+  <p>gander のバッチモードは、TUI を切った同じバイナリです。</p>
+<pre><code>gander --json --limit 10                   <span class="c"># JSON 形式で 1 回出力、上位 10 行</span>
+gander --sort PERCENT_MEM --limit 20       <span class="c"># メモリ使用量の上位 20 件</span>
+gander -F "python|node" -n 5               <span class="c"># 5 回出力、フィルター付き</span></code></pre>
+  <p>毎日使う機能ではありません。でも、「見るだけのツール」と「cron に組み込めるツール」の違いです。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>インストール</h2>
+<pre><code>brew install pandasir/tap/gander     <span class="c"># macOS</span>
+cargo install gander-bin             <span class="c"># Rust が入っている任意のプラットフォーム</span></code></pre>
+  <p>署名付きの <code>apt</code> / <code>dnf</code> リポジトリと 7 ターゲット分のアーカイブは、<a href="index.html#install">インストールの節</a>にあります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>さらに読む</h2>
+  <div class="next">
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>gander がキーバインドと列の意味を借りているツール。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>クロスプラットフォームのグラフとウィジェット、そして「公式サポート」の範囲。</p>
+    </a>
+    <a class="card" href="htop-for-freebsd.html">
+      <h3>htop on FreeBSD</h3>
+      <p><code>libkvm</code> バックエンド、そして FreeBSD を飛ばしていく代替ツール。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/releases">Release</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/KEYS.md">キーマップ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

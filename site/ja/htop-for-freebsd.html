@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeBSD の htop — 一部だけ対応しているビューアたち</title>
+<meta name="description" content="htop は FreeBSD に対応しています。新しいプロセスビューアのいくつかはそうではありません。gander が sysctl と libkvm で読むもの、そして実カーネルでのテスト方法。">
+<link rel="canonical" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html">
+<link rel="alternate" hreflang="en" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="x-default" href="https://pandasir.github.io/gander/htop-for-freebsd.html">
+<link rel="alternate" hreflang="zh-CN" href="https://pandasir.github.io/gander/zh-CN/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ja" href="https://pandasir.github.io/gander/ja/htop-for-freebsd.html">
+<link rel="alternate" hreflang="ko" href="https://pandasir.github.io/gander/ko/htop-for-freebsd.html">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="../site.css">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="gander">
+<meta property="og:title" content="FreeBSD の htop と、代替ツールの対応状況">
+<meta property="og:description" content="sysctl と libkvm で FreeBSD でも完全なプロセステーブルが得られます。実際に使っているビューアはこれです。">
+<meta property="og:url" content="https://pandasir.github.io/gander/ja/htop-for-freebsd.html">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<meta name="twitter:title" content="FreeBSD の htop と、代替ツールの対応状況">
+<meta name="twitter:description" content="sysctl と libkvm で FreeBSD でも完全なプロセステーブルが得られます。実際に使っているビューアはこれです。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://pandasir.github.io/gander/social-preview.png">
+<meta name="twitter:image:alt" content="「gander」と書かれた暗い色のカード。タグラインは「An interactive process viewer for Linux, macOS and FreeBSD」で、横にプロセステーブルのスクリーンショットが置かれています。">
+<script src="../analytics.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "FreeBSD の htop — 一部だけ対応しているビューアたち",
+  "description": "htop は FreeBSD に対応しています。新しいプロセスビューアのいくつかはそうではありません。gander が sysctl と libkvm で読むもの、そして実カーネルでのテスト方法。",
+  "url": "https://pandasir.github.io/gander/ja/htop-for-freebsd.html",
+  "image": "https://pandasir.github.io/gander/social-preview.png",
+  "inLanguage": "ja",
+  "dateModified": "2026-10-23",
+  "isPartOf": {
+    "@type": "WebSite",
+    "name": "gander",
+    "url": "https://pandasir.github.io/gander/ja/"
+  },
+  "about": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gander",
+      "applicationCategory": "SystemApplication",
+      "operatingSystem": "Linux, macOS, FreeBSD"
+    }
+  ]
+}
+</script>
+</head>
+<body class="subpage">
+
+<div class="wrap">
+<header>
+  <nav class="lang" aria-label="言語">
+    <a lang="en" hreflang="en" href="../htop-for-freebsd.html">English</a>
+    <a lang="zh-CN" hreflang="zh-CN" href="../zh-CN/htop-for-freebsd.html">简体中文</a>
+    <span aria-current="true">日本語</span>
+    <a lang="ko" hreflang="ko" href="../ko/htop-for-freebsd.html">한국어</a>
+  </nav>
+  <p class="crumbs"><a href="index.html">gander</a> / FreeBSD の場合</p>
+  <h1>FreeBSD でのプロセスビューア</h1>
+  <p class="lede">新しいターミナルのプロセスビューアは、FreeBSD で減っていきます。データが難しいからではなく、そこでテストするプロジェクトが少ないからです。</p>
+  <div class="verdict">
+    <p>htop は長年 FreeBSD に対応しており、gander には専用の <code>sysctl</code>/<code>libkvm</code> バックエンドがあり、CI の実 FreeBSD カーネルでテストされます。新しいツールのどれにするかを FreeBSD 上で選ぶなら、プラットフォーム対応の行がそのまま決め手になることが多いです。</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="index.html#install">gander をインストール</a>
+    <a class="btn" href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">バックエンドの詳細</a>
+  </div>
+</header>
+</div>
+
+<section>
+<div class="wrap">
+  <h2>実際に FreeBSD に対応しているのは誰か</h2>
+  <table class="compare">
+    <thead><tr><th></th><th class="c">FreeBSD 対応</th></tr></thead>
+    <tbody>
+      <tr><td>htop</td><td class="c yes">はい。ports ツリーにあります</td></tr>
+      <tr><td>gander</td><td class="c yes">はい。<code>libkvm</code> バックエンド、CI の VM でテスト</td></tr>
+      <tr><td>btop</td><td class="c yes">はい。CI でビルド(NetBSD、OpenBSD も)</td></tr>
+      <tr><td>bottom</td><td class="c">非公式と明記。「限定されたサポートのみの場合がある」</td></tr>
+    </tbody>
+  </table>
+  <p>ツールの順位付けではありません。bottom は良いプログラムで、自分の FreeBSD サポートがどういうものかをはっきり述べています。言いたいことはもっと狭いです。FreeBSD では、他のどの行より先にこの行を確認すべきです。コンパイルはできるのにプラットフォーム上で動かされていないビューアは、遅かれ早かれ「欠けている」のではなく「間違った」数値を見せます。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>gander が FreeBSD で読むもの</h2>
+  <p>バックエンドは 2 つのインターフェースを使います。<code>sysctl</code> がプロセステーブルとシステムの数値を供給し、<code>libkvm</code>(<code>kvm_getswapinfo</code>、<code>devstat_getdevs</code>)が <code>sysctl</code> が公開していない部分を埋めます。</p>
+  <table>
+    <thead><tr><th>数値</th><th>ソース</th></tr></thead>
+    <tbody>
+      <tr><td>プロセス一覧</td><td><code>sysctl(KERN_PROC_PROC)</code> → <code>kinfo_proc[]</code></td></tr>
+      <tr><td>CPU 時間、開始時刻</td><td><code>ki_runtime</code>(マイクロ秒)、<code>ki_start</code></td></tr>
+      <tr><td>常駐サイズと仮想サイズ</td><td><code>ki_rssize</code>(ページ)、<code>ki_size</code>(バイト)</td></tr>
+      <tr><td>状態文字</td><td><code>ki_stat</code> と <code>ki_tdflags</code>/<code>ki_slptime</code></td></tr>
+      <tr><td>コマンドライン、環境変数</td><td><code>sysctl(KERN_PROC_ARGS)</code>、<code>KERN_PROC_ENV</code></td></tr>
+      <tr><td>実行ファイル、cwd</td><td><code>KERN_PROC_PATHNAME</code>、<code>KERN_PROC_CWD</code></td></tr>
+      <tr><td>開いているファイル</td><td><code>KERN_PROC_FILEDESC</code></td></tr>
+      <tr><td>コアごとの CPU</td><td><code>kern.cp_times</code></td></tr>
+      <tr><td>メモリ</td><td><code>vm.stats.vm.v_*</code> と <code>v_page_count</code></td></tr>
+      <tr><td>スワップ</td><td><code>kvm_getswapinfo(3)</code></td></tr>
+      <tr><td>ディスクスループット</td><td><code>devstat_getdevs(3)</code></td></tr>
+      <tr><td>ネットワークスループット</td><td><code>sysctl(NET_RT_IFLIST)</code></td></tr>
+      <tr><td>CPU アフィニティ</td><td><code>cpuset_getaffinity</code> / <code>cpuset_setaffinity</code></td></tr>
+    </tbody>
+  </table>
+  <p>上の行のどれもが、開発中に「他のツールとの比較でしか見つからない」バグを 1 つは生みました。知っておく価値のあるものをいくつか:</p>
+  <ul>
+    <li><code>ki_runtime</code> は<strong>マイクロ秒</strong>です。Linux と macOS のすべての CPU 時間フィールドはチックカウンタです。これを <code>HZ</code> の除数で割ると、パーセンテージが 4 桁ずれます。</li>
+    <li><code>ki_rssize</code> はページ、<code>ki_size</code> はバイトです。見た目は対に見えて、違います。ページサイズを忘れると、1.2 GB のプロセスが 300 MB と報告されます。レビューを生き抜けるくらいもっともらしい数字です。</li>
+    <li><code>ki_stat</code> は状態文字ではありません。<code>SSLEEP</code> は <code>ki_tdflags &amp; TDF_SINTR</code> と <code>ki_slptime</code> で 3 つに分かれます。算術的にマップすると、生まれたばかりのプロセスが <code>I</code> に、ロックされたものが <code>X</code> に表示されます。</li>
+    <li><code>kvm_getswapinfo</code> は<strong>ページ</strong>単位で報告します。htop 自身の FreeBSD バックエンドはページサイズではなく 1024 を掛けるので、1 GiB のスワップファイルが 4 MiB と、バイトと銘打たれて報告されます。gander は <code>swapinfo(8)</code> と同じやり方をします。</li>
+    <li><code>hw.physmem</code> は VM が実際に管理するメモリより大きいので、これをメモリバーの分母にすると、バーは永遠に満タン手前で止まります。本当にメモリが尽きたマシンでは、描画バグに見えます。</li>
+  </ul>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD にないものを、gander はそう言う</h2>
+  <p>macOS と同じ規則です。<code>-</code> しか描けない列は列リストから外し、メーターは <code>n/a here</code> のまま残ります。設定ファイルをマシン間で移動させても読み込めるようにです。</p>
+  <table>
+    <thead><tr><th></th><th class="c">FreeBSD 上</th></tr></thead>
+    <tbody>
+      <tr><td>PSS / EPSS</td><td class="c"><code>smaps_rollup</code> がない。対象外</td></tr>
+      <tr><td>PSI、zram、zswap、HugePages</td><td class="c">メーターは <code>n/a here</code> と表示</td></tr>
+      <tr><td>コンテナ列</td><td class="c">jail はコンテナではない。対象外</td></tr>
+      <tr><td>GPU 列</td><td class="c"><code>drm-usage-stats</code> がない。対象外</td></tr>
+      <tr><td>遅延統計</td><td class="c"><code>TASKSTATS</code> は Linux 専用。対象外</td></tr>
+      <tr><td>I/O 優先度(<code>i</code>)</td><td class="c"><code>ioprio_set</code> がなく、パネルがその旨を表示</td></tr>
+      <tr><td>ファイルロックパネル(<code>x</code>)</td><td class="c">ロックテーブルがない。<code>lsof</code> への言及を表示</td></tr>
+      <tr><td>CPU アフィニティ、環境変数、開いているファイル</td><td class="c yes">対応</td></tr>
+      <tr><td>ホスト全体のディスクスループット</td><td class="c yes">対応。両方の数値を持つ唯一のプラットフォーム</td></tr>
+    </tbody>
+  </table>
+  <p>jail は興味深い欠落です。<code>kinfo_proc.ki_jid</code> は読んでいて利用できますが、何も表示しません。jail はカーネルを共有し、イメージレイヤーを持たず、小さな整数以外の識別子もありません。これを <code>CONTAINER</code> と並べるのは誤った等価扱いです。<code>jid 0</code> はホストで、それが普通の状態なので、その列は例外の少ないゼロの羅列になります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>テストの方法</h2>
+  <p>FreeBSD には GitHub 提供のランナーがないため、2 つの方法で確認します。push ごとにクレート全体を <code>x86_64-unknown-freebsd</code> へクロスコンパイルするのと、QEMU 上の FreeBSD 14 VM の中でテスト一式を実行するのとです。重要なのは VM のジョブです。ライブテストは、ゲスト内で gander の数値を <code>ps(1)</code>、<code>sysctl(8)</code>、<code>swapinfo(8)</code>、<code>netstat(1)</code> と照合します。上に挙げたバグの大半は、クロスコンパイルでは見えないものです。</p>
+  <p>各プラットフォームで意図的に欠けている行すべてを含む完全なマトリクスは、<a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">docs/PORTABILITY.md</a> にあります。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>FreeBSD へのインストール</h2>
+  <p>リリースごとに <code>x86_64-unknown-freebsd</code> アーカイブと、その隣に <code>.sha256</code> ファイルを出します:</p>
+<pre><code>tar -xzf gander-&lt;version&gt;-x86_64-unknown-freebsd.tar.gz
+./gander-&lt;version&gt;-x86_64-unknown-freebsd/gander</code></pre>
+  <p>Rust ツールチェーンがあれば:</p>
+<pre><code>cargo install gander-bin</code></pre>
+  <p>最新のアーカイブは <a href="https://github.com/pandasir/gander/releases">Release</a> を、すべてのインストール方法は<a href="index.html#install">インストール節</a>を見てください。</p>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>このあと読む</h2>
+  <div class="next">
+    <a class="card" href="htop-for-macos.html">
+      <h3>macOS の htop</h3>
+      <p>libproc と Mach が渡してくれるもの、渡してくれないもの。</p>
+    </a>
+    <a class="card" href="vs-htop.html">
+      <h3>vs htop</h3>
+      <p>同じキーと、日常使いを変えるただ一つのレイアウトの違い。</p>
+    </a>
+    <a class="card" href="vs-bottom.html">
+      <h3>vs bottom</h3>
+      <p>プラットフォーム対応がそのまま決め手になる比較。</p>
+    </a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap">
+  <p><a href="index.html">gander</a> ·
+     <a href="https://github.com/pandasir/gander">github.com/pandasir/gander</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/docs/PORTABILITY.md">ポータビリティ</a> ·
+     <a href="https://github.com/pandasir/gander/blob/main/CHANGELOG.md">変更履歴</a></p>
+  <p>GPL-2.0-or-later。Rust で作られています。</p>
+</div>
+</footer>
+
+</body>
+</html>

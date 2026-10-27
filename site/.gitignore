@@ -3,3 +3,5 @@
 # refers to them by bare filename so the same markup works from the Pages root.
 *.png
 *.gif
+*.webm
+*.mp4
