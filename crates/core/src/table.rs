@@ -174,7 +174,11 @@ pub fn sort_order(rows: &[Row], order: &mut [usize], sort: Sort) {
     let descending = sort.dir == Dir::Desc;
     order.sort_unstable_by(|a, b| {
         let primary = compare_by(rows, sort.field, *a, *b);
-        let primary = if descending { primary.reverse() } else { primary };
+        let primary = if descending {
+            primary.reverse()
+        } else {
+            primary
+        };
         primary.then_with(|| rows[*a].pid.cmp(&rows[*b].pid))
     });
 }
@@ -191,9 +195,7 @@ fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std
         F::User => rows[a].uid.cmp(&rows[b].uid),
         F::Priority => rows[a].priority.cmp(&rows[b].priority),
         F::Nice => rows[a].nice.cmp(&rows[b].nice),
-        F::PercentCpu | F::PercentNormCpu => {
-            rows[a].percent_cpu.total_cmp(&rows[b].percent_cpu)
-        }
+        F::PercentCpu | F::PercentNormCpu => rows[a].percent_cpu.total_cmp(&rows[b].percent_cpu),
         F::PercentMem => rows[a].percent_mem.total_cmp(&rows[b].percent_mem),
         F::ResMem => rows[a].res.cmp(&rows[b].res),
         F::VirtMem => rows[a].virt.cmp(&rows[b].virt),
@@ -250,15 +252,9 @@ fn compare_by(rows: &[Row], field: crate::row::Field, a: usize, b: usize) -> std
         // `smaps_rollup`, so the column that orders the list is also the column
         // that pays for it.
         #[cfg(target_os = "linux")]
-        F::Pss => rows[a]
-            .pss
-            .unwrap_or(0)
-            .cmp(&rows[b].pss.unwrap_or(0)),
+        F::Pss => rows[a].pss.unwrap_or(0).cmp(&rows[b].pss.unwrap_or(0)),
         #[cfg(target_os = "linux")]
-        F::Epss => rows[a]
-            .epss
-            .unwrap_or(0)
-            .cmp(&rows[b].epss.unwrap_or(0)),
+        F::Epss => rows[a].epss.unwrap_or(0).cmp(&rows[b].epss.unwrap_or(0)),
         #[cfg(target_os = "linux")]
         F::Private => rows[a]
             .private
@@ -493,25 +489,102 @@ impl ProcTable {
     }
 }
 
+/// Convert aggregate host tick deltas to task CPU%, with one core equal to 100%.
+pub(crate) fn cpu_percent(task_delta: u64, aggregate_delta: u64, cpu_count: usize) -> f32 {
+    if aggregate_delta == 0 {
+        return 0.0;
+    }
+    // Aggregate ticks cover every core; only the normalized column divides by N.
+    (task_delta as f64 * 100.0 * cpu_count.max(1) as f64 / aggregate_delta as f64) as f32
+}
+
 /// Recompute per-process CPU% and MEM% from two samples.
 ///
 /// `docs/DESIGN.md` §3.5.
 pub fn derive_cpu(rows: &mut [Row], snapshot: &SystemSnapshot) {
-    let d_total = snapshot.cpu_delta.first().map(|d| d.total()).unwrap_or(0) as f32;
+    let d_total = snapshot.cpu_delta.first().map(|d| d.total()).unwrap_or(0);
 
     for row in rows.iter_mut() {
-        let d_proc = row.ticks.proc.saturating_sub(row.prev_ticks.proc) as f32;
-        row.percent_cpu = if d_total <= 0.0 {
-            0.0
-        } else {
-            // May exceed 100% on multicore: that is correct and matches htop.
-            d_proc * 100.0 / d_total
-        };
+        let d_proc = row.ticks.proc.saturating_sub(row.prev_ticks.proc);
+        row.percent_cpu = cpu_percent(d_proc, d_total, snapshot.cpu_count());
         row.percent_mem = if snapshot.mem.total == 0 {
             0.0
         } else {
             row.res as f32 * 100.0 / snapshot.mem.total as f32
         };
+    }
+}
+
+#[cfg(test)]
+mod cpu_derivation_tests {
+    use super::*;
+    use crate::system::CpuTimes;
+
+    fn derive(cores: usize, aggregate: Option<u64>, previous: u64, current: u64) -> Row {
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); cores + 1],
+            cpu_delta: aggregate
+                .map(|ticks| {
+                    vec![CpuTimes {
+                        user: ticks,
+                        ..Default::default()
+                    }]
+                })
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+        let mut rows = [Row::default_for_test(1)];
+        rows[0].prev_ticks.proc = previous;
+        rows[0].ticks.proc = current;
+        derive_cpu(&mut rows, &snapshot);
+        rows.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn one_busy_core_is_one_hundred_percent() {
+        for cores in [1, 2, 8] {
+            assert_eq!(
+                derive(cores, Some(100 * cores as u64), 500, 600).percent_cpu,
+                100.0
+            );
+        }
+    }
+
+    #[test]
+    fn multicore_process_can_exceed_one_hundred_percent() {
+        assert_eq!(derive(2, Some(200), 500, 700).percent_cpu, 200.0);
+    }
+
+    #[test]
+    fn fractional_core_usage_is_preserved() {
+        assert_eq!(derive(2, Some(200), 500, 525).percent_cpu, 25.0);
+    }
+
+    #[test]
+    fn missing_or_zero_aggregate_delta_is_zero() {
+        for aggregate in [None, Some(0)] {
+            assert_eq!(derive(2, aggregate, 500, 600).percent_cpu, 0.0);
+        }
+    }
+
+    #[test]
+    fn aggregate_only_sample_falls_back_to_one_core() {
+        assert_eq!(derive(0, Some(100), 500, 550).percent_cpu, 50.0);
+    }
+
+    #[test]
+    fn decreasing_task_counter_does_not_underflow() {
+        assert_eq!(derive(2, Some(200), 600, 500).percent_cpu, 0.0);
+    }
+
+    #[test]
+    fn valid_thread_delta_uses_the_same_single_core_scale() {
+        assert_eq!(cpu_percent(50, 200, 2), 50.0);
+    }
+
+    #[test]
+    fn large_tick_deltas_do_not_overflow_during_scaling() {
+        assert_eq!(cpu_percent(u64::MAX / 2, u64::MAX, 2), 100.0);
     }
 }
 
@@ -595,7 +668,14 @@ mod tests {
             for _ in 0..5 {
                 // Repeated so an unstable sort has a chance to show itself.
                 let mut order: Vec<usize> = (0..rows.len()).collect();
-                sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir });
+                sort_order(
+                    &rows,
+                    &mut order,
+                    Sort {
+                        field: Field::PercentCpu,
+                        dir,
+                    },
+                );
                 let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
                 assert_eq!(
                     pids,
@@ -618,13 +698,31 @@ mod tests {
             .collect();
 
         let mut order: Vec<usize> = (0..rows.len()).collect();
-        sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir: Dir::Desc });
+        sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::PercentCpu,
+                dir: Dir::Desc,
+            },
+        );
         let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
-        assert_eq!(&pids[..2], &[3, 7], "highest CPU first, pid-ascending among ties");
+        assert_eq!(
+            &pids[..2],
+            &[3, 7],
+            "highest CPU first, pid-ascending among ties"
+        );
         assert_eq!(&pids[2..], &[1, 2, 4, 5, 6, 8, 9, 10], "then the zeroes");
 
         let mut order: Vec<usize> = (0..rows.len()).collect();
-        sort_order(&rows, &mut order, Sort { field: Field::PercentCpu, dir: Dir::Asc });
+        sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::PercentCpu,
+                dir: Dir::Asc,
+            },
+        );
         let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
         assert_eq!(&pids[..8], &[1, 2, 4, 5, 6, 8, 9, 10], "zeroes first");
         assert_eq!(&pids[8..], &[3, 7], "then the busy ones");
@@ -642,7 +740,14 @@ mod tests {
             })
             .collect();
         let mut order: Vec<usize> = (0..rows.len()).collect();
-        sort_order(&rows, &mut order, Sort { field: Field::Pid, dir: Dir::Asc });
+        sort_order(
+            &rows,
+            &mut order,
+            Sort {
+                field: Field::Pid,
+                dir: Dir::Asc,
+            },
+        );
         let pids: Vec<u32> = order.iter().map(|&i| rows[i].pid).collect();
         assert_eq!(pids, (1..=20u32).collect::<Vec<_>>());
     }

@@ -279,13 +279,19 @@ struct CpuTimes { total_ticks: u64, cpu_ticks: u64 } // monotonically increasing
 // per tick:
 let d_total = now.total_ticks - prev.total_ticks;   // system-wide
 let d_cpu   = now.cpu_ticks   - prev.cpu_ticks;     // this process
-percent = d_cpu as f64 * 100.0 / d_total as f64;    // > 100% on multicore: fine
+let cores   = snapshot.cpu_count().max(1) as f64;
+percent = d_cpu as f64 * 100.0 * cores / d_total as f64;
 ```
 
 - Guard against `d_total == 0` (sub-tick refresh) and against counter wraparound
   (process replaced → `starttime` changed → treat as new, report 0).
 - Divide by `nproc` only if the user chooses "normalized CPU%" (htop has this as
   a separate `PERCENT_NORM_CPU` column).
+- The aggregate tick delta covers every sampled core, so ordinary task CPU%
+  multiplies by that core count. On two cores, a task delta of 100 against an
+  aggregate delta of 200 means 100% ordinary CPU, or 50% normalized CPU. Ordinary
+  CPU% can exceed 100% when a process uses multiple cores; host CPU meters remain
+  machine-normalized and do not use this task scaling.
 
 **Memory** — replicate htop's definition, do not invent one. The three platforms
 genuinely disagree — each was written against the matching htop platform file, and

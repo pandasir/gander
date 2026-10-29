@@ -249,6 +249,114 @@ fn delta_math_is_applied_on_the_second_tick() {
     }
 }
 
+struct CpuFixture(std::path::PathBuf);
+
+impl CpuFixture {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "gander-cpu-fixture-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let fixture = Self(root);
+        std::fs::create_dir(fixture.0.join("42")).unwrap();
+        for name in ["meminfo", "uptime", "loadavg"] {
+            std::fs::copy(fixture_root().join(name), fixture.0.join(name)).unwrap();
+        }
+        for name in ["status", "cmdline", "cgroup"] {
+            std::fs::copy(
+                fixture_root().join("42").join(name),
+                fixture.0.join("42").join(name),
+            )
+            .unwrap();
+        }
+        fixture
+    }
+
+    fn write(&self, cores: usize, user_per_core: u64, idle_per_core: u64, task_ticks: u64) {
+        let line =
+            |label: &str, user: u64, idle: u64| format!("{label} {user} 0 0 {idle} 0 0 0 0 0 0\n");
+        let mut host = line(
+            "cpu",
+            user_per_core * cores as u64,
+            idle_per_core * cores as u64,
+        );
+        for core in 0..cores {
+            host.push_str(&line(&format!("cpu{core}"), user_per_core, idle_per_core));
+        }
+        std::fs::write(self.0.join("stat"), host).unwrap();
+
+        let original = std::fs::read_to_string(fixture_root().join("42/stat")).unwrap();
+        let end_comm = original.rfind(')').unwrap() + 1;
+        let mut fields: Vec<_> = original[end_comm..]
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        fields[11] = task_ticks.to_string();
+        fields[12] = "0".into();
+        std::fs::write(
+            self.0.join("42/stat"),
+            format!("{} {}\n", &original[..end_comm], fields.join(" ")),
+        )
+        .unwrap();
+    }
+
+    fn cpu(&self, sampler: &mut Sampler) -> f32 {
+        let (_, rows) = sampler.sample();
+        rows.iter().find(|r| r.pid == 42).unwrap().percent_cpu
+    }
+}
+
+impl Drop for CpuFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn advancing_fixture_scales_one_busy_core_to_one_hundred_percent() {
+    let fixture = CpuFixture::new();
+    fixture.write(2, 100, 100, 500);
+    let mut sampler = Sampler::new(&fixture.0);
+    assert_eq!(fixture.cpu(&mut sampler), 0.0, "initial host sample");
+    fixture.write(2, 150, 150, 600);
+    assert_eq!(fixture.cpu(&mut sampler), 100.0);
+    assert_eq!(fixture.cpu(&mut sampler), 0.0, "unchanged counters");
+}
+
+#[test]
+fn advancing_fixture_supports_a_two_core_process() {
+    let fixture = CpuFixture::new();
+    fixture.write(2, 100, 100, 500);
+    let mut sampler = Sampler::new(&fixture.0);
+    fixture.cpu(&mut sampler);
+    fixture.write(2, 200, 100, 700);
+    assert_eq!(fixture.cpu(&mut sampler), 200.0);
+}
+
+#[test]
+fn advancing_fixture_resets_the_interval_when_cpu_topology_changes() {
+    let fixture = CpuFixture::new();
+    fixture.write(2, 100, 100, 500);
+    let mut sampler = Sampler::new(&fixture.0);
+    fixture.cpu(&mut sampler);
+    fixture.write(3, 150, 150, 600);
+    assert_eq!(
+        fixture.cpu(&mut sampler),
+        0.0,
+        "topology change resets the host delta"
+    );
+    fixture.write(3, 200, 200, 700);
+    assert_eq!(
+        fixture.cpu(&mut sampler),
+        100.0,
+        "next interval uses three cores"
+    );
+}
+
 #[test]
 fn proc_table_reorder_is_a_permutation() {
     let mut sampler = Sampler::new(fixture_root());

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::row::{CpuTicks, Row, RowFlags};
 use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo, SystemSnapshot};
-use crate::table::Cache;
+use crate::table::{cpu_percent, Cache};
 use crate::Pid;
 
 #[cfg(target_os = "linux")]
@@ -189,9 +189,7 @@ impl Sampler {
             None => crate::system::Rate::default(),
         };
         let disk_rate = match self.prev_disk {
-            Some((prev, at_prev)) => {
-                disk.per_sec(&prev, at.duration_since(at_prev).as_secs_f64())
-            }
+            Some((prev, at_prev)) => disk.per_sec(&prev, at.duration_since(at_prev).as_secs_f64()),
             None => crate::system::Rate::default(),
         };
         self.prev_net = Some((net, at));
@@ -245,7 +243,8 @@ impl Sampler {
     fn read_threads(&mut self, pids: &[Pid], cpu_delta: &[CpuTimes]) -> Vec<Row> {
         let root = self.root.clone();
         let page_size = self.page_size;
-        let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0) as f32;
+        let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0);
+        let cpu_count = cpu_delta.len().saturating_sub(1);
 
         // Collect (pid, tid) pairs first so the parallel part only reads files.
         let mut pairs: Vec<(Pid, Pid)> = Vec::new();
@@ -304,12 +303,8 @@ impl Sampler {
 
             scan::apply_stat(&mut row, &fields, page_size);
 
-            let delta = fields.cpu_ticks().saturating_sub(prev_thread_ticks) as f32;
-            row.percent_cpu = if total_delta > 0.0 {
-                delta * 100.0 / total_delta
-            } else {
-                0.0
-            };
+            let delta = fields.cpu_ticks().saturating_sub(prev_thread_ticks);
+            row.percent_cpu = cpu_percent(delta, total_delta, cpu_count);
 
             // Identity is the process's, and already cached under the leader's pid.
             let stable = scan::read_identity(&self.root, pid, starttime, &mut self.cache);
@@ -361,7 +356,8 @@ impl Sampler {
         // Phase 2: identity (uid, cmdline, exe) — cached, so mostly a hash hit.
         let mut out = Vec::with_capacity(stats.len());
         let mut next_prev = HashMap::with_capacity(stats.len());
-        let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0) as f32;
+        let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0);
+        let cpu_count = cpu_delta.len().saturating_sub(1);
 
         for (pid, comm, fields) in stats {
             let starttime = fields.starttime;
@@ -419,13 +415,8 @@ impl Sampler {
                 }
             }
 
-            let d_proc = fields.cpu_ticks().saturating_sub(prev_proc_ticks) as f32;
-            row.percent_cpu = if total_delta > 0.0 {
-                // May exceed 100% on multicore: correct, and matches htop.
-                d_proc * 100.0 / total_delta
-            } else {
-                0.0
-            };
+            let d_proc = fields.cpu_ticks().saturating_sub(prev_proc_ticks);
+            row.percent_cpu = cpu_percent(d_proc, total_delta, cpu_count);
 
             let stable = scan::read_identity(&self.root, pid, starttime, &mut self.cache);
             row.uid = stable.uid;
@@ -439,9 +430,7 @@ impl Sampler {
             // A deleted or replaced executable is highlighted, matching htop's EXE
             // column behaviour. Threads inherit the process's exe, so they inherit
             // the flag below too.
-            row.flags = row
-                .flags
-                .set(RowFlags::STALE_EXE, stable.exe_deleted);
+            row.flags = row.flags.set(RowFlags::STALE_EXE, stable.exe_deleted);
             #[cfg(target_os = "linux")]
             {
                 row.container = stable.container;
@@ -461,7 +450,7 @@ impl Sampler {
 
             row.ticks = CpuTicks {
                 proc: fields.cpu_ticks(),
-                total: total_delta as u64,
+                total: total_delta,
             };
             row.prev_ticks = CpuTicks {
                 proc: prev_proc_ticks,
@@ -565,7 +554,10 @@ mod platform_trait_tests {
         let mut s = crate::Sampler::default();
         let (_snap, rows) = PlatformSampler::sample(&mut s);
         assert!(!rows.is_empty(), "/proc must yield processes");
-        assert_eq!(PlatformSampler::cache_len(&s), <crate::Sampler>::cache_len(&s));
+        assert_eq!(
+            PlatformSampler::cache_len(&s),
+            <crate::Sampler>::cache_len(&s)
+        );
     }
 }
 

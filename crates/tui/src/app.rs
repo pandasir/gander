@@ -3520,6 +3520,58 @@ mod safety_tests;
 mod tests {
     use super::*;
 
+    #[test]
+    fn cpu_columns_normalize_corrected_task_usage_exactly_once() {
+        use gander_core::system::CpuTimes;
+
+        let snapshot = SystemSnapshot {
+            cpu: vec![CpuTimes::default(); 3],
+            cpu_delta: vec![CpuTimes {
+                user: 100,
+                idle: 100,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut users = gander_core::users::Users::new();
+        let mut task = Row::default_for_test(1);
+        for (ordinary, normalized) in [(100.0, "50.0"), (200.0, "100.0")] {
+            task.percent_cpu = ordinary;
+            assert_eq!(
+                render_field(&task, Field::PercentCpu, &snapshot, &mut users),
+                format!("{ordinary:.1}")
+            );
+            assert_eq!(
+                render_field(&task, Field::PercentNormCpu, &snapshot, &mut users),
+                normalized
+            );
+        }
+        assert_eq!(
+            snapshot.cpu_usage(),
+            0.5,
+            "host usage stays machine-normalized"
+        );
+    }
+
+    #[test]
+    fn normalized_cpu_column_uses_one_core_when_core_entries_are_missing() {
+        use gander_core::system::CpuTimes;
+
+        let mut task = Row::default_for_test(1);
+        task.percent_cpu = 100.0;
+        let mut users = gander_core::users::Users::new();
+        for entries in [0, 1] {
+            let snapshot = SystemSnapshot {
+                cpu: vec![CpuTimes::default(); entries],
+                ..Default::default()
+            };
+            assert_eq!(
+                render_field(&task, Field::PercentNormCpu, &snapshot, &mut users),
+                "100.0"
+            );
+        }
+    }
+
     fn row(pid: u32, cmd: &str) -> Row {
         let mut r = Row::default_for_test(pid);
         r.comm.try_push_str(cmd).unwrap();
