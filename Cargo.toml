@@ -14,7 +14,7 @@ rust-version = "1.89"
 license = "GPL-2.0-or-later"
 authors = ["gander contributors"]
 repository = "https://github.com/pandasir/gander"
-homepage = "https://github.com/pandasir/gander"
+homepage = "https://pandasir.github.io/gander"
 readme = "README.md"
 # Keywords are what crates.io search and the docs.rs page read. `htop` is the
 # word people actually type when they are looking for this category, and
