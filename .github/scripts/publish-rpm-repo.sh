@@ -68,12 +68,15 @@ fi
 # --- index ------------------------------------------------------------------
 # --checksum sha256 rather than the default: dnf verifies it, and sha256 is the
 # one every supported client understands.
-# --compression-type gz rather than the default: newer createrepo_c (Ubuntu 26
+# --general-compress-type gz rather than the default: createrepo_c 1.x (Ubuntu 26
 # runners, Oct 2026) emits zchunk metadata — primary.xml.zck — while repomd
 # signing below and test-repo.sh's check for the package inside primary.xml.gz
-# both assume the .gz layout. Pin it so the repository shape does not drift
-# with whatever distro the builder happens to run.
-createrepo_c --quiet --checksum sha256 --database --compression-type gz --outputdir "$root" "$root"
+# both assume the .gz layout. Pin it (and --compress-type for the additional
+# metadata, same 1.x rename) so the repository shape does not drift with
+# whatever distro the builder happens to run.
+createrepo_c --quiet --checksum sha256 --database \
+  --compress-type gz --general-compress-type gz \
+  --outputdir "$root" "$root"
 
 # --- signatures -------------------------------------------------------------
 # The repository metadata is signed, and the packages were signed when they were
