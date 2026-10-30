@@ -5,11 +5,13 @@ Screenshots and the demo recording used by the READMEs and the landing page.
 | File | What it shows |
 |---|---|
 | `demo.gif` | The `panels` layout, selection following into the inspector, tree view, then `L` to the `htop` layout |
+| `demo-social.gif` | The ~8 s social cut for launch posts (Hacker News, Reddit, V2EX): inspector following the selection, `L` out and back, ending on `panels` |
 | `screenshot-panels.png` | The default `panels` layout, with a process selected |
 | `screenshot-htop.png` | The same machine under `L`, the classic full-width layout |
 | `screenshot-tree.png` | `t`, process tree with the inspector pinned |
 | `demo-config.toml` | The config the recording runs with |
 | `demo.tape` | The [vhs](https://github.com/charmbracelet/vhs) script that produces all of the above |
+| `demo-social.tape` | The vhs script behind `demo-social.gif`; same config and filter as `demo.tape` |
 
 ## Regenerating them
 
