@@ -46,6 +46,9 @@ for url in "${sitemap_urls[@]}"; do
     https://pandasir.github.io/gander/*) name=${url##*/gander/} ;;
     *) fail "sitemap entry $url is not on the gander Pages origin"; continue ;;
   esac
+  # A directory URL is served by the index page inside it; without this the
+  # trailing slash points the -f test at the directory and misses the page.
+  case "$name" in */) name="$name"index.html ;; esac
   [ -f "$site/$name" ] || fail "sitemap lists $url but $site/$name does not exist"
 done
 ok "every sitemap URL has a page"
@@ -109,7 +112,13 @@ for url in "${sitemap_urls[@]}"; do
     https://pandasir.github.io/gander/ | https://pandasir.github.io/gander) name=index.html ;;
     *) name=${url##*/gander/} ;;
   esac
-  grep -qx "Allow: /$name" "$site/robots.txt" ||
+  pattern="Allow: /$name"
+  case "$name" in
+    # robots.txt covers the translated directories with one prefix rule
+    # rather than a line per page; accept either that or an exact page rule.
+    */*) pattern="Allow: /${name%%/*}/|Allow: /$name" ;;
+  esac
+  grep -qxE "$pattern" "$site/robots.txt" ||
     fail "robots.txt does not allow /$name, which the sitemap advertises"
 done
 # The stylesheet is fetched by a crawler rendering the page; disallowing it makes

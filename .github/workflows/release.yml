@@ -566,6 +566,13 @@ jobs:
           cp -f site-src/site/robots.txt repo-tree/robots.txt
           cp -f site-src/site/sitemap.xml repo-tree/sitemap.xml
           cp -f site-src/site/llms.txt repo-tree/llms.txt
+          # The translated sites live in subdirectories, which the top-level
+          # glob does not cover — their absence is exactly what the sitemap
+          # check below catches, but copying them here is what makes it pass.
+          for lang in zh-CN ja ko; do
+            mkdir -p "repo-tree/$lang"
+            cp -f "site-src/site/$lang/"*.html "repo-tree/$lang/"
+          done
           cp -f site-src/assets/*.png repo-tree/
           cp -f site-src/assets/demo.gif repo-tree/
           cp -f site-src/assets/demo.webm repo-tree/
@@ -590,6 +597,9 @@ jobs:
           for url in $(grep -oE '<loc>[^<]+' site-src/site/sitemap.xml | sed 's/<loc>//'); do
             name=${url##*/gander/}
             [ -n "$name" ] || name=index.html
+            # A directory URL is served by the index page inside it; test -s
+            # would pass on the directory itself, which proves nothing.
+            case "$name" in */) name="$name"index.html ;; esac
             test -s "repo-tree/$name" || { echo "::error::sitemap lists $url but $name is not published"; exit 1; }
           done
           grep -q "softwareVersion\": \"${GITHUB_REF_NAME#v}\"" repo-tree/index.html \
