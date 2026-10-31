@@ -118,7 +118,20 @@ pub struct App {
     pub selected: usize,
     /// First visible row (index into `table.view.order`).
     pub offset: usize,
+    /// How far the table is scrolled left, in cells.
+    ///
+    /// Only meaningful while the table is wider than the screen, which happens
+    /// when a command line does not fit: `column_widths` widens the last column
+    /// to the longest value on screen. Clamped into range by `draw_table` and
+    /// `scroll_columns`.
     pub h_offset: u16,
+    /// Total table width and visible width from the last drawn frame.
+    ///
+    /// Kept so `scroll_columns` can say whether there is anything further right
+    /// before it starts reporting a scroll, and so `Left` can restore the
+    /// columns the user scrolled past.
+    last_total_width: u16,
+    last_area_width: u16,
     /// Body height of the last rendered frame, so paging and scroll-following
     /// know how much room they have. Zero until the first draw.
     pub viewport: usize,
@@ -198,6 +211,8 @@ impl App {
             selected: 0,
             offset: 0,
             h_offset: 0,
+            last_total_width: 0,
+            last_area_width: 0,
             viewport: 0,
             users: gander_core::users::Users::new(),
             user_filter: None,
@@ -672,11 +687,11 @@ impl App {
                 Reaction::Continue
             }
             Key::Left => {
-                self.h_offset = self.h_offset.saturating_sub(4);
+                self.scroll_columns(false);
                 Reaction::Continue
             }
             Key::Right => {
-                self.h_offset = self.h_offset.saturating_add(4);
+                self.scroll_columns(true);
                 Reaction::Continue
             }
             Key::Char(' ') => {
@@ -1204,6 +1219,106 @@ impl App {
         };
         self.table.reorder(&self.visibility);
         self.clamp_selection();
+    }
+
+    /// The widest cell the last column has to hold, in cells.
+    ///
+    /// Measured over the rows that are actually on screen rather than the whole
+    /// table: a single leftover process with a 2 KiB command line would otherwise
+    /// make every frame scroll to a distant right edge for every other row. The
+    /// viewport is a snapshot of the last drawn frame, so this is stable between
+    /// draws while the list scrolls.
+    ///
+    /// The selected row is always included, because `Right` and `End` both exist
+    /// to reveal *its* text even when it sits outside the measured window.
+    fn longest_last_cell(&self, fields: &[Field], marks: &[crate::marks::Mark]) -> u16 {
+        let Some(&last) = fields.last() else {
+            return 0;
+        };
+        // Only the Command column has variable width; anything else measured here
+        // would just be re-adding a fixed width the caller already accounted for.
+        if last != Field::Comm {
+            return 0;
+        }
+
+        let visible = self.table.visible();
+        // The viewport is only known after a frame has been drawn. On the very
+        // first frame, measure a plausible window instead of a single row, so the
+        // column does not visibly widen on the second draw.
+        let height = if self.viewport == 0 {
+            visible.clamp(1, 50)
+        } else {
+            self.viewport
+        };
+        let first = self
+            .offset
+            .min(visible.saturating_sub(height.min(visible)));
+        let last_pos = (first + height).min(visible);
+
+        let mut widest = 0u16;
+        for pos in first..last_pos {
+            let Some(&data_idx) = self.table.view.order.get(pos) else {
+                break;
+            };
+            let prefix = marks
+                .iter()
+                .find(|m| m.data_index == data_idx)
+                .map(|m| m.prefix.as_str())
+                .unwrap_or("");
+            widest = widest.max(cell_width(&self.table.rows[data_idx], last, prefix));
+        }
+
+        // Always measure the selected row too, even when it is outside the window
+        // the last frame drew: `Right` exists to reveal *its* text.
+        if self.selected_row().is_some() {
+            let data_idx = self
+                .table
+                .view
+                .order
+                .get(self.selected)
+                .copied()
+                .unwrap_or(self.selected);
+            if data_idx < self.table.rows.len() {
+                let prefix = marks
+                    .iter()
+                    .find(|m| m.data_index == data_idx)
+                    .map(|m| m.prefix.as_str())
+                    .unwrap_or("");
+                widest = widest.max(cell_width(&self.table.rows[data_idx], last, prefix));
+            }
+        }
+        widest
+    }
+
+    /// Scroll the table sideways, one step at a time.
+    ///
+    /// The step is a quarter of the visible width rather than a fixed four cells:
+    /// four cells per keypress means a command line that overflows by 200 cells
+    /// needs fifty presses, so the text was reachable in theory and not in
+    /// practice. A quarter-screen step moves a whole field or two per press and
+    /// still lands on exact positions, since the offset is a plain cell count.
+    ///
+    /// Reports in the status line whether the end was reached, because the
+    /// failure mode this replaces was "the key does nothing and says nothing".
+    fn scroll_columns(&mut self, forward: bool) {
+        // Until the first draw there is no measured width to scroll within.
+        let max = self.last_total_width.saturating_sub(self.last_area_width);
+        if max == 0 {
+            self.h_offset = 0;
+            self.status = Some("nothing to scroll: the command fits".into());
+            return;
+        }
+
+        let step = (self.last_area_width / 4).clamp(1, 32);
+        if forward {
+            let before = self.h_offset;
+            self.h_offset = self.h_offset.saturating_add(step).min(max);
+            if self.h_offset == before {
+                self.status = Some("end of the command".into());
+            }
+        } else {
+            self.h_offset = self.h_offset.saturating_sub(step);
+        }
     }
 
     /// Keep the selected row inside the viewport.
@@ -2029,27 +2144,54 @@ impl App {
 
     fn draw_table(&mut self, area: Rect, buf: &mut Buffer) {
         let fields = self.columns();
-        // Taken out of `self` so the row loop can borrow `self.table` immutably
-        // while resolving names.
-        let mut users = std::mem::take(&mut self.users);
         let theme = self.theme.clone();
 
+        // Both are unaffected by the early return below, and `users` is taken out
+        // of `self` further down: doing it before this check would leave the
+        // uid -> name cache emptied for the rest of the run.
         if fields.is_empty() || area.height == 0 {
             return;
         }
 
-        // Column widths: fixed widths for known fields, the last column takes
-        // the remainder (htop makes Command the expanding column).
-        let widths = column_widths(&fields, area.width);
+        // Tree prefixes first, because the Command cell carries them and so the
+        // column has to be measured with the prefix included.
+        let marks = if self.table.tree_mode {
+            compose_tree(&self.table.rows, &self.table.view.order)
+        } else {
+            Vec::new()
+        };
+
+        // Taken out of `self` so the row loop can borrow `self.table` immutably
+        // while resolving names. Done after the early return: taking it first
+        // would leave the uid -> name cache empty for the rest of the run.
+        let mut users = std::mem::take(&mut self.users);
+
+        // Column widths: fixed widths for known fields, the last column takes the
+        // remainder (htop makes Command the expanding column) *and* is widened
+        // when a command on screen does not fit. Both halves matter; see
+        // `column_widths`.
+        let widths = column_widths(&fields, area.width, self.longest_last_cell(&fields, &marks));
         let total_width: u16 = widths.iter().sum();
         // Horizontal scroll, clamped so the last column stays flush with the
-        // right edge instead of scrolling into empty space.
-        let h_offset = self.h_offset.min(total_width.saturating_sub(area.width));
+        // right edge instead of scrolling into empty space. Clamped *into* `self`
+        // as well, so holding `Right` at the end cannot push the offset past the
+        // end and force the user to walk back from somewhere off-screen.
+        self.h_offset = self.h_offset.min(total_width.saturating_sub(area.width));
+        let h_offset = self.h_offset;
+        // Remember what was drawn, so `scroll_columns` knows how far it may go
+        // before the next frame replaces these numbers.
+        self.last_total_width = total_width;
+        self.last_area_width = area.width;
         let view_left = area.x as i32 - h_offset as i32;
         let clip_left = area.x as i32;
         let clip_right = area.right() as i32;
 
         // Header row, clipped to the visible horizontal window.
+        //
+        // Scrolled all the way right, the header is entirely the tail of the
+        // Command column, which carries no title — the row came out blank and
+        // read as "the header is gone". Marking the edges says which way is left,
+        // which is the only thing a scrolled table needs to communicate.
         let mut x = view_left;
         for (i, field) in fields.iter().enumerate() {
             let w = widths[i] as i32;
@@ -2078,16 +2220,17 @@ impl App {
             }
             x += w;
         }
+        draw_scroll_edges(
+            buf,
+            area,
+            h_offset > 0,
+            h_offset + area.width < total_width,
+            &theme,
+        );
 
         let body_height = area.height.saturating_sub(1) as usize;
         // Remember it so paging and scroll-following know the window size.
         self.viewport = body_height;
-
-        let marks = if self.table.tree_mode {
-            compose_tree(&self.table.rows, &self.table.view.order)
-        } else {
-            Vec::new()
-        };
 
         // Scale the in-table value bars against the largest value *in the whole
         // table*, not against 100%. On a quiet machine the top process might sit
@@ -2551,24 +2694,62 @@ pub enum Key {
 // Field rendering
 // ---------------------------------------------------------------------------
 
-/// Fixed column widths, with the last field expanding.
 /// Column widths in cells.
 ///
-/// Most fields have a fixed width; the last field (normally Command) absorbs the
-/// slack so the table fills the terminal. The absorbed width is capped so the
-/// table can still be wider than the screen — otherwise `total_width` always
-/// equals `area.width` and horizontal scrolling has nothing to scroll to.
-fn column_widths(fields: &[Field], total: u16) -> Vec<u16> {
-    // Longest stretch a single column may claim when the terminal is wide.
+/// Two things happen here, and the second one is why horizontal scrolling works
+/// at all.
+///
+/// 1. Every field has a fixed width except the last (normally Command), which
+///    absorbs the slack so the table fills the terminal.
+///
+/// 2. The last column is then widened to fit `widest_last_cell`, the longest
+///    value actually present in it. Without this step the table could never be
+///    wider than the screen: the absorbed width is bounded by
+///    `total - fixed`, so `total_width` was always `<= area.width`, the
+///    `total_width - area.width` clamp below always produced 0, and `Left`/`Right`
+///    changed `h_offset` while the renderer threw it away. A long command line
+///    was silently cut at the screen edge with no way to reach the rest of it.
+///
+/// `MAX_EXPAND` therefore only bounds how much *empty* slack a very wide terminal
+/// hands to the last column. The measured content is not capped by it, because
+/// capping it is precisely what hid the text.
+fn column_widths(fields: &[Field], total: u16, widest_last_cell: u16) -> Vec<u16> {
+    // Longest stretch the last column takes purely because the terminal is wide,
+    // before any measured content is considered.
     const MAX_EXPAND: u16 = 120;
 
     let mut widths: Vec<u16> = fields.iter().map(|f| default_width(*f)).collect();
     let fixed: u16 = widths.iter().sum();
     if let Some(last) = widths.last_mut() {
         let slack = total.saturating_sub(fixed).min(MAX_EXPAND);
-        *last = last.saturating_add(slack).max(6);
+        *last = last
+            .saturating_add(slack)
+            .max(6)
+            // The measured width wins when it is larger: that is the whole point.
+            .max(widest_last_cell);
     }
     widths
+}
+
+/// How wide a cell of `field` is when rendered, ignoring the rest of the row.
+///
+/// Only the last column can scroll, so this is asked of the Command column; the
+/// helper is written against a field rather than hardcoding `Field::Comm` so a
+/// configuration that ends with, say, `CGROUP` still measures something sane.
+fn cell_width(row: &Row, field: Field, prefix: &str) -> u16 {
+    // A command line is a few hundred cells at most in practice. The cap keeps
+    // the sum of all column widths from overflowing `u16`, and stops one absurd
+    // `/proc/<pid>/cmdline` from letting `Right` scroll into empty space.
+    const MAX_LAST_CELL: u16 = 1000;
+
+    // Control characters are painted as one cell each (`put_str` sanitises them),
+    // so counting chars is the right measure rather than counting bytes.
+    let text = match field {
+        Field::Comm => row.display_command(),
+        _ => return 0,
+    };
+    let n = prefix.chars().count() + text.chars().count();
+    u16::try_from(n).unwrap_or(MAX_LAST_CELL).min(MAX_LAST_CELL)
 }
 
 fn default_width(field: Field) -> u16 {
@@ -3070,6 +3251,37 @@ fn sched_policy_name(policy: u8) -> &'static str {
     }
 }
 
+/// Mark the table's header row when it is scrolled off either edge.
+///
+/// Without this, scrolling right far enough leaves a blank header row, which
+/// looks like a rendering fault rather than "there is more table to the left".
+/// The markers overwrite one header cell each, which is why they are only drawn
+/// while that edge is actually off screen.
+fn draw_scroll_edges(
+    buf: &mut Buffer,
+    area: Rect,
+    more_left: bool,
+    more_right: bool,
+    theme: &Theme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    if more_left {
+        crate::meters::put_str(buf, area.x, area.y, "‹", theme.column_header, 1);
+    }
+    if more_right {
+        crate::meters::put_str(
+            buf,
+            area.right().saturating_sub(1),
+            area.y,
+            "›",
+            theme.column_header,
+            1,
+        );
+    }
+}
+
 fn fit(text: &str, width: usize) -> String {
     let mut out: String = text.chars().take(width).collect();
     while out.chars().count() < width {
@@ -3402,7 +3614,7 @@ fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "  Space    tag process     c        tag children",
         "  U        untag all       u        user filter",
         "  Up Down  move            PgUp PgDn  page",
-        "  Home End g G  first/last row      Left Right  scroll columns",
+        "  Home End g G  first/last row      Left Right  scroll sideways",
         "  Tab      next tab        Shift-Tab  previous tab",
         "  L        layout          I        meter mode",
         "  K        toggle kernel threads   H   toggle thread rows",
@@ -3581,6 +3793,47 @@ mod tests {
     fn app_with(rows: Vec<Row>) -> App {
         let mut app = App::new(Config::default());
         app.apply_sample(SystemSnapshot::default(), rows);
+        app
+    }
+
+    /// Draw `app` into a `width x height` test terminal and return the cells.
+    ///
+    /// Assertions about scrolling have to read the buffer: the bug they guard
+    /// against was a state change that the renderer discarded, which no assertion
+    /// on `App`'s fields can catch.
+    fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        term.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    /// One process whose command line is far wider than a test terminal.
+    ///
+    /// Forced into the `htop` layout: the `panels` inspector wraps the command
+    /// line into its own panel, so the tail would be on screen for reasons that
+    /// have nothing to do with horizontal scrolling.
+    fn app_with_long_commands() -> App {
+        let mut r = Row::default_for_test(4242);
+        r.comm.try_push_str("GoogleUpdater").unwrap();
+        r.cmdline = Some(
+            "/Applications/GoogleUpdater.app/Contents/MacOS/GoogleUpdater --crash-handler \
+             --pid=1 --service=update END-OF-COMMAND"
+                .into(),
+        );
+        let config = Config {
+            layout: "htop".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(config);
+        app.apply_sample(SystemSnapshot::default(), vec![r]);
         app
     }
 
@@ -3954,19 +4207,131 @@ mod tests {
 
     #[test]
     fn horizontal_scroll_is_applied() {
-        // The renderer used to compute `h_offset` and then ignore it.
-        let mut app = app_with_n_rows(3);
-        app.viewport = 5;
+        // This test used to assert only that `h_offset` changed, which was true
+        // while the renderer clamped it straight back to 0: the field moved and
+        // the screen did not. It now draws and compares the actual cells, so it
+        // fails if the offset is computed and then ignored again.
+        let mut app = app_with_long_commands();
+        let width = 100;
+        let before = render_to_string(&mut app, width, 12);
         assert_eq!(app.h_offset, 0);
 
         app.handle_key(Key::Right);
-        assert_eq!(app.h_offset, 4);
-        app.handle_key(Key::Left);
-        assert_eq!(app.h_offset, 0);
+        let after = render_to_string(&mut app, width, 12);
+        assert!(app.h_offset > 0, "the offset must survive the clamp");
+        assert_ne!(before, after, "the table must actually move");
 
-        // Must not underflow past the beginning.
-        app.handle_key(Key::Left);
+        // Back to the left edge, and never past it.
+        for _ in 0..40 {
+            app.handle_key(Key::Left);
+        }
         assert_eq!(app.h_offset, 0);
+        assert_eq!(
+            render_to_string(&mut app, width, 12),
+            before,
+            "scrolling back must restore the original frame"
+        );
+    }
+
+    /// The tail of a long command line must be reachable, which was the point.
+    #[test]
+    fn scrolling_right_reveals_the_end_of_the_command() {
+        let mut app = app_with_long_commands();
+        let width = 100;
+        // The tail starts past the right edge of a 100-cell terminal.
+        let before = render_to_string(&mut app, width, 12);
+        assert!(!before.contains("END-OF-COMMAND"), "{before}");
+
+        for _ in 0..40 {
+            app.handle_key(Key::Right);
+        }
+        let after = render_to_string(&mut app, width, 12);
+        assert!(
+            after.contains("END-OF-COMMAND"),
+            "scrolling to the end must show the end of the command:\n{after}"
+        );
+        // And it must stop there rather than scrolling into blank space.
+        app.handle_key(Key::Right);
+        assert_eq!(render_to_string(&mut app, width, 12), after);
+    }
+
+    /// A short command must not make the table scrollable.
+    #[test]
+    fn a_command_that_fits_is_not_scrollable() {
+        let mut app = app_with(vec![row(1, "sshd")]);
+        let width = 120;
+        let _ = render_to_string(&mut app, width, 8);
+        app.handle_key(Key::Right);
+        assert_eq!(app.h_offset, 0);
+    }
+
+    /// The issue that started this: a command wider than the terminal was cut at
+    /// the edge with nothing to indicate more text existed.
+    #[test]
+    fn a_long_command_makes_the_table_wider_than_the_screen() {
+        let mut app = app_with_long_commands();
+        let _ = render_to_string(&mut app, 100, 12);
+        assert!(
+            app.last_total_width > app.last_area_width,
+            "table {} must exceed the screen {}",
+            app.last_total_width,
+            app.last_area_width
+        );
+    }
+
+    /// Tree mode indents the command, so the measured width must include the
+    /// prefix. Otherwise the deepest row's last few cells stay unreachable.
+    #[test]
+    fn the_tree_prefix_is_counted_in_the_command_width() {
+        let mut mit = Row::default_for_test(1000);
+        mit.comm.try_push_str("mit").unwrap();
+        let mut child = Row::default_for_test(1001);
+        child.ppid = 1000;
+        child.comm.try_push_str("child").unwrap();
+        // Long enough that the fixed columns plus this text overflow 90 cells
+        // once the two-cell tree prefix is added, and short enough that they do
+        // not overflow without it.
+        child.cmdline = Some("/usr/bin/child --argument-one --argument-two".into());
+
+        let config = Config {
+            layout: "htop".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(config);
+        app.apply_sample(SystemSnapshot::default(), vec![mit, child]);
+
+        let width = 56;
+        let fixed = 7 + 10 + 4 + 4 + 6 + 6 + 9; // PID USER PRI NI CPU% MEM% TIME+
+        let text = "/usr/bin/child --argument-one --argument-two".chars().count() as u16;
+        assert!(
+            fixed + text > width,
+            "the command must overflow on its own for this to test the prefix"
+        );
+        // Without the prefix the column would be this wide.
+        assert_eq!(fixed + text, 90);
+
+        let _ = render_to_string(&mut app, width, 12);
+        let flat_width = app.last_total_width;
+
+        app.handle_key(Key::Char('t'));
+        assert!(app.table.tree_mode, "tree view must be on");
+        let _ = render_to_string(&mut app, width, 12);
+        assert!(
+            app.last_total_width > flat_width,
+            "the tree prefix must widen the command column: {} vs {}",
+            app.last_total_width,
+            flat_width
+        );
+
+        // Scroll to the end and the tail must still be readable, prefix and all.
+        for _ in 0..40 {
+            app.handle_key(Key::Right);
+        }
+        let drawn = render_to_string(&mut app, width, 12);
+        assert!(
+            drawn.contains("two"),
+            "the indented tail must be reachable:\n{drawn}"
+        );
     }
 
     #[test]

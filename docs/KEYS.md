@@ -31,7 +31,7 @@ platforms.
 | `Up` / `Down` | Move the selection |
 | `PgUp` / `PgDn` | Page scroll |
 | `Home` / `End`, `g` / `G` | Jump to first / last row |
-| `Left` / `Right` | Scroll the table horizontally |
+| `Left` / `Right` | Scroll the table horizontally, for a command line wider than the screen |
 | `Tab` / `Shift-Tab` | Switch screen tab |
 | `Space` | Tag / untag the selected process |
 | `c` | Tag the selected process and its children |
