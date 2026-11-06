@@ -23,10 +23,17 @@ brew install vhs ffmpeg pngquant
 vhs assets/demo.tape
 ```
 
+The tape copies `assets/demo-config.toml` into a temporary directory and isolates
+search/filter history there, so recording cannot save over the example or personal
+settings. CPU, Memory, and All tabs mirror the starter collection; Memory is
+selected to keep the recording stable. The filter is entered interactively and
+uses specific application paths rather than broad `node` or workspace matches,
+which avoids capturing development-session commands.
+
 `demo.tape` writes `demo-raw.gif` and the three PNGs into the working directory.
-It runs the release binary with `assets/demo-config.toml`, which sorts by memory
-and filters to a handful of long-lived programs — CPU order reorders the table on
-every sample, and a recording of that looks like the program is glitching.
+Copy the PNGs to `assets/` after inspecting them. The 300 ms waits after Screenshot
+are intentional: VHS captures the next frame, and changing views immediately can
+otherwise give the screenshot the following view's contents.
 
 The raw GIF is a 1600×760 capture of a 13 px terminal font and comes out around
 3.5 MB. It is resampled to 1200 px wide and a 48-colour palette, which is what

@@ -80,7 +80,7 @@ impl SetupPage {
 }
 
 /// Rows on the Display page: six toggles plus the per-core grid cap.
-const DISPLAY_ROWS: usize = 7;
+const DISPLAY_ROWS: usize = 9;
 
 /// The ladder the Display page's per-core grid row cycles through.
 ///
@@ -225,9 +225,12 @@ impl Setup {
                     5 => {
                         self.draft.highlight_deleted_exe = !self.draft.highlight_deleted_exe;
                     }
-                    _ => {
+                    6 => {
                         self.draft.system_cores_max = next_cores_max(self.draft.system_cores_max);
                     }
+                    7 => self.draft.show_system_panel = !self.draft.show_system_panel,
+                    8 => self.draft.show_inspector = !self.draft.show_inspector,
+                    _ => {}
                 }
                 Applied {
                     columns: false,
@@ -746,7 +749,30 @@ impl Setup {
             Line::styled(text, theme.row_kernel_thread)
         });
 
-        Widget::render(Paragraph::new(lines).style(theme.row_normal), area, buf);
+        for (label, on) in [
+            ("System sidebar", self.draft.show_system_panel),
+            ("Process inspector", self.draft.show_inspector),
+        ] {
+            let index = lines.len();
+            let text = format!("{} {label}", if on { "[x]" } else { "[ ]" });
+            lines.push(Line::styled(
+                text,
+                if self.cursor == index {
+                    theme.panel_selected
+                } else {
+                    theme.row_normal
+                },
+            ));
+        }
+        let offset = self
+            .cursor
+            .saturating_sub(area.height.saturating_sub(1) as usize);
+        Widget::render(
+            Paragraph::new(lines.into_iter().skip(offset).collect::<Vec<_>>())
+                .style(theme.row_normal),
+            area,
+            buf,
+        );
     }
 
     fn draw_colors(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -868,14 +894,14 @@ mod tests {
     #[test]
     fn new_tab_is_a_copy_of_the_current_one() {
         let mut s = Setup::new(&Config::default());
+        let previous = s.draft.tabs.len();
         s.page = SetupPage::Tabs;
         s.cursor = s.draft.tabs.len(); // the "New tab" row
         s.activate();
 
-        assert_eq!(s.draft.tabs.len(), 2);
-        assert_eq!(s.draft.active_tab, 1, "the new tab becomes active");
-        // A copy is more useful than an empty tab: same columns, different sort.
-        assert_eq!(s.draft.tabs[0].columns.len(), s.draft.tabs[1].columns.len());
+        assert_eq!(s.draft.tabs.len(), previous + 1);
+        assert_eq!(s.draft.active_tab, previous, "the new tab becomes active");
+        assert_eq!(s.draft.tabs[0].columns, s.draft.tabs[previous].columns);
     }
 
     #[test]
@@ -892,6 +918,7 @@ mod tests {
     #[test]
     fn the_last_tab_cannot_be_removed() {
         let mut s = Setup::new(&Config::default());
+        s.draft.tabs.truncate(1);
         s.page = SetupPage::Tabs;
         s.cursor = 0;
         assert_eq!(s.remove_tab(), Err("the last tab cannot be deleted"));
@@ -901,6 +928,7 @@ mod tests {
     #[test]
     fn the_new_tab_row_is_not_a_tab() {
         let mut s = Setup::new(&Config::default());
+        s.draft.tabs.truncate(1);
         s.page = SetupPage::Tabs;
         s.cursor = s.draft.tabs.len(); // "New tab"
         assert!(s.remove_tab().is_err());
@@ -912,6 +940,7 @@ mod tests {
         // The Columns page lists the *active* tab's fields. Switching tabs on the
         // Tabs page without reloading left it editing the previous tab's layout.
         let mut config = Config::default();
+        config.tabs.truncate(1);
         config.tabs.push(gander_config::TabConfig {
             name: "Second".into(),
             columns: vec!["PID".into(), "COMM".into()],
@@ -922,7 +951,11 @@ mod tests {
         });
 
         let mut s = Setup::new(&config);
-        assert_eq!(s.enabled_fields().len(), 8, "tab 0's columns");
+        assert_eq!(
+            s.enabled_fields().len(),
+            config.tabs[0].fields().len(),
+            "tab 0's columns"
+        );
 
         s.page = SetupPage::Tabs;
         s.cursor = 1;
@@ -935,6 +968,7 @@ mod tests {
     #[test]
     fn removing_a_tab_keeps_the_index_valid() {
         let mut s = Setup::new(&Config::default());
+        s.draft.tabs.truncate(1);
         s.page = SetupPage::Tabs;
 
         // `add_tab` moves the cursor onto the new tab, so ask for the next one
@@ -1212,7 +1246,7 @@ mod cores_max_tests {
     fn the_grid_cap_cycles_through_the_ladder_and_wraps() {
         let mut s = Setup::new(&Config::default());
         s.page = SetupPage::Display;
-        s.cursor = DISPLAY_ROWS - 1;
+        s.cursor = 6;
 
         // The default is "all cores"; the first press makes it 16.
         assert_eq!(s.draft.system_cores_max, 0);
@@ -1238,7 +1272,7 @@ mod cores_max_tests {
         };
         let mut s = Setup::new(&config);
         s.page = SetupPage::Display;
-        s.cursor = DISPLAY_ROWS - 1;
+        s.cursor = 6;
         s.activate();
         assert_eq!(s.draft.system_cores_max, 0);
     }

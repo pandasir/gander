@@ -72,7 +72,7 @@
   <h1>스크립트를 위한 JSON 프로세스 목록</h1>
   <p class="lede">TUI가 보여 주는 수치를 샘플당 JSON 문서 하나로. cron 잡, 모니터, 그렇게 하지 않으면 고정폭 ps 출력을 파싱하게 될 모든 것을 위하여.</p>
   <div class="verdict">
-    <p>한 번 뽑아 쓰는 열 출력은 <code>ps</code>가 여전히 맞는 도구입니다. 메모리 백분율, 잘리지 않는 명령줄, 바이트 단위 크기를 데이터로 받고 싶다면 Linux, macOS, FreeBSD 모두에서 <code>gander --json</code>을 쓰세요. 실시간 CPU 백분율이 필요하면 같은 호출 안에서 최소 두 샘플을 받으세요. 첫 샘플에는 CPU 기준선이 없습니다.</p>
+    <p>한 번 뽑아 쓰는 열 출력은 <code>ps</code>가 여전히 맞는 도구입니다. 메모리 백분율, 잘리지 않는 명령줄, 바이트 단위 크기를 데이터로 받고 싶다면 Linux, macOS, FreeBSD 모두에서 <code>gander --json</code>을 쓰세요. CPU 사용률을 출력하기 전에 숨겨진 기준 샘플과 설정 간격만큼의 대기를 수행합니다.</p>
   </div>
   <div class="cta">
     <a class="btn primary" href="index.html#install">설치</a>
@@ -99,8 +99,9 @@ gander --json --sort PERCENT_MEM    <span class="c"># TUI의 F6와 같은 정렬
 gander --json -F "postgres|nginx"    <span class="c"># 고정 문자열 필터, 정규 표현식 아님</span>
 gander -n 60 -d 1000 --json         <span class="c"># 샘플 60개, 약 1초 간격</span></code></pre>
   <p>한 번의 호출은 프로세스 행의 JSON 배열 하나를 출력하고 종료합니다. <code>-n N</code>을 주면 배열 N개를 차례로 출력합니다. 문서의 스트림이므로 <code>jq -s 'add'</code>가 한 번의 실행을 목록 하나로 합칩니다. 정렬과 필터링은 JSON이 만들어지기 전에 일어나므로, <code>--limit 5</code>는 다섯 행을 출력하고 멈춥니다. 전체 표를 만든 뒤 잘라내는 방식이 아닙니다.</p>
-  <p><code>cpu_percent</code>에는 프로세스의 연속된 두 샘플이 필요합니다. 호출은 항상 새 샘플러로 시작하므로 첫 샘플은 모든 행의 CPU를 0으로 보고하고, 새로 관측된 프로세스도 이후 샘플에서 0부터 시작합니다. 메모리 수치에는 이 기준선이 필요 없습니다. 스크립트나 cron 잡을 위해 CPU 샘플을 얻으려면 1초 간격으로 두 샘플을 받고 두 번째 배열만 남기세요:</p>
-<pre><code>gander -n 2 -d 1000 --json | jq -s '.[1]'</code></pre>
+  <p><code>cpu_percent</code>는 연속된 두 관측으로 계산합니다. gander는 내부 기준 샘플을 얻고 설정 간격（100-10000 ms）을 기다린 뒤 출력합니다. <code>-n</code>은 출력 수만 셉니다. 나중에 관측한 프로세스의 CPU는 유효한 구간이 생길 때까지 <code>null</code>입니다:</p>
+<pre><code>gander -d 1000 --json</code></pre>
+  <p>CPU, 메모리 비율, RSS, 가상 크기, 우선순위, 스레드 수는 <code>null</code>일 수 있습니다. 새 <code>availability</code>는 필드별로 <code>available</code>, <code>warming_up</code>, <code>permission_denied</code>, <code>unsupported</code>, <code>read_error</code>를 제공합니다. 실제 0은 숫자로 유지하며 기존 배열과 필드 이름은 바뀌지 않습니다.</p>
   <p>jq로 메모리를 가장 많이 쓰는 다섯 프로세스를 탭으로 구분해 출력:</p>
 <pre><code>gander --json --sort PERCENT_MEM --limit 5 |
   jq -r '.[] | [.pid, .mem_percent, .rss, .cmdline] | @tsv'</code></pre>
@@ -114,23 +115,23 @@ gander -n 60 -d 1000 --json         <span class="c"># 샘플 60개, 약 1초 간
 <section>
 <div class="wrap">
   <h2>필드</h2>
-  <p>macOS에서 나온 실제 행:</p>
+  <p>읽을 수 있는 지표의 출력 예:</p>
 <pre><code>{"pid":407,"ppid":1,"uid":0,"comm":"loginwindow","state":"S",
   "cpu_percent":0.00,"mem_percent":0.18,"rss":15613952,
-  "vsize":446144643072,"nice":0,"priority":0,"threads":6,
+  "vsize":446144643072,"nice":0,"priority":31,"threads":6,
   "elapsed":479475,"is_thread":false,"identity":407,
   "cmdline":"/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console",
-  "memory":null}</code></pre>
+  "memory":null,"availability":{"cpu_percent":"available","mem_percent":"available","rss":"available","vsize":"available","priority":"available","threads":"available"}}</code></pre>
   <table>
     <thead>
       <tr><th>필드</th><th>의미</th></tr>
     </thead>
     <tbody>
       <tr><td><code>pid</code>, <code>ppid</code>, <code>uid</code></td><td>커널이 보고하는 그대로의 id.</td></tr>
-      <tr><td><code>comm</code></td><td>실행 파일의 기본 이름. TUI가 기본으로 정렬하는 열입니다.</td></tr>
+      <tr><td><code>comm</code></td><td>실행 파일의 기본 이름. 새 설정은 CPU 정렬로 시작합니다.</td></tr>
       <tr><td><code>cmdline</code></td><td>인자를 포함한 전체 명령줄. 결코 잘리지 않습니다. ps에서는 이 필드 하나를 얻자고 싸워야 합니다.</td></tr>
       <tr><td><code>state</code></td><td>커널의 상태 문자. <code>R</code> 실행 중, <code>S</code> 대기 중, <code>Z</code> 좀비 등.</td></tr>
-      <tr><td><code>cpu_percent</code></td><td>프로세스의 연속된 샘플 사이 구간의 CPU 사용량이지 수명 평균이 아닙니다. 이전 샘플이 있을 때까지는 0이며, 호출의 첫 샘플에 속한 모든 행도 0입니다.</td></tr>
+      <tr><td><code>cpu_percent</code></td><td>유효한 구간의 CPU 사용률이며 수명 평균이 아닙니다. 동일 프로세스 기준이 없으면 null이고 첫 출력 전에 내부 기준 샘플을 얻습니다.</td></tr>
       <tr><td><code>mem_percent</code></td><td>샘플 시점의 총 물리 메모리에 대한 상주 메모리 비율. 첫 샘플에서도 구할 수 있습니다.</td></tr>
       <tr><td><code>rss</code>, <code>vsize</code></td><td>상주 및 가상 크기, 바이트 단위. “아마 KB겠지”가 아닙니다. 파싱한 ps 출력을 못 믿게 만드는 단위 모호성이 바로 이것입니다.</td></tr>
       <tr><td><code>nice</code>, <code>priority</code>, <code>threads</code></td><td>커널이 보고하는 그대로의 스케줄링 수치.</td></tr>
@@ -147,7 +148,7 @@ gander -n 60 -d 1000 --json         <span class="c"># 샘플 60개, 약 1초 간
 <section>
 <div class="wrap">
   <h2>아닌 것</h2>
-  <p>모니터링 에이전트가 아닙니다. 각 호출은 자족적입니다. 데몬도, 저장소도, 대시보드도, 의존성도 없습니다. cron 잡이 메모리 스냅샷을 위해 파일에 <code>gander --json</code>을 덧붙일 수는 있습니다. CPU 측정에는 위의 두 샘플 명령을 쓰세요. 파일은 계속 <code>jq</code>로 읽을 수 있습니다. 보존 기간과 알림이 있는 지속 수집이 필요하다면, gander가 서버를 갖추기를 기다리지 말고 이미 돌리고 있는 도구를 이 출력으로 향하게 하세요.</p>
+  <p>모니터링 에이전트가 아닙니다. 각 호출은 자족적입니다. 데몬도, 저장소도, 대시보드도, 의존성도 없습니다. cron 잡이 메모리 스냅샷을 위해 파일에 <code>gander --json</code>을 덧붙일 수는 있습니다. CPU 측정도 같은 명령이 내부에서 한 간격을 준비합니다. 파일은 계속 <code>jq</code>로 읽을 수 있습니다. 보존 기간과 알림이 있는 지속 수집이 필요하다면, gander가 서버를 갖추기를 기다리지 말고 이미 돌리고 있는 도구를 이 출력으로 향하게 하세요.</p>
   <p><code>ps</code>의 대체품도 아닙니다. 한 번 뽑는 열 출력, 프로세스 그룹 선택, 세션 id는 <code>ps</code>의 강점이고, <code>ps</code>로 이미 동작하는 스크립트는 바꿀 이유가 없습니다. 배치 모드는 <code>ps</code>가 닿지 않는 경우를 위한 것입니다. 실시간 백분율, 바이트 단위로 정확한 크기, 그리고 대화형 화면과 일치하는 수치.</p>
 </div>
 </section>

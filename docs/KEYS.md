@@ -4,25 +4,15 @@ Mostly identical to htop on purpose: a user trying gander should not have to
 relearn anything. Column/key semantics are taken from htop's `htop.1` and
 `Action.c`.
 
-## Where gander differs from htop
+## Compatibility and Defaults
 
-Two of htop's existing bindings were repurposed, so an htop user pressing them gets
-a different action than expected:
+`I` reverses sort order and tree `+/-` expand/collapse, matching htop's familiar
+operations. `m` cycles the selected header meter. `[/]` change sampling speed in
+either list mode; outside tree mode, `+/-` remain speed aliases.
 
-| Key | htop | gander |
-|---|---|---|
-| `I` | invert the sort order | cycle the selected header meter's display mode |
-| `+` / `-` | expand / collapse a subtree (tree view only) | faster / slower sampling |
-
-There is no invert-sort key any more; use `F6` / `<` `>` / `.` to reach the order
-you want. `+`/`-` only clash inside tree view, where htop binds them and gander
-does not expand or collapse at all.
-
-Keys that are genuinely new (not in htop): `L`, and the header meter cursor moved
-by `Shift+Left`/`Shift+Right`.
-
-`H` is **not** new — it is htop's "hide user threads" — and it works on both
-platforms.
+Fresh configurations open the CPU tab (CPU descending), with Memory and All
+(PID ascending) also available. Existing and imported tab collections are kept.
+Selection follows the same live process across sorting, tabs, and sampling.
 
 ## Navigation
 
@@ -45,8 +35,14 @@ platforms.
 | `F4` / `\` | Incremental filter, applied while typing |
 | `Up` / `Down` | In the prompt: recall an earlier search or filter |
 | `Esc` | Leave search/filter; while on the list, clears the filter |
-| `F6` / `<` `>` / `.` | Cycle the sort column (the list opens sorted by PID, ascending) |
+| `F6` | Open sort picker; Enter commits, Esc cancels |
+| `<` / `>` / `.` | Previous / next sort field |
+| `I` | Reverse the current sort direction |
+| Header click | Choose the field, or reverse it when already active |
+| `u` | Searchable user picker, including All users |
 | `F5` / `t` | Toggle tree view |
+| Tree `+` / `-` | Expand / collapse the selected subtree |
+| Tree `*` | Collapse all expanded nodes, otherwise expand all |
 
 Filter terms are **fixed strings** (no regex), case-insensitive, and any term
 matching is enough. Separate terms with `|`.
@@ -54,6 +50,9 @@ matching is enough. Separate terms with `|`.
 Search and filter history is kept apart and persists across runs
 (`$XDG_STATE_HOME/gander/`). A filter is applied as you type, so `Up` recalling one
 takes effect immediately; `Esc` clears the filter and closes the prompt.
+Applied text and owner filters remain visible after confirmation, with matching
+and eligible counts. Eligible rows respect thread/container visibility, but counts
+are independent of tree folding. A no-match result has an explicit empty state.
 
 ## Acting on processes
 
@@ -109,15 +108,16 @@ names `truss`.
 | `L` | Switch layout: `panels` ⇄ `htop` (see [LAYOUT.md](LAYOUT.md)) |
 | `Shift+Left` / `Shift+Right` | Move the header meter cursor (htop layout) |
 | `F2` → Header | Change the CPU grid's cores-per-line (`LeftCPUs`, `LeftCPUs2`, `LeftCPUs4`, `LeftCPUs8`, and the right/all variants) |
-| `I` | Cycle the selected meter's mode: text → bar → graph (persisted per meter). **htop's `I` inverts the sort order** — see the table above |
+| `m` | Cycle the selected meter's mode: text, bar, graph (persisted per meter) |
+| `B` / `V` | Toggle system sidebar / inspector in panels layout |
 | `K` | Toggle kernel threads |
 | `H` | Toggle one row per thread |
 | `O` | Hide containerised processes (Linux; says so elsewhere) |
-| `+` / `-` | Faster / slower sampling (100 ms … 10 s) |
+| `[` / `]` | Slower / faster sampling (100 ms to 10 s); list `-` / `+` are aliases |
 | `F2` | Setup screen: Header, Columns, Tabs, Display, Colors |
 | `F1` / `h` / `?` | Help |
 | `F10` / `q` | Quit; configuration is saved on clean exit only |
-| `Ctrl-C` | Quit immediately |
+| `Ctrl-C` | Quit from any screen without saving configuration (exit status 130) |
 
 ## Batch mode (no TUI)
 
@@ -128,4 +128,7 @@ gander -n 1 --sort PERCENT_MEM --limit 10
 ```
 
 `--json` implies `-n 1`. Field names accepted by `--sort` are the same ones used
-in the config file (`PERCENT_CPU`, `PERCENT_MEM`, `RES`, `TIME`, ...).
+in the config file (`PERCENT_CPU`, `PERCENT_MEM`, `M_RESIDENT`, `TIME`, ...).
+The first emitted snapshot follows one unreported warm-up interval; `-n` counts
+outputs only. Missing values are `-` in text and nullable in JSON, with reasons in
+`availability`. See [METRICS.md](METRICS.md).

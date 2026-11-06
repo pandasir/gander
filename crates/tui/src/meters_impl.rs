@@ -725,7 +725,12 @@ impl Meter for TasksMeter {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, _mode: MeterMode) {
         put_str(
-            buf, area.x, area.y, "Tasks: ", theme.meter_label, area.width.min(7),
+            buf,
+            area.x,
+            area.y,
+            "Tasks: ",
+            theme.meter_label,
+            area.width.min(7),
         );
         // Only the rendered width is known here, so pick the longest variant that
         // fits instead of letting `put_str` cut a word in half.
@@ -745,7 +750,10 @@ impl Meter for TasksMeter {
                     theme.row_kernel_thread,
                 ),
                 Span::styled("; ", theme.meter_label),
-                Span::styled(tasks.running.to_string(), theme.meter_value.fg(theme.cpu_normal)),
+                Span::styled(
+                    tasks.running.to_string(),
+                    theme.meter_value.fg(theme.cpu_normal),
+                ),
                 Span::styled(" running", theme.meter_label),
             ]);
             buf.set_line(area.x + 7, area.y, &line, room as u16);
@@ -1398,12 +1406,12 @@ impl Meter for BlankMeter {
 }
 
 /// `HH:MM:SS` in local time, computed without a chrono dependency.
-fn local_clock() -> String {
+pub(crate) fn local_clock() -> String {
     let (h, m, s) = local_hms();
     format!("{h:02}:{m:02}:{s:02}")
 }
 
-fn local_date() -> String {
+pub(crate) fn local_date() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -2213,8 +2221,14 @@ mod tests {
         let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
         assert_eq!(text.trim_end(), "Tasks: 540, 2386 thr, 0 kthr; 3 running");
         assert_eq!(buf[(7, 0)].fg, theme.meter_label.fg.unwrap());
-        assert_eq!(buf[(text.find("2386").unwrap() as u16, 0)].fg, theme.cpu_normal);
-        assert_eq!(buf[(text.find("3 running").unwrap() as u16, 0)].fg, theme.cpu_normal);
+        assert_eq!(
+            buf[(text.find("2386").unwrap() as u16, 0)].fg,
+            theme.cpu_normal
+        );
+        assert_eq!(
+            buf[(text.find("3 running").unwrap() as u16, 0)].fg,
+            theme.cpu_normal
+        );
     }
 
     #[test]

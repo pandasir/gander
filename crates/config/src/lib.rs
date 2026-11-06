@@ -35,6 +35,8 @@ pub struct Config {
     /// Screen layout: `panels` (system column, table, inspector) or `htop`
     /// (horizontal meters, full-width table). See `docs/LAYOUT.md`.
     pub layout: String,
+    pub show_system_panel: bool,
+    pub show_inspector: bool,
     pub highlight_base_name: bool,
     pub highlight_deleted_exe: bool,
     pub color_scheme: String,
@@ -101,26 +103,38 @@ impl Default for Config {
 
         Self {
             delay_ms: 1500,
-            tabs: vec![TabConfig {
-                name: "Main".into(),
-                columns: default_fields,
-                // Sort by PID, ascending.
-                //
-                // htop opens sorted by CPU% descending, which reorders the list on
-                // every sample: on a busy machine most rows change position every
-                // 1.5 s, so the row you were looking at moves out from under the
-                // cursor before you can act on it. PID order is stable — a process
-                // keeps its position for as long as it lives — which is what makes
-                // the list readable as a list.
-                //
-                // Ascending, so the low, long-lived, system-owned PIDs (1, 2, …)
-                // are at the top and new processes appear at the bottom, where they
-                // are easy to find. `F6` / `<` `>` still reach CPU% in one key.
-                sort: SortConfig {
-                    field: "PID".into(),
-                    desc: false,
+            tabs: vec![
+                TabConfig {
+                    name: "CPU".into(),
+                    columns: ["PID", "PERCENT_CPU", "PERCENT_MEM", "M_RESIDENT", "COMM"]
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    sort: SortConfig {
+                        field: "PERCENT_CPU".into(),
+                        desc: true,
+                    },
                 },
-            }],
+                TabConfig {
+                    name: "Memory".into(),
+                    columns: ["PID", "PERCENT_MEM", "M_RESIDENT", "M_VIRT", "COMM"]
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    sort: SortConfig {
+                        field: "PERCENT_MEM".into(),
+                        desc: true,
+                    },
+                },
+                TabConfig {
+                    name: "All".into(),
+                    columns: default_fields,
+                    sort: SortConfig {
+                        field: "PID".into(),
+                        desc: false,
+                    },
+                },
+            ],
             active_tab: 0,
             // htop's default header. `LeftCPUs`/`RightCPUs` split themselves
             // once the core count is known, so the default is stable across
@@ -144,6 +158,8 @@ impl Default for Config {
             // actually different from htop; the htop arrangement is available
             // for anyone who came here wanting htop.
             layout: "panels".into(),
+            show_system_panel: true,
+            show_inspector: true,
             highlight_base_name: false,
             highlight_deleted_exe: true,
             color_scheme: "gander".into(),
@@ -319,10 +335,18 @@ mod tests {
         let text = toml::to_string_pretty(&c).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.delay_ms, c.delay_ms);
-        assert_eq!(back.tabs.len(), 1);
-        // PID, ascending: a stable order, so rows do not move between samples.
-        assert_eq!(back.active_tab().sort().field, Field::Pid);
-        assert_eq!(back.active_tab().sort().dir, Dir::Asc);
+        assert_eq!(
+            back.tabs
+                .iter()
+                .map(|tab| tab.name.as_str())
+                .collect::<Vec<_>>(),
+            ["CPU", "Memory", "All"]
+        );
+        assert_eq!(back.active_tab().sort().field, Field::PercentCpu);
+        assert_eq!(back.active_tab().sort().dir, Dir::Desc);
+        assert!(back.tabs[1].fields().contains(&Field::ResMem));
+        assert_eq!(back.tabs[2].sort().field, Field::Pid);
+        assert_eq!(back.tabs[2].sort().dir, Dir::Asc);
     }
 
     /// An explicitly configured sort direction must survive startup.

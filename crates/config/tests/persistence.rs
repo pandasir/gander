@@ -33,6 +33,24 @@ impl Drop for TempDir {
 }
 
 #[test]
+fn old_tabs_and_new_sidebar_preferences_round_trip_without_injection() {
+    let dir = TempDir::new();
+    let path = dir.config();
+    std::fs::write(&path, "active_tab = 0\n[[tabs]]\nname = 'Custom'\ncolumns = ['PID', 'COMM']\n[tabs.sort]\nfield = 'PID'\ndesc = false\n").unwrap();
+    let mut config = load(&path).unwrap();
+    assert!(config.show_system_panel && config.show_inspector);
+    assert_eq!(config.tabs.len(), 1);
+    assert_eq!(config.tabs[0].name, "Custom");
+    config.show_system_panel = false;
+    config.show_inspector = false;
+    save(&config, &path).unwrap();
+    let reloaded = load(&path).unwrap();
+    assert!(!reloaded.show_inspector && !reloaded.show_system_panel);
+    assert_eq!(reloaded.tabs.len(), 1);
+    assert!(!reloaded.tabs[0].sort.desc);
+}
+
+#[test]
 fn invalid_configs_are_reported_and_left_untouched() {
     let dir = TempDir::new();
     let path = dir.config();

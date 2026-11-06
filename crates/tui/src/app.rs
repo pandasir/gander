@@ -21,6 +21,9 @@ use crate::meters::{Meter, MeterMode};
 use crate::meters_impl;
 use crate::theme::Theme;
 
+#[path = "navigation.rs"]
+mod navigation;
+
 /// Which screen has focus. htop's `Panel` stack becomes this enum.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -35,6 +38,14 @@ pub enum Screen {
         cursor: usize,
     },
     Setup,
+    SortPicker {
+        cursor: usize,
+    },
+    UserPicker {
+        cursor: usize,
+        query: String,
+        owners: Vec<(Option<u32>, String)>,
+    },
     /// `a`: the CPU affinity mask of one process.
     Affinity(crate::panels::AffinityPanel),
     /// `i`: the I/O priority of one process.
@@ -181,12 +192,18 @@ pub struct App {
     pub filter_history: gander_config::history::History,
     /// Where history is read from and written to.
     pub history_dir: std::path::PathBuf,
+    collapsed: std::collections::HashSet<(u64, u64)>,
+    header_regions: Vec<(Rect, Field)>,
+    command_source: Option<String>,
+    command_width: u16,
+    info_viewport: usize,
 }
 
 impl App {
     pub fn new(mut config: Config) -> Self {
         if config.tabs.is_empty() {
             config.tabs = Config::default().tabs;
+            config.active_tab = 0;
         }
         config.active_tab = config.active_tab.min(config.tabs.len() - 1);
         let theme = Theme::named(&config.color_scheme).unwrap_or_default();
@@ -240,6 +257,11 @@ impl App {
             search_history: gander_config::history::History::default(),
             filter_history: gander_config::history::History::default(),
             history_dir: gander_config::history::dir(),
+            collapsed: Default::default(),
+            header_regions: Vec::new(),
+            command_source: None,
+            command_width: 0,
+            info_viewport: 1,
         }
     }
 
@@ -314,16 +336,15 @@ impl App {
         for meter in &mut self.meters {
             meter.sample(&snapshot);
         }
-        self.table.rows = rows;
-        self.reorder();
-        if let Some(identity) = selected {
-            if let Some(index) = self.table.view.order.iter().position(|&i| {
-                let row = &self.table.rows[i];
-                (row.identity(), row.starttime) == identity
-            }) {
-                self.selected = index;
-            }
+        if !self.collapsed.is_empty() {
+            let live: std::collections::HashSet<_> = rows
+                .iter()
+                .map(|row| (row.identity(), row.starttime))
+                .collect();
+            self.collapsed.retain(|identity| live.contains(identity));
         }
+        self.table.rows = rows;
+        self.reorder_preserving(selected);
         // The panels layout draws its own CPU sparkline, so the history is kept
         // here rather than inside a meter it does not own.
         {
@@ -336,6 +357,14 @@ impl App {
         }
         self.snapshot = snapshot;
         self.clamp_selection();
+    }
+
+    pub fn refresh_timed_meters(&mut self) {
+        for meter in &mut self.meters {
+            if matches!(meter.name(), "Clock" | "Date") {
+                meter.sample(&self.snapshot);
+            }
+        }
     }
 
     pub fn columns(&self) -> Vec<Field> {
@@ -537,8 +566,6 @@ impl App {
         };
 
         self.load_sort_from_tab();
-        self.selected = 0;
-        self.offset = 0;
         let name = self.config.active_tab().name.clone();
         self.status = Some(format!("tab: {name}"));
     }
@@ -562,7 +589,12 @@ impl App {
     ///
     /// A `Reorder` reaction is applied here rather than left to the caller, so
     /// the state is always consistent with what the next frame will render.
+    pub fn invalidate_geometry(&mut self) {
+        self.header_regions.clear();
+    }
+
     pub fn handle_key(&mut self, key: Key) -> Reaction {
+        self.invalidate_geometry();
         // A status message describes the *last* action. It has to be cleared when
         // the next action does not set one of its own, or `K` after `O` would
         // leave "container detection is Linux-only" on screen as if it were the
@@ -593,6 +625,7 @@ impl App {
             Screen::Info { .. } => self.handle_info_key(key),
             Screen::SignalPicker { .. } => self.handle_signal_key(key),
             Screen::Setup => self.handle_setup_key(key),
+            Screen::SortPicker { .. } | Screen::UserPicker { .. } => self.handle_picker_key(key),
             Screen::Affinity(_) => self.handle_affinity_key(key),
             Screen::IoPriority(_) => self.handle_ioprio_key(key),
             Screen::ProcessList => self.handle_list_key(key),
@@ -636,8 +669,13 @@ impl App {
                 self.toggle_tree();
                 Reaction::Reorder
             }
-            Key::F(6) | Key::Char('>') | Key::Char('<') => {
+            Key::F(6) => self.open_sort_picker(),
+            Key::Char('>') | Key::Char('<') => {
                 self.cycle_sort(key == Key::Char('<'));
+                Reaction::Reorder
+            }
+            Key::Char('I') => {
+                self.choose_sort(self.table.sort.field, true);
                 Reaction::Reorder
             }
             Key::F(7) => {
@@ -706,10 +744,7 @@ impl App {
                 self.tags.clear();
                 Reaction::Continue
             }
-            Key::Char('u') => {
-                self.cycle_user_filter();
-                Reaction::Reorder
-            }
+            Key::Char('u') => self.open_user_picker(),
             Key::Char('K') => {
                 self.table.show_kernel_threads = !self.table.show_kernel_threads;
                 Reaction::Reorder
@@ -749,13 +784,24 @@ impl App {
                 });
                 Reaction::Reorder
             }
-            Key::Char('+') | Key::Char('=') => {
+            Key::Char('-') if self.table.tree_mode => self.fold_selected(false),
+            Key::Char('+') | Key::Char('=') if self.table.tree_mode => self.fold_selected(true),
+            Key::Char('*') if self.table.tree_mode => self.fold_all(),
+            Key::Char('+') | Key::Char('=') | Key::Char(']') => {
                 self.config.delay_ms = self.config.delay_ms.saturating_sub(100).max(100);
                 Reaction::Recalc
             }
-            Key::Char('-') => {
+            Key::Char('-') | Key::Char('[') => {
                 self.config.delay_ms = (self.config.delay_ms + 100).min(10_000);
                 Reaction::Recalc
+            }
+            Key::Char('B') => {
+                self.config.show_system_panel = !self.config.show_system_panel;
+                Reaction::Continue
+            }
+            Key::Char('V') => {
+                self.config.show_inspector = !self.config.show_inspector;
+                Reaction::Continue
             }
             Key::Char('L') => {
                 // Switch between the panels layout and the classic htop one.
@@ -777,8 +823,8 @@ impl App {
             Key::Char('w') => self.show_command(),
             Key::Char('l') => self.show_open_files(),
             Key::Char('x') => self.show_locks(),
-            Key::Char('I') => {
-                // Cycle only the meter under the header cursor, which is what
+            Key::Char('m') => {
+                // Cycle only the meter under the header cursor.
                 // htop does. `HeaderNext`/`HeaderPrev` move that cursor.
                 let i = self.meter_cursor.min(self.meters.len().saturating_sub(1));
                 if self.meters.is_empty() {
@@ -906,6 +952,7 @@ impl App {
     }
 
     fn jump_to_match(&mut self, needle: &str) -> Reaction {
+        self.expand_search_path(needle);
         if let Some(pos) = table::find_next(
             &self.table.rows,
             &self.table.view.order,
@@ -924,15 +971,19 @@ impl App {
         let Screen::Info { lines, scroll, .. } = &mut self.screen else {
             return Reaction::Continue;
         };
+        let maximum = lines.len().saturating_sub(self.info_viewport.max(1));
         match key {
             Key::Char('q') | Key::Esc | Key::F(10) => self.screen = Screen::ProcessList,
             Key::Up => *scroll = scroll.saturating_sub(1),
-            Key::Down => *scroll = (*scroll + 1).min(lines.len().saturating_sub(1)),
+            Key::Down => *scroll = (*scroll + 1).min(maximum),
+            Key::PgUp => *scroll = scroll.saturating_sub(self.info_viewport.max(1)),
+            Key::PgDn => *scroll = (*scroll + self.info_viewport.max(1)).min(maximum),
             Key::Home => *scroll = 0,
-            Key::End => *scroll = lines.len().saturating_sub(1),
+            Key::End => *scroll = maximum,
             _ => {}
         }
         if self.screen == Screen::ProcessList {
+            self.command_source = None;
             self.status = None;
         }
         Reaction::Continue
@@ -1210,6 +1261,13 @@ impl App {
 
     /// Rebuild the visibility predicate and apply it.
     pub fn reorder(&mut self) {
+        let selected = self
+            .selected_row()
+            .map(|row| (row.identity(), row.starttime));
+        self.reorder_preserving(selected);
+    }
+
+    fn reorder_preserving(&mut self, selected: Option<(u64, u64)>) {
         self.visibility = gander_core::table::Visibility {
             text: self.filter.clone(),
             uid: self.user_filter,
@@ -1218,6 +1276,8 @@ impl App {
             show_containerised: self.table.show_containerised,
         };
         self.table.reorder(&self.visibility);
+        self.apply_folds();
+        self.restore_selection(selected);
         self.clamp_selection();
     }
 
@@ -1250,9 +1310,7 @@ impl App {
         } else {
             self.viewport
         };
-        let first = self
-            .offset
-            .min(visible.saturating_sub(height.min(visible)));
+        let first = self.offset.min(visible.saturating_sub(height.min(visible)));
         let last_pos = (first + height).min(visible);
 
         let mut widest = 0u16;
@@ -1674,11 +1732,14 @@ impl App {
         let Some(row) = self.selected_row() else {
             return Reaction::Continue;
         };
-        let cmd = row.display_command().to_string();
-        let lines: Vec<String> = wrap(&cmd, 80).into_iter().collect();
+        let cmd = crate::command::escaped(row.display_command());
+        let title = format!("Command line of {}", row.pid);
+        let lines = crate::command::wrap(&cmd, 80);
+        self.command_source = Some(cmd);
+        self.command_width = 0;
         self.screen = Screen::Info {
-            title: format!("Command line of {}", row.pid),
-            lines: if lines.is_empty() { vec![cmd] } else { lines },
+            title,
+            lines,
             scroll: 0,
         };
         Reaction::Continue
@@ -1797,6 +1858,11 @@ impl App {
                 }
             }
         }
+        self.header_regions.clear();
+        if self.screen != Screen::ProcessList {
+            self.draw_secondary(frame);
+            return;
+        }
         if self.layout == LayoutKind::Panels {
             self.draw_panels(frame);
         } else {
@@ -1822,49 +1888,7 @@ impl App {
         self.draw_header(chunks[0], frame.buffer_mut());
         self.draw_tabs(chunks[0], frame.buffer_mut());
 
-        // `draw_table` needs `&mut self` (it records the viewport height), so the
-        // screen is copied out instead of borrowed from `self`.
-        let screen = self.screen.clone();
-        match &screen {
-            Screen::ProcessList => self.draw_table(chunks[1], frame.buffer_mut()),
-            Screen::Help => draw_help(chunks[1], frame.buffer_mut(), &self.theme),
-            Screen::Info {
-                title,
-                lines,
-                scroll,
-            } => draw_info(
-                chunks[1],
-                frame.buffer_mut(),
-                &self.theme,
-                title,
-                lines,
-                *scroll,
-            ),
-            Screen::SignalPicker { cursor } => {
-                self.draw_table(chunks[1], frame.buffer_mut());
-                draw_signal_picker(
-                    chunks[1],
-                    frame.buffer_mut(),
-                    &self.theme,
-                    &self.action_targets,
-                    *cursor,
-                );
-            }
-            Screen::Setup => {
-                if let Some(setup) = &self.setup {
-                    setup.draw(chunks[1], frame.buffer_mut(), &self.theme);
-                }
-            }
-            Screen::Affinity(panel) => panel.draw(chunks[1], frame.buffer_mut(), &self.theme),
-            Screen::IoPriority(panel) => panel.draw(chunks[1], frame.buffer_mut(), &self.theme),
-        }
-
-        // The search/filter prompt occupies the table's header row, which is
-        // what htop does and what keeps the list from losing a line to it.
-        if self.input.active && self.screen == Screen::ProcessList {
-            let row = Rect::new(chunks[1].x, chunks[1].y, chunks[1].width, 1);
-            draw_prompt(row, frame.buffer_mut(), &self.theme, &self.input);
-        }
+        self.draw_table(chunks[1], frame.buffer_mut());
 
         self.draw_function_bar(chunks[2], frame.buffer_mut());
     }
@@ -1902,7 +1926,19 @@ impl App {
         // the middle band changes shape.
         self.draw_tabs(chunks[0], frame.buffer_mut());
 
-        let widths = crate::layout::PanelWidths::resolve(chunks[1].width);
+        let minimum_table = self
+            .columns()
+            .iter()
+            .filter(|field| **field != Field::Comm)
+            .map(|field| default_width(*field))
+            .sum::<u16>()
+            .saturating_add(20);
+        let widths = crate::layout::PanelWidths::resolve_with_budget(
+            chunks[1].width,
+            minimum_table,
+            self.config.show_system_panel,
+            self.config.show_inspector,
+        );
         let columns = Layout::horizontal([
             Constraint::Length(widths.system),
             Constraint::Min(10),
@@ -1928,42 +1964,7 @@ impl App {
             draw_panel_divider(columns[0], buf, &self.theme);
         }
 
-        // The middle band: whatever screen is active. The table is the common
-        // case; the modal screens take the whole band so they still have room.
-        let screen = self.screen.clone();
-        match &screen {
-            Screen::ProcessList => self.draw_table(columns[1], frame.buffer_mut()),
-            Screen::Help => draw_help(columns[1], frame.buffer_mut(), &self.theme),
-            Screen::Info {
-                title,
-                lines,
-                scroll,
-            } => draw_info(
-                columns[1],
-                frame.buffer_mut(),
-                &self.theme,
-                title,
-                lines,
-                *scroll,
-            ),
-            Screen::SignalPicker { cursor } => {
-                self.draw_table(columns[1], frame.buffer_mut());
-                draw_signal_picker(
-                    columns[1],
-                    frame.buffer_mut(),
-                    &self.theme,
-                    &self.action_targets,
-                    *cursor,
-                );
-            }
-            Screen::Setup => {
-                if let Some(setup) = &self.setup {
-                    setup.draw(columns[1], frame.buffer_mut(), &self.theme);
-                }
-            }
-            Screen::Affinity(panel) => panel.draw(columns[1], frame.buffer_mut(), &self.theme),
-            Screen::IoPriority(panel) => panel.draw(columns[1], frame.buffer_mut(), &self.theme),
-        }
+        self.draw_table(columns[1], frame.buffer_mut());
 
         // The inspector is the point of this layout, but it is meaningless while
         // a modal screen hides the list; showing a stale selection then would be
@@ -1986,11 +1987,6 @@ impl App {
                 user.as_deref(),
             );
             self.users = users;
-        }
-
-        if self.input.active && self.screen == Screen::ProcessList {
-            let row = Rect::new(columns[1].x, columns[1].y, columns[1].width, 1);
-            draw_prompt(row, frame.buffer_mut(), &self.theme, &self.input);
         }
 
         self.draw_function_bar(chunks[2], frame.buffer_mut());
@@ -2137,12 +2133,28 @@ impl App {
             area.width,
             1,
         );
-        if rect.height > 0 && area.height > 1 {
+        if area.height > 0 {
             ratatui::widgets::Widget::render(tabs, rect, buf);
+            let direction = if self.table.sort.dir == Dir::Desc {
+                "v"
+            } else {
+                "^"
+            };
+            let label = format!("{} {direction}", self.table.sort.field.title().trim());
+            let width = (label.len() as u16).min(area.width / 2);
+            crate::meters::put_str(
+                buf,
+                area.right().saturating_sub(width),
+                rect.y,
+                &label,
+                self.theme.column_header_sorted,
+                width,
+            );
         }
     }
 
     fn draw_table(&mut self, area: Rect, buf: &mut Buffer) {
+        let area = self.filter_area(area, buf);
         let fields = self.columns();
         let theme = self.theme.clone();
 
@@ -2155,12 +2167,18 @@ impl App {
 
         // Tree prefixes first, because the Command cell carries them and so the
         // column has to be measured with the prefix included.
-        let marks = if self.table.tree_mode {
+        let mut marks = if self.table.tree_mode {
             compose_tree(&self.table.rows, &self.table.view.order)
         } else {
             Vec::new()
         };
 
+        for mark in &mut marks {
+            let row = &self.table.rows[mark.data_index];
+            if self.collapsed.contains(&(row.identity(), row.starttime)) && row.has_children {
+                mark.prefix.push_str("[+] ");
+            }
+        }
         // Taken out of `self` so the row loop can borrow `self.table` immutably
         // while resolving names. Done after the early return: taking it first
         // would leave the uid -> name cache empty for the rest of the run.
@@ -2207,6 +2225,10 @@ impl App {
             let draw_x = x.max(clip_left);
             let draw_end = (x + w).min(clip_right);
             if draw_end > draw_x {
+                self.header_regions.push((
+                    Rect::new(draw_x as u16, area.y, (draw_end - draw_x) as u16, 1),
+                    *field,
+                ));
                 let skip = (draw_x - x) as usize;
                 let head: String = title.chars().skip(skip).collect();
                 crate::meters::put_str(
@@ -2240,7 +2262,18 @@ impl App {
         // Table-wide rather than per-screenful so the bars do not rescale as you
         // scroll, which would make them unreadable.
         let bar_scale = self.table.rows.iter().fold((0.0f32, 0.0f32), |acc, r| {
-            (acc.0.max(r.percent_cpu), acc.1.max(r.percent_mem))
+            (
+                if r.availability.field(Field::PercentCpu).is_available() {
+                    acc.0.max(r.percent_cpu)
+                } else {
+                    acc.0
+                },
+                if r.availability.field(Field::PercentMem).is_available() {
+                    acc.1.max(r.percent_mem)
+                } else {
+                    acc.1
+                },
+            )
         });
 
         // Clamp the first visible row so the bottom of the list stays filled.
@@ -2342,6 +2375,7 @@ impl App {
                         && draw_x == cx
                         && draw_end == cx + w
                         && matches!(*field, Field::PercentCpu | Field::PercentMem)
+                        && row.availability.field(*field).is_available()
                     {
                         // A small floor on the divisor keeps a lone 0.0%
                         // process from being drawn as a full bar.
@@ -2369,6 +2403,28 @@ impl App {
             }
         }
 
+        if self.input.active {
+            draw_prompt(
+                Rect::new(area.x, area.y, area.width, 1),
+                buf,
+                &theme,
+                &self.input,
+            );
+        }
+        if self.table.visible() == 0 && area.height > 1 {
+            crate::meters::put_str(
+                buf,
+                area.x,
+                area.y + 1,
+                if self.filter.is_some() || self.user_filter.is_some() {
+                    "No matching processes"
+                } else {
+                    "No processes"
+                },
+                theme.meter_label,
+                area.width,
+            );
+        }
         self.users = users;
     }
 
@@ -2385,6 +2441,18 @@ impl App {
                 ("F8", "Nice+"),
                 ("F9", "Kill"),
                 ("F10", "Quit"),
+            ],
+            Screen::SortPicker { .. } | Screen::UserPicker { .. } => [
+                ("Esc", "Cancel"),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("", ""),
+                ("Enter", "Select"),
+                ("", ""),
             ],
             Screen::Help => [
                 ("F1", "Done"),
@@ -2563,6 +2631,13 @@ impl App {
             return;
         }
         let x = area.right().saturating_sub(text_len);
+        let slot = (area.width / 10).max(1);
+        let clear_from = area.x + (x.saturating_sub(area.x) / slot) * slot;
+        for column in clear_from..area.right() {
+            if let Some(cell) = buf.cell_mut((column, area.y)) {
+                cell.set_char(' ').set_style(self.theme.function_bar);
+            }
+        }
         crate::meters::put_str(
             buf,
             x,
@@ -2799,6 +2874,9 @@ pub fn render_field(
     snapshot: &SystemSnapshot,
     users: &mut gander_core::users::Users,
 ) -> String {
+    if !row.availability.field(field).is_available() {
+        return "-".into();
+    }
     match field {
         Field::Pid => row.pid.to_string(),
         Field::Ppid => row.ppid.to_string(),
@@ -3535,21 +3613,6 @@ fn read_limited<T>(path: &str, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
     Some(f(&bytes))
 }
 
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut line = String::new();
-    for ch in text.chars() {
-        line.push(ch);
-        if line.chars().count() >= width.max(1) {
-            out.push(std::mem::take(&mut line));
-        }
-    }
-    if !line.is_empty() {
-        out.push(line);
-    }
-    out
-}
-
 // ---------------------------------------------------------------------------
 // Overlays
 // ---------------------------------------------------------------------------
@@ -3609,21 +3672,23 @@ fn draw_help(area: Rect, buf: &mut Buffer, theme: &Theme) {
         "",
         "  F1 h ?   help            F2       setup",
         "  F3 /     search          F4 \\     filter",
-        "  F5 t     tree view       F6 < >   sort column",
+        "  F5 t     tree view       F6        sort picker",
+        "  I        reverse sort    < > .     cycle sort",
         "  F7 F8    nice -/+        F9 k     kill",
         "  Space    tag process     c        tag children",
-        "  U        untag all       u        user filter",
+        "  U        untag all       u         user picker",
         "  Up Down  move            PgUp PgDn  page",
         "  Home End g G  first/last row      Left Right  scroll sideways",
         "  Tab      next tab        Shift-Tab  previous tab",
-        "  L        layout          I        meter mode",
+        "  L        layout          m         meter mode",
+        "  B V      sidebars        + - *     tree folds",
         "  K        toggle kernel threads   H   toggle thread rows",
         "  O        hide containers   Shift-Left/Right  move meter cursor",
         "  a        affinity        i        I/O priority",
         "  e        environment     w        command line",
         "  l        open files      x        file locks",
         "  Z        security ctx    s        trace (explains itself)",
-        "  b        backtrace       + -      faster/slower",
+        "  b        backtrace       [ ]       slower/faster",
         "  F10 q    quit",
         "",
         "Filter terms are fixed strings, case-insensitive, separated by |.",
@@ -3727,6 +3792,10 @@ fn _style_helper(theme: &Theme) -> Style {
 #[cfg(test)]
 #[path = "app_safety_tests.rs"]
 mod safety_tests;
+
+#[cfg(test)]
+#[path = "app_monitoring_tests.rs"]
+mod monitoring_tests;
 
 #[cfg(test)]
 mod tests {
@@ -4302,7 +4371,9 @@ mod tests {
 
         let width = 56;
         let fixed = 7 + 10 + 4 + 4 + 6 + 6 + 9; // PID USER PRI NI CPU% MEM% TIME+
-        let text = "/usr/bin/child --argument-one --argument-two".chars().count() as u16;
+        let text = "/usr/bin/child --argument-one --argument-two"
+            .chars()
+            .count() as u16;
         assert!(
             fixed + text > width,
             "the command must overflow on its own for this to test the prefix"
@@ -4439,7 +4510,11 @@ mod tests {
         let tab0_sort = app.config.tabs[0].sort();
         assert_eq!(app.table.sort.field, tab0_sort.field, "tab 0 starts here");
         assert_eq!(app.table.sort.dir, tab0_sort.dir);
-        assert_eq!(app.columns().len(), 8, "tab 0 keeps its own columns");
+        assert_eq!(
+            app.columns().len(),
+            app.config.tabs[0].fields().len(),
+            "tab 0 keeps its own columns"
+        );
 
         app.handle_key(Key::Tab);
         assert_eq!(app.config.active_tab, 1);
@@ -4467,6 +4542,7 @@ mod tests {
     #[test]
     fn cycling_tabs_with_only_one_configured_explains_itself() {
         let mut app = app_with_n_rows(3);
+        app.config.tabs.truncate(1);
         app.handle_key(Key::Tab);
         assert_eq!(app.config.active_tab, 0);
         assert!(
@@ -4480,7 +4556,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_switch_resets_the_selection() {
+    fn tab_switch_preserves_the_selected_identity() {
         let mut config = Config::default();
         config.tabs.push(config.tabs[0].clone());
         let mut app = App::new(config);
@@ -4496,8 +4572,12 @@ mod tests {
         assert_eq!(app.selected, 10);
 
         app.handle_key(Key::Tab);
-        assert_eq!(app.selected, 0, "a different tab starts at the top");
-        assert_eq!(app.offset, 0);
+        assert_eq!(
+            app.selected_row().unwrap().pid,
+            11,
+            "a different tab retains the live process"
+        );
+        assert!(app.offset <= app.selected);
     }
 
     #[test]
@@ -4968,7 +5048,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_cursor_wraps_and_i_acts_only_on_it() {
+    fn the_header_cursor_wraps_and_m_acts_only_on_it() {
         use gander_core::system::{CpuTimes, SystemSnapshot};
 
         let snapshot = SystemSnapshot {
@@ -4994,7 +5074,7 @@ mod tests {
         let target = app.meter_cursor;
         let before: Vec<MeterMode> = (0..n).map(|i| app.meter_mode_at(i)).collect();
 
-        app.handle_key(Key::Char('I'));
+        app.handle_key(Key::Char('m'));
         assert_ne!(app.meter_mode_at(target), before[target], "meter {target}");
         for (i, was) in before.iter().enumerate() {
             if i != target {
@@ -5027,8 +5107,8 @@ mod tests {
         app.config.meters_left = vec![gander_config::MeterConfig::new("Memory", "bar")];
         app.config.meters_right = vec![gander_config::MeterConfig::new("Tasks", "text")];
         app.rebuild_header(8);
-        // `I` must not panic even if the cursor is stale.
-        app.handle_key(Key::Char('I'));
+        // `m` must not panic even if the cursor is stale.
+        app.handle_key(Key::Char('m'));
         assert!(app.meter_cursor < app.meters.len() || app.meters.is_empty());
     }
 

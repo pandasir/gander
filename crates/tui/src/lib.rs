@@ -11,10 +11,11 @@
 //!  * [`runtime`]    terminal setup, event loop, sampling thread
 
 pub mod app;
+mod command;
+pub mod layout;
 pub mod marks;
 pub mod meters;
 pub mod meters_impl;
-pub mod layout;
 pub mod panels;
 pub mod runtime;
 pub mod setup;

@@ -50,6 +50,7 @@
 //! opinions should be optional.
 
 use gander_core::format::{bytes_human, cpu_time_human, duration_verbose, percent_human};
+use gander_core::metrics::Metric;
 use gander_core::row::{Field, Row};
 use gander_core::system::SystemSnapshot;
 use ratatui::buffer::Buffer;
@@ -70,6 +71,28 @@ pub struct PanelWidths {
 }
 
 impl PanelWidths {
+    pub fn resolve_with_budget(
+        total: u16,
+        minimum_table: u16,
+        system: bool,
+        inspector: bool,
+    ) -> Self {
+        let mut widths = Self::resolve(total);
+        if !system {
+            widths.system = 0;
+        }
+        if !inspector {
+            widths.inspector = 0;
+        }
+        if total.saturating_sub(widths.system + widths.inspector) < minimum_table {
+            widths.inspector = 0;
+        }
+        if total.saturating_sub(widths.system) < minimum_table {
+            widths.system = 0;
+        }
+        widths
+    }
+
     pub fn resolve(total: u16) -> Self {
         // Never take more than 60% of the width in side panels, and never less
         // than ~40 cells for the table.
@@ -474,16 +497,26 @@ pub fn draw_inspector(
     // The command line wraps over the first rows: it is the single most useful
     // thing the inspector can show and the table can never show all of it.
     let cmd = row.display_command();
-    let max_cmd_rows = (bottom - y).min(4);
-    for line in wrap(cmd, inner.width as usize) {
-        if y + max_cmd_rows.min(4) <= y || y >= bottom {
-            break;
-        }
-        put_str(buf, inner.x, y, &line, theme.row_normal, inner.width);
+    let command_lines = wrap(&crate::command::escaped(cmd), inner.width as usize)
+        .into_iter()
+        .flat_map(|line| crate::command::wrap(&line, inner.width as usize))
+        .collect::<Vec<_>>();
+    let max_cmd_rows = bottom.saturating_sub(y).saturating_sub(4).min(4) as usize;
+    let truncated = command_lines.len() > max_cmd_rows;
+    for (index, line) in command_lines.iter().take(max_cmd_rows).enumerate() {
+        let text = if truncated && index + 1 == max_cmd_rows {
+            let mut last = line.clone();
+            while unicode_width::UnicodeWidthStr::width(last.as_str()) + 3 > inner.width as usize {
+                if last.pop().is_none() {
+                    break;
+                }
+            }
+            format!("{last}...")
+        } else {
+            line.clone()
+        };
+        put_str(buf, inner.x, y, &text, theme.row_normal, inner.width);
         y += 1;
-        if y >= bottom {
-            break;
-        }
     }
 
     if y < bottom {
@@ -503,16 +536,23 @@ pub fn draw_inspector(
     let elapsed = duration_verbose(row.elapsed).to_string();
     let user_name = user.unwrap_or("?").to_string();
 
+    let fact = |metric, text: String| {
+        if row.availability.get(metric).is_available() {
+            text
+        } else {
+            "-".to_string()
+        }
+    };
     let facts: [(&str, String); 9] = [
-        ("USER", user_name),
         ("STATE", state.to_string()),
-        ("CPU", cpu),
-        ("MEM", mem),
-        ("VIRT", virt),
-        ("TIME", time),
+        ("CPU", fact(Metric::Cpu, cpu)),
+        ("MEM", fact(Metric::Memory, mem)),
+        ("USER", user_name),
+        ("VIRT", fact(Metric::Virtual, virt)),
+        ("TIME", fact(Metric::Time, time)),
         ("UP", elapsed),
         ("NICE", row.nice.to_string()),
-        ("THR", row.nlwp.max(0).to_string()),
+        ("THR", fact(Metric::Threads, row.nlwp.max(0).to_string())),
     ];
     for (label, value) in facts {
         if y >= bottom {

@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::freebsd::{parse, scan, FreeBsdPlatform};
+use crate::metrics::{Availability, Metric, MetricAvailability};
 use crate::row::{Row, RowFlags};
 use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo, SystemSnapshot};
 use crate::table::{Cache, Stable};
@@ -44,6 +45,7 @@ struct PrevRow {
 /// as macOS's, where the handle is only unique *within* a process.
 #[derive(Copy, Clone)]
 struct PrevThread {
+    start_usec: u64,
     runtime_us: u64,
 }
 
@@ -122,9 +124,14 @@ impl Sampler {
         // Indexed once rather than searched per thread: with 40 kernel threads
         // per process a linear `find` inside the thread loop is quadratic in the
         // process count, and on a busy machine that is the whole tick.
-        let mem_of: HashMap<Pid, (u64, u64, u64, f32)> = proc_rows
+        let mem_of: HashMap<Pid, (u64, u64, u64, f32, MetricAvailability)> = proc_rows
             .iter()
-            .map(|r| (r.pid, (r.res, r.virt, r.elapsed, r.percent_mem)))
+            .map(|r| {
+                (
+                    r.pid,
+                    (r.res, r.virt, r.elapsed, r.percent_mem, r.availability),
+                )
+            })
             .collect();
 
         for kp in procs {
@@ -147,7 +154,9 @@ impl Sampler {
                 if thread.tid == pid as i32 {
                     continue; // the leader is already the process row
                 }
-                let mut row = Row::default_for_test(pid);
+                let mut row = Row::new(pid);
+                row.availability = MetricAvailability::all(Availability::Available);
+                row.availability.set(Metric::Cpu, Availability::WarmingUp);
                 row.thread_id = Some(thread.tid as u64);
                 row.tgid = pid;
                 row.is_thread = true;
@@ -187,15 +196,24 @@ impl Sampler {
                 let cpu_us = thread.runtime_us;
                 let prev = self.prev_threads.get(&(pid, thread.tid)).copied();
                 if let Some(p) = prev {
-                    if interval_secs > 0.0 && cpu_us >= p.runtime_us {
+                    if p.start_usec == row.starttime
+                        && interval_secs > 0.0
+                        && cpu_us >= p.runtime_us
+                    {
                         let delta = (cpu_us - p.runtime_us) as f64 / 1e6;
-                        row.percent_cpu =
-                            (delta / interval_secs * 100.0) as f32;
+                        row.percent_cpu = (delta / interval_secs * 100.0) as f32;
                         let cap = self.cpu_count as f32 * 100.0;
                         row.percent_cpu = row.percent_cpu.min(cap);
+                        row.availability.set(Metric::Cpu, Availability::Available);
                     }
                 }
-                next_prev.insert((pid, thread.tid), PrevThread { runtime_us: cpu_us });
+                next_prev.insert(
+                    (pid, thread.tid),
+                    PrevThread {
+                        start_usec: row.starttime,
+                        runtime_us: cpu_us,
+                    },
+                );
 
                 row.time_ticks = cpu_us / 10_000; // hundredths of a second
                 row.cmdline = stable.cmdline.clone();
@@ -206,11 +224,18 @@ impl Sampler {
                     .insert(RowFlags::USERLAND_THREAD)
                     .set(RowFlags::KERNEL_THREAD, thread.is_kernel_thread());
 
-                if let Some(&(res, virt, elapsed, mem_pct)) = mem_of.get(&pid) {
+                if let Some(&(res, virt, elapsed, mem_pct, availability)) = mem_of.get(&pid) {
+                    row.availability.inherit_memory(&availability);
                     row.res = res;
                     row.virt = virt;
                     row.elapsed = elapsed;
                     row.percent_mem = mem_pct;
+                } else {
+                    row.availability.set(Metric::Rss, Availability::ReadError);
+                    row.availability
+                        .set(Metric::Virtual, Availability::ReadError);
+                    row.availability
+                        .set(Metric::Memory, Availability::ReadError);
                 }
                 out.push(row);
             }
@@ -256,7 +281,10 @@ impl Sampler {
         // --- host counters ---------------------------------------------------
         let cpu = self.read_cpu();
         let cpu_delta: Vec<CpuTimes> = if self.prev_cpu.len() == cpu.len() && !cpu.is_empty() {
-            cpu.iter().zip(&self.prev_cpu).map(|(n, p)| n.delta(p)).collect()
+            cpu.iter()
+                .zip(&self.prev_cpu)
+                .map(|(n, p)| n.delta(p))
+                .collect()
         } else {
             vec![CpuTimes::default(); cpu.len()]
         };
@@ -276,9 +304,7 @@ impl Sampler {
 
         let disk = scan::disk_counters();
         let disk_rate = match self.prev_disk {
-            Some((prev, at_prev)) => {
-                disk.per_sec(&prev, at.duration_since(at_prev).as_secs_f64())
-            }
+            Some((prev, at_prev)) => disk.per_sec(&prev, at.duration_since(at_prev).as_secs_f64()),
             None => crate::system::Rate::default(),
         };
         self.prev_disk = Some((disk, at));
@@ -458,7 +484,9 @@ impl Sampler {
             let prev = self.prev_rows.get(&kp.pid).copied();
             let same_process = prev.is_some_and(|p| p.start_usec == start_usec);
 
-            let mut row = Row::default_for_test(kp.pid);
+            let mut row = Row::new(kp.pid);
+            row.availability = MetricAvailability::all(Availability::Available);
+            row.availability.set(Metric::Cpu, Availability::WarmingUp);
             row.starttime = start_usec;
             row.ppid = kp.ppid;
             row.pgrp = kp.pgid;
@@ -491,6 +519,7 @@ impl Sampler {
                     if interval_secs > 0.0 && kp.runtime_us >= p.runtime_us {
                         let delta = (kp.runtime_us - p.runtime_us) as f64 / 1e6;
                         row.percent_cpu = ((delta / interval_secs * 100.0) as f32).min(cap);
+                        row.availability.set(Metric::Cpu, Availability::Available);
                     }
                 }
             }
@@ -507,6 +536,10 @@ impl Sampler {
             } else {
                 0.0
             };
+            if mem_total == 0 {
+                row.availability
+                    .set(Metric::Memory, Availability::ReadError);
+            }
             // Elapsed is `now - start`, both absolute. Subtracting the boot time
             // first (as an earlier draft did) turns a start time into an age and
             // then subtracts uptime from it, which reports 0 for every process on
@@ -643,7 +676,10 @@ mod tests {
             assert!(row.percent_mem.is_finite());
         }
         assert!(snap.cpu_usage().is_finite());
-        assert!((0.0..=1.0).contains(&snap.cpu_usage()), "aggregate is a share");
+        assert!(
+            (0.0..=1.0).contains(&snap.cpu_usage()),
+            "aggregate is a share"
+        );
     }
 
     /// The bar segments must add up to the total, so nothing is drawn twice and
@@ -697,7 +733,10 @@ mod tests {
     fn threads_are_listed_only_when_asked_for() {
         let mut s = Sampler::new();
         let (_snap, rows) = s.sample();
-        assert!(rows.iter().all(|r| !r.is_thread), "threads are off by default");
+        assert!(
+            rows.iter().all(|r| !r.is_thread),
+            "threads are off by default"
+        );
 
         s.set_scan_options(crate::ScanOptions::none().with_threads(true));
         let (_snap, rows) = s.sample();
@@ -706,7 +745,11 @@ mod tests {
         let threads: Vec<&Row> = rows.iter().filter(|r| r.is_thread).collect();
         for t in &threads {
             assert!(t.thread_id.is_some(), "a thread row needs its own identity");
-            assert_ne!(t.thread_id, Some(t.pid as u64), "the leader is not a thread");
+            assert_ne!(
+                t.thread_id,
+                Some(t.pid as u64),
+                "the leader is not a thread"
+            );
         }
     }
 

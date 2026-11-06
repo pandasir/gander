@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::darwin::{parse, scan, units, DarwinPlatform};
+use crate::metrics::{Availability, Metric, MetricAvailability};
 use crate::row::{Row, RowFlags};
 use crate::system::{CpuTimes, MemInfo, SystemSnapshot, TaskStats};
 use crate::table::{Cache, Stable};
@@ -26,6 +27,7 @@ struct PrevRow {
     start_usec: u64,
     /// Monotonic CPU nanoseconds, user + system.
     cpu_ns: u64,
+    readable: bool,
 }
 
 /// Per-thread state carried between ticks, keyed by `(pid, handle)`.
@@ -35,6 +37,7 @@ struct PrevRow {
 /// other's CPU history.
 #[derive(Copy, Clone)]
 struct PrevThread {
+    start_usec: u64,
     /// Monotonic CPU nanoseconds from `proc_threadinfo`, user + system.
     cpu_ns: u64,
 }
@@ -269,9 +272,9 @@ impl Sampler {
         // reports the same RSS on Linux too (`/proc/<pid>/task/<tid>/stat` field
         // 24 is the mm's figure). Inheriting it here keeps the two backends
         // consistent instead of showing a column of zeroes on macOS.
-        let mem_of: HashMap<Pid, (u64, u64, u64)> = proc_rows
+        let mem_of: HashMap<Pid, (u64, u64, u64, MetricAvailability)> = proc_rows
             .iter()
-            .map(|r| (r.pid, (r.res, r.virt, r.elapsed)))
+            .map(|r| (r.pid, (r.res, r.virt, r.elapsed, r.availability)))
             .collect();
 
         for kp in procs {
@@ -326,7 +329,9 @@ impl Sampler {
                 // leader's pid for the thread row would make it indistinguishable
                 // from the process row: kill, tagging and the selection all key on
                 // `pid`.
-                let mut row = Row::default_for_test(pid);
+                let mut row = Row::new(pid);
+                row.availability = MetricAvailability::all(Availability::Available);
+                row.availability.set(Metric::Cpu, Availability::WarmingUp);
                 row.thread_id = Some(thread_identity(pid, handle));
                 row.tgid = pid;
                 row.is_thread = true;
@@ -337,7 +342,7 @@ impl Sampler {
                 row.tpgid = stable.tpgid;
                 row.tty_nr = stable.tty_dev;
                 row.nice = kp.nice.clamp(-128, 127) as i8;
-                row.priority = row.nice;
+                set_native_priority(&mut row, Some(ti.priority), Availability::Available);
                 row.processor = -1;
                 row.nlwp = 1;
                 // A thread's identity files belong to its process.
@@ -373,10 +378,11 @@ impl Sampler {
                 // reports nanoseconds, so a tick delta would be meaningless.
                 if interval_secs > 0.0 {
                     if let Some(p) = prev {
-                        if cpu_ns >= p.cpu_ns {
+                        if p.start_usec == start_usec && cpu_ns >= p.cpu_ns {
                             let delta = (cpu_ns - p.cpu_ns) as f64;
                             let pct = delta / (interval_secs * 1e9) * 100.0;
                             row.percent_cpu = (pct as f32).min(self.cpu_count as f32 * 100.0);
+                            row.availability.set(Metric::Cpu, Availability::Available);
                         }
                     }
                 }
@@ -384,7 +390,17 @@ impl Sampler {
                 // Threads share the process's address space, so the process's
                 // resident size is the only per-thread figure that exists; this
                 // matches what Linux reports from `task/<tid>/stat`.
-                let (res, virt, elapsed) = mem_of.get(&pid).copied().unwrap_or((0, 0, 0));
+                let (res, virt, elapsed, availability) = mem_of.get(&pid).copied().unwrap_or((
+                    0,
+                    0,
+                    0,
+                    MetricAvailability::all(Availability::ReadError),
+                ));
+                row.availability.inherit_memory(&availability);
+                if mem_total == 0 {
+                    row.availability
+                        .set(Metric::Memory, Availability::ReadError);
+                }
                 row.res = res;
                 row.virt = virt;
                 row.elapsed = elapsed;
@@ -393,7 +409,7 @@ impl Sampler {
                 } else {
                     0.0
                 };
-                next_prev.insert((pid, handle), PrevThread { cpu_ns });
+                next_prev.insert((pid, handle), PrevThread { start_usec, cpu_ns });
                 out.push(row);
             }
         }
@@ -420,7 +436,11 @@ impl Sampler {
             // even for processes we cannot inspect. Only the task counters
             // (CPU time, memory, threads) need the extra call.
             let bsd_details = scan::task_all_info(pid);
-            let ti = scan::task_info(pid);
+            let task_result = scan::task_info_checked(pid);
+            let task_status = task_result
+                .as_ref()
+                .map_or_else(Availability::from_error, |_| Availability::Available);
+            let ti = task_result.ok();
             count_task(&mut tasks, ti, self.cpu_count);
             let details = bsd_details.map(|all| all.bsd).unwrap_or_default();
 
@@ -438,7 +458,11 @@ impl Sampler {
                 })
                 .unwrap_or(0);
 
-            let mut row = Row::default_for_test(pid);
+            let mut row = Row::new(pid);
+            row.availability = MetricAvailability::all(task_status);
+            if ti.is_some() {
+                row.availability.set(Metric::Cpu, Availability::WarmingUp);
+            }
             row.starttime = start_usec;
             row.ppid = kp.ppid;
             // PGRP, TPGID, and the session id all come from the per-process
@@ -454,7 +478,7 @@ impl Sampler {
             row.session = if sid > 0 { sid as u32 } else { 0 };
             row.uid = kp.uid;
             row.nice = kp.nice.clamp(-128, 127) as i8;
-            row.priority = kp.nice.clamp(-128, 127) as i8;
+            set_native_priority(&mut row, ti.map(|t| t.priority), task_status);
             row.state = parse::state_letter(kp.p_stat);
             // `p_stat` alone cannot be trusted for the sleep/run distinction on
             // current Darwin: this kernel reports `SRUN` (2) for a process
@@ -494,23 +518,37 @@ impl Sampler {
             // reports nanoseconds. Mirrors darwin/DarwinProcess.c.
             if same_process && interval_secs > 0.0 {
                 if let Some(p) = prev {
-                    if cpu_ns >= p.cpu_ns {
+                    if p.readable && cpu_ns >= p.cpu_ns {
                         let delta = (cpu_ns - p.cpu_ns) as f64;
                         let pct = delta / (interval_secs * 1e9) * 100.0;
                         // htop caps at activeCPUs * 100 on Linux; the same cap
                         // keeps a clock jump from producing a nonsense number.
                         row.percent_cpu = (pct as f32).min(self.cpu_count as f32 * 100.0);
+                        if ti.is_some() {
+                            row.availability.set(Metric::Cpu, Availability::Available);
+                        }
                     }
                 }
             }
 
-            next_prev.insert(pid, PrevRow { start_usec, cpu_ns });
+            next_prev.insert(
+                pid,
+                PrevRow {
+                    start_usec,
+                    cpu_ns,
+                    readable: ti.is_some(),
+                },
+            );
 
             row.percent_mem = if mem_total > 0 {
                 row.res as f32 * 100.0 / mem_total as f32
             } else {
                 0.0
             };
+            if mem_total == 0 {
+                row.availability
+                    .set(Metric::Memory, Availability::ReadError);
+            }
             // `start_sec` is an absolute Unix timestamp; uptime is a duration.
             row.elapsed = now_secs.saturating_sub(kp.start_sec);
 
@@ -576,6 +614,16 @@ impl Sampler {
 
         self.cache.insert(pid, key, stable.clone());
         stable
+    }
+}
+
+fn set_native_priority(row: &mut Row, priority: Option<i32>, unavailable: Availability) {
+    if let Some(priority) = priority {
+        row.priority = priority.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+        row.availability
+            .set(Metric::Priority, Availability::Available);
+    } else {
+        row.availability.set(Metric::Priority, unavailable);
     }
 }
 
@@ -669,6 +717,29 @@ mod tests {
         assert_eq!(stats.threads, 0);
         assert_eq!(stats.running, 0);
         assert_eq!(rows[0].nlwp, 0);
+        assert_eq!(
+            rows[0].availability.get(Metric::Cpu),
+            Availability::ReadError
+        );
+        assert_eq!(
+            rows[0].availability.get(Metric::Rss),
+            Availability::ReadError
+        );
+    }
+
+    #[test]
+    fn native_priority_is_not_nice_and_denial_preserves_nice() {
+        let mut row = Row::new(7);
+        row.nice = 0;
+        set_native_priority(&mut row, Some(31), Availability::Available);
+        assert_eq!(row.priority, 31);
+        assert_eq!(row.nice, 0);
+        set_native_priority(&mut row, None, Availability::PermissionDenied);
+        assert_eq!(
+            row.availability.get(Metric::Priority),
+            Availability::PermissionDenied
+        );
+        assert_eq!(row.nice, 0);
     }
 
     #[test]

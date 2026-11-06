@@ -142,6 +142,16 @@ pub fn read_stat(root: &Path, pid: Pid) -> Option<(crate::row::CommBuf, super::p
     Some((comm, fields))
 }
 
+pub fn read_stat_checked(
+    root: &Path,
+    pid: Pid,
+) -> io::Result<(crate::row::CommBuf, super::parse::StatFields)> {
+    let bytes = fs::read(root.join(pid.to_string()).join("stat"))?;
+    super::parse::parse_stat(&bytes)
+        .map(|(_, comm, fields)| (comm, fields))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process stat"))
+}
+
 /// Join a NUL-separated `cmdline` into a displayable single line.
 fn join_argv(b: &[u8]) -> String {
     let mut s = String::with_capacity(b.len());
@@ -223,8 +233,7 @@ pub fn read_identity(root: &Path, pid: Pid, starttime: u64, cache: &mut Cache) -
         if let Some(entries) = with_file(p, super::fsops::parse_cgroup) {
             // The path, not the raw line: `12:cpuset:/docker/abc` carries the
             // hierarchy id and controller list, which no column wants.
-            cgroup = super::fsops::preferred_path(&entries)
-                .map(|s| s.to_string().into_boxed_str());
+            cgroup = super::fsops::preferred_path(&entries).map(|s| s.to_string().into_boxed_str());
             #[cfg(target_os = "linux")]
             if let Some(c) = super::fsops::container_from_cgroup(&entries) {
                 container = Some(c.id.into_boxed_str());
@@ -345,9 +354,7 @@ pub fn read_disk_counters(root: &Path) -> crate::system::DiskCounters {
     path.push("diskstats");
     with_file(path.as_os_str().as_bytes(), |b| {
         super::parse::parse_diskstats(b, |name| match &sys_block {
-            Some(dir) => dir
-                .join(std::ffi::OsStr::from_bytes(name))
-                .is_dir(),
+            Some(dir) => dir.join(std::ffi::OsStr::from_bytes(name)).is_dir(),
             None => super::parse::looks_like_whole_disk(name),
         })
     })

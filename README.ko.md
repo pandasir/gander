@@ -193,7 +193,7 @@ gander                                     # 대화형 TUI
 gander --delay 500                         # 500밀리초마다 샘플링
 gander -n 5 -d 1000                        # 텍스트 샘플 5회 출력
 gander --json --limit 10                   # JSON 샘플 1회 출력
-gander --sort PERCENT_MEM --limit 20       # 메모리 사용률 상위 20개
+gander -n 1 --sort PERCENT_MEM --limit 20  # 메모리 사용률 상위 20개
 gander -F "python|node"                    # 명령줄로 필터링
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
@@ -217,7 +217,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 | `F3` / `/` | 검색 |
 | `F4` / `\` | 필터 |
 | `F5` / `t` | 트리 보기 |
-| `F6` / `<` `>` | 정렬 열 변경 |
+| `F6` | 정렬 선택; `<` / `>` 열 변경, `I` 순서 반전 |
 | `F9` / `k` | 시그널 보내기 |
 | `F10` / `q` | 종료 |
 
@@ -225,13 +225,23 @@ htop과 동작이 다른 키:
 
 | 키 | gander에서의 동작 |
 |---|---|
-| `I` | 선택한 헤더 미터의 표시 모드 전환 |
-| `+` / `-` | 샘플링 속도 높이기 / 낮추기 |
+| `m` | 선택한 헤더 미터의 표시 모드 전환 |
+| `[` / `]` | 샘플링 느리게 / 빠르게; 트리 `+/-`는 펼치기 / 접기 |
+| `B` / `V` | 시스템 사이드바 / 검사 패널 전환 |
 | `L` | 레이아웃 전환 |
 | `Shift+Left` / `Shift+Right` | 헤더 미터 커서 이동 |
 
-htop의 `I`는 정렬 순서를 반전합니다. gander에서는 대신 `F6` / `<` `>` / `.`을
-사용하세요. 전체 키 바인딩은 [docs/KEYS.md](docs/KEYS.md)를 참고하세요.
+`I`는 정렬 순서를 반전하고 `*`는 트리 전체를 접거나 펼칩니다. `u`는 검색 가능한
+사용자 선택기를 엽니다. 확정한 필터와 일치 개수는 계속 표시됩니다.
+전체 키 바인딩은 [docs/KEYS.md](docs/KEYS.md)를 참고하세요.
+
+새 설정은 CPU, Memory, All 탭을 제공하며 CPU 내림차순으로 시작합니다. 기존 설정이나
+가져온 탭은 변경하지 않습니다. 긴 명령 요약은 최대 네 줄이며 상태, CPU, 메모리 공간을
+남깁니다. `w`는 전체 너비로 표시하고 창 크기에 맞춰 줄을 바꿉니다. 사이드바 설정은 저장됩니다.
+
+배치 출력은 숨겨진 기준 샘플과 한 번의 간격 대기 후 시작합니다. 얻을 수 없는 값은 JSON의
+`null`과 `availability` 이유, TUI/텍스트의 `-`로 표시하며 실제 0과 구분합니다.
+[지표 설명](docs/METRICS.md)과[변경 안내](docs/RELEASE-NOTES.md)를 참고하세요.
 
 ## 설정
 

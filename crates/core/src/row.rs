@@ -77,7 +77,10 @@ impl Field {
     pub const fn needs_smaps_rollup(self) -> bool {
         #[cfg(target_os = "linux")]
         {
-            matches!(self, Field::Pss | Field::Epss | Field::Private | Field::Swap)
+            matches!(
+                self,
+                Field::Pss | Field::Epss | Field::Private | Field::Swap
+            )
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -633,6 +636,7 @@ mod bitflags_like {
 /// through `crate::format`.
 #[derive(Clone, Debug)]
 pub struct Row {
+    pub availability: crate::metrics::MetricAvailability,
     pub pid: Pid,
     pub ppid: Pid,
     pub pgrp: Pid,
@@ -788,9 +792,12 @@ pub struct Row {
 }
 
 impl Row {
-    /// Construct a minimal row, used by tests and by the tree helpers.
-    pub fn default_for_test(pid: Pid) -> Self {
+    /// Construct an unread production row; successful reads mark their fields.
+    pub fn new(pid: Pid) -> Self {
         Row {
+            availability: crate::metrics::MetricAvailability::all(
+                crate::metrics::Availability::ReadError,
+            ),
             pid,
             ppid: 0,
             pgrp: 0,
@@ -848,6 +855,14 @@ impl Row {
             is_last_child: false,
             flags: RowFlags::empty(),
         }
+    }
+
+    /// Fixtures explicitly contain measured values, including real zeroes.
+    pub fn default_for_test(pid: Pid) -> Self {
+        let mut row = Self::new(pid);
+        row.availability =
+            crate::metrics::MetricAvailability::all(crate::metrics::Availability::Available);
+        row
     }
 
     /// Major page faults.

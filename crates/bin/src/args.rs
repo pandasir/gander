@@ -133,12 +133,14 @@ OPTIONS:
 
 KEYS (in the TUI):
     F1 h ?   help        F2     setup        F3 /   search
-    F4 \\     filter      F5 t   tree         F6 < > sort
+    F4 \\     filter      F5 t   tree         F6     sort picker
+    I        invert sort < > .  cycle sort   m      meter mode
     F7 F8    nice -/+    F9 k   kill         F10 q  quit
     L        layout      H      threads      K      kernel threads
-    O        containers  I      meter mode   + -    speed
+    O        containers  [ ]    speed        + - *  fold tree
+    B V      sidebars
     Space    tag         c      tag children U      untag all
-    Tab      next tab    Shift-Tab  prev tab  u      user filter
+    Tab      next tab    Shift-Tab  prev tab  u      user picker
     Up Down  move        PgUp PgDn  page
     Home End g G  first / last row     Left Right  scroll columns
     a        affinity    i      I/O priority
@@ -146,8 +148,10 @@ KEYS (in the TUI):
     x        locks       Z      security ctx s      trace (explains itself)
                                                b      backtrace (ditto)
 
-    Note: htop's I inverts the sort order; here it cycles the meter mode.
-    Use F6 / < > / . to change the sort. See docs/KEYS.md.
+    Batch output follows one unreported warm-up interval; -n counts outputs.
+    Unavailable metrics are null in JSON with reasons in availability.
+    I inverts sorting; m changes meter mode. Tree +/- fold; [/] change speed.
+    Fresh tabs: CPU, Memory, All. Existing tabs are retained. See docs/KEYS.md.
 
 CONFIG:
     $GANDER_CONFIG, otherwise $XDG_CONFIG_HOME/gander/config.toml

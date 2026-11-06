@@ -188,6 +188,7 @@ pub struct ThreadInfo {
     pub system_ns: u64,
     /// `pth_run_state`: 1 running, 2 stopped, 3 waiting, 4 uninterruptible.
     pub run_state: i32,
+    pub priority: i32,
 }
 
 impl Default for ThreadInfo {
@@ -198,6 +199,7 @@ impl Default for ThreadInfo {
             user_ns: 0,
             system_ns: 0,
             run_state: 0,
+            priority: 0,
         }
     }
 }
@@ -205,7 +207,11 @@ impl Default for ThreadInfo {
 impl ThreadInfo {
     /// Thread name as a lossy string, empty when the thread is unnamed.
     pub fn name_str(&self) -> &str {
-        let len = self.name.iter().position(|b| *b == 0).unwrap_or(self.name.len());
+        let len = self
+            .name
+            .iter()
+            .position(|b| *b == 0)
+            .unwrap_or(self.name.len());
         // `pth_name` is a `char[64]`; it is not guaranteed UTF-8 but always is
         // in practice (it comes from `pthread_setname_np`).
         std::str::from_utf8(&self.name[..len]).unwrap_or("")
@@ -319,6 +325,7 @@ pub fn thread_info(pid: u32, handle: u64) -> Option<ThreadInfo> {
         user_ns: info.pth_user_time,
         system_ns: info.pth_system_time,
         run_state: info.pth_run_state,
+        priority: info.pth_curpri,
     })
 }
 
@@ -338,6 +345,10 @@ pub struct TaskInfo {
 
 /// Task counters from the same libproc flavor used by htop's Darwin backend.
 pub fn task_info(pid: u32) -> Option<TaskInfo> {
+    task_info_checked(pid).ok()
+}
+
+pub fn task_info_checked(pid: u32) -> std::io::Result<TaskInfo> {
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
     let want = std::mem::size_of::<libc::proc_taskinfo>() as c_int;
     // SAFETY: the buffer and size match PROC_PIDTASKINFO's output structure.
@@ -351,11 +362,18 @@ pub fn task_info(pid: u32) -> Option<TaskInfo> {
         )
     };
     if got != want {
-        return None;
+        return Err(if got <= 0 {
+            std::io::Error::last_os_error()
+        } else {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "incomplete task information",
+            )
+        });
     }
     // SAFETY: libproc returned the full initialized structure.
     let info = unsafe { info.assume_init() };
-    Some(TaskInfo {
+    Ok(TaskInfo {
         user_ns: info.pti_total_user,
         system_ns: info.pti_total_system,
         virtual_size: info.pti_virtual_size,
@@ -715,7 +733,8 @@ fn parse_iflist2(buf: &[u8]) -> crate::system::NetCounters {
 }
 
 /// Memory page size reported by the VM subsystem.
-pub fn page_size() -> u64 {    // SAFETY: plain static, initialised by dyld.
+pub fn page_size() -> u64 {
+    // SAFETY: plain static, initialised by dyld.
     let v = unsafe { libc::vm_page_size };
     if v > 0 {
         v as u64

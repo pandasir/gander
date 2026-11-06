@@ -8,6 +8,7 @@ use gander_config as config_crate;
 
 mod args;
 mod batch;
+mod export;
 
 fn main() -> std::process::ExitCode {
     let args = match args::Args::parse(std::env::args().skip(1)) {
@@ -87,6 +88,7 @@ fn main() -> std::process::ExitCode {
             }
             std::process::ExitCode::SUCCESS
         }
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => std::process::ExitCode::from(130),
         Err(e) => {
             eprintln!("gander: {e}");
             std::process::ExitCode::from(1)

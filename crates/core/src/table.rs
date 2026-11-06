@@ -132,12 +132,8 @@ pub struct Sort {
 }
 
 impl Default for Sort {
-    /// PID ascending, matching the shipped config default.
-    ///
-    /// Kept in step with `Config::default()` deliberately: a `ProcTable` built
-    /// without an explicit sort (tests, and any future front end) should present
-    /// the same stable order the TUI does, not silently fall back to CPU% and
-    /// reintroduce the reshuffling this default exists to avoid.
+    /// Neutral core-table order. The TUI explicitly applies its per-tab sort;
+    /// fresh resource tabs need not change ordering for other core consumers.
     fn default() -> Self {
         Sort {
             field: crate::row::Field::Pid,
@@ -173,13 +169,24 @@ pub fn sort_order(rows: &[Row], order: &mut [usize], sort: Sort) {
     // ascending pid order in either direction, and never shuffles.
     let descending = sort.dir == Dir::Desc;
     order.sort_unstable_by(|a, b| {
-        let primary = compare_by(rows, sort.field, *a, *b);
+        let available_a = rows[*a].availability.field(sort.field).is_available();
+        let available_b = rows[*b].availability.field(sort.field).is_available();
+        let availability = available_b.cmp(&available_a);
+        let primary = if available_a && available_b {
+            compare_by(rows, sort.field, *a, *b)
+        } else {
+            std::cmp::Ordering::Equal
+        };
         let primary = if descending {
             primary.reverse()
         } else {
             primary
         };
-        primary.then_with(|| rows[*a].pid.cmp(&rows[*b].pid))
+        availability
+            .then(primary)
+            .then_with(|| rows[*a].pid.cmp(&rows[*b].pid))
+            .then_with(|| rows[*a].identity().cmp(&rows[*b].identity()))
+            .then_with(|| rows[*a].starttime.cmp(&rows[*b].starttime))
     });
 }
 
@@ -315,6 +322,10 @@ impl Filter {
         } else {
             Some(Filter { terms })
         }
+    }
+
+    pub fn expression(&self) -> String {
+        self.terms.join("|")
     }
 
     /// A row matches if **any** term is a substring of its command line.
@@ -476,7 +487,7 @@ impl ProcTable {
     }
 
     pub fn row_at(&self, pos: usize) -> Option<&Row> {
-        self.view.order.get(pos).map(|&i| &self.rows[i])
+        self.view.order.get(pos).and_then(|&i| self.rows.get(i))
     }
 
     /// Sum of `percent_cpu` over displayed rows, used by the USED meter label.
@@ -507,6 +518,28 @@ pub fn derive_cpu(rows: &mut [Row], snapshot: &SystemSnapshot) {
     for row in rows.iter_mut() {
         let d_proc = row.ticks.proc.saturating_sub(row.prev_ticks.proc);
         row.percent_cpu = cpu_percent(d_proc, d_total, snapshot.cpu_count());
+        use crate::metrics::{Availability, Metric};
+        if matches!(
+            row.availability.get(Metric::Cpu),
+            Availability::Available | Availability::WarmingUp
+        ) {
+            row.availability.set(
+                Metric::Cpu,
+                if d_total > 0 && row.ticks.proc >= row.prev_ticks.proc {
+                    Availability::Available
+                } else {
+                    Availability::WarmingUp
+                },
+            );
+        }
+        row.availability.set(
+            Metric::Memory,
+            if snapshot.mem.total == 0 {
+                Availability::ReadError
+            } else {
+                row.availability.get(Metric::Rss)
+            },
+        );
         row.percent_mem = if snapshot.mem.total == 0 {
             0.0
         } else {

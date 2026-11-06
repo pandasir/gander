@@ -200,7 +200,7 @@ gander                                     # interactive TUI
 gander --delay 500                         # sample every 500 ms
 gander -n 5 -d 1000                        # five text samples
 gander --json --limit 10                   # one JSON sample
-gander --sort PERCENT_MEM --limit 20       # top 20 by memory
+gander -n 1 --sort PERCENT_MEM --limit 20  # top 20 by memory
 gander -F "python|node"                    # filter command lines
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
@@ -224,7 +224,7 @@ switches between them, and gander remembers the choice.
 | `F3` / `/` | Search |
 | `F4` / `\` | Filter |
 | `F5` / `t` | Tree view |
-| `F6` / `<` `>` | Change sort |
+| `F6` | Sort picker (`<` / `>` cycle fields, `I` reverses direction) |
 | `F9` / `k` | Send signal |
 | `F10` / `q` | Quit |
 
@@ -232,13 +232,24 @@ Keys that differ from htop:
 
 | Key | gander |
 |---|---|
-| `I` | Cycle the selected header meter's mode |
-| `+` / `-` | Faster / slower sampling |
+| `m` | Cycle the selected header meter's mode |
+| `[` / `]` | Slower / faster sampling; tree `+/-` expand/collapse |
+| `B` / `V` | Toggle system sidebar / inspector |
 | `L` | Switch layout |
 | `Shift+Left` / `Shift+Right` | Move the header meter cursor |
 
-htop's `I` inverts the sort order; in gander use `F6` / `<` `>` / `.` instead.
-See [docs/KEYS.md](docs/KEYS.md) for the complete keymap.
+`I` reverses sorting, and `*` collapses/expands the whole tree. `u` opens a
+searchable owner picker. Confirmed filters remain visible with matching/eligible
+counts. See [docs/KEYS.md](docs/KEYS.md) for the complete keymap.
+
+Fresh configurations provide CPU, Memory, and All tabs; existing/imported tabs
+are kept. Command summaries reserve key facts, while `w` opens a full-width,
+resize-aware command view. Sidebar preferences persist independently.
+
+Batch output follows one unreported warm-up interval. Unavailable metrics are
+`null` in JSON with reasons in `availability`, and `-` in text/TUI; real zero
+remains numeric. See [metrics](docs/METRICS.md) and
+[unreleased migration notes](docs/RELEASE-NOTES.md).
 
 ## Configuration
 

@@ -188,7 +188,7 @@ gander                                     # 交互式 TUI
 gander --delay 500                         # 每 500 毫秒采样一次
 gander -n 5 -d 1000                        # 输出 5 次文本采样
 gander --json --limit 10                   # 输出一次 JSON
-gander --sort PERCENT_MEM --limit 20       # 按内存排序取前 20
+gander -n 1 --sort PERCENT_MEM --limit 20  # 按内存排序取前 20
 gander -F "python|node"                    # 过滤命令行
 gander --import-htoprc ~/.config/htop/htoprc --save
 ```
@@ -212,7 +212,7 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 | `F3` / `/` | 搜索 |
 | `F4` / `\` | 过滤 |
 | `F5` / `t` | 树状视图 |
-| `F6` / `<` `>` | 切换排序列 |
+| `F6` | 排序选择；`<` / `>` 切换列，`I` 反转方向 |
 | `F9` / `k` | 发送信号 |
 | `F10` / `q` | 退出 |
 
@@ -220,13 +220,22 @@ gander --import-htoprc ~/.config/htop/htoprc --save
 
 | 按键 | gander |
 |---|---|
-| `I` | 切换当前选中表头 meter 的显示模式 |
-| `+` / `-` | 加快 / 放慢采样 |
+| `m` | 切换当前选中表头 meter 的显示模式 |
+| `[` / `]` | 放慢 / 加快采样；树模式 `+/-` 展开 / 折叠 |
+| `B` / `V` | 独立切换系统侧栏 / 详情面板 |
 | `L` | 切换布局 |
 | `Shift+Left` / `Shift+Right` | 移动表头 meter 光标 |
 
-htop 的 `I` 用于反转排序；在 gander 中请使用 `F6` / `<` `>` / `.`。完整按键表见
-[docs/KEYS.md](docs/KEYS.md)。
+`I` 反转排序，`*` 折叠或展开整棵树，`u` 打开可搜索的用户选择器。
+确认后的过滤条件和匹配数会持续显示。完整按键表见 [docs/KEYS.md](docs/KEYS.md)。
+
+首次启动提供 CPU、Memory、All 标签页，默认 CPU 降序；已有或导入的标签页保持不变。
+长命令摘要最多四行并为状态、CPU、内存留出空间；`w` 使用全宽查看并随窗口调整换行。
+两侧面板可独立开关并记住偏好，窄窗口临时隐藏不会改写偏好。
+
+批处理先进行一次不输出的预热，再按请求次数输出。无法取得的指标在 JSON 中为
+`null`，`availability` 说明原因；TUI 和文本显示 `-`，真实零值仍保留为数值。
+详见[指标语义](docs/METRICS.md)和[迁移说明](docs/RELEASE-NOTES.md)。
 
 ## 配置
 

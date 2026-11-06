@@ -1,5 +1,9 @@
 # Portability
 
+Basic resource metrics now carry per-field availability; failed reads are not
+measured zeroes. Native macOS priority is independent of nice. See
+[METRICS.md](METRICS.md) for the output and batch warm-up contract.
+
 How the three backends differ, what is verified where, and what is honestly
 missing. Read [DESIGN.md § 5](DESIGN.md#5-platform-abstraction) for the trait
 design.

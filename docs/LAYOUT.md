@@ -1,5 +1,17 @@
 # The `panels` layout
 
+Fresh configurations provide CPU, Memory, and All tabs, initially CPU descending;
+existing custom/imported tabs are preserved. `B` and `V` independently toggle the
+system sidebar and inspector, with the same settings in F2 Display. Preferences
+persist, while temporary hiding on narrow terminals does not change them.
+
+The command column receives at least 20 cells when the configured fixed columns
+and terminal permit it. Preferred panels shrink or disappear to meet this budget,
+inspector first. Secondary screens use the full content width instead of leaving
+blank sidebar tracks. Full command text reflows on resize without losing stored
+characters or whitespace; inspector summaries use at most four rows and reserve
+state, CPU, and resident-memory facts. Missing metrics render as `-`.
+
 Why gander's default screen does not look like htop, and what it does instead.
 
 The htop arrangement is still available — `L` switches, `layout = "htop"` in the
@@ -130,6 +142,9 @@ open files, locks, backtrace, and the `a`/`i`/`F2` editors.
 
 The layout is not allowed to produce an unusable screen on a small terminal:
 
+The table below gives preferred widths, not a guarantee that both sidebars are
+shown. The actual fixed-column and command-width budget can hide a panel sooner.
+
 | Terminal width | System column | Inspector |
 |---|---|---|
 | ≥ 120 | 24 | 38 |
@@ -144,8 +159,10 @@ The inspector is dropped before the system column, because the system column
 carries information with no other home while the inspector duplicates what
 columns and the modal screens can show.
 
-Below 30×4 for the whole terminal, or when the panels would leave under 40 cells
-for the table, the screen falls back to the compact htop arrangement entirely.
+Below 30x4 for the whole terminal the screen falls back to the compact htop
+arrangement. At larger sizes, sidebars can disappear while the table retains the
+available content band and horizontal navigation; the actual column budget,
+rather than only the nominal terminal width, decides which panels fit.
 
 ## What was deliberately not done
 

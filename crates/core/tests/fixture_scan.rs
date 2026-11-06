@@ -358,6 +358,63 @@ fn advancing_fixture_resets_the_interval_when_cpu_topology_changes() {
 }
 
 #[test]
+fn metric_validity_tracks_regression_reuse_and_partial_read_failure() {
+    use gander_core::metrics::{Availability, Metric};
+    let fixture = CpuFixture::new();
+    fixture.write(2, 100, 100, 500);
+    let mut sampler = Sampler::new(&fixture.0);
+    sampler.sample();
+    fixture.write(2, 150, 150, 600);
+    let (_, rows) = sampler.sample();
+    assert_eq!(
+        rows[0].availability.get(Metric::Cpu),
+        Availability::Available
+    );
+    fixture.write(2, 200, 200, 100);
+    let (_, rows) = sampler.sample();
+    assert_eq!(
+        rows[0].availability.get(Metric::Cpu),
+        Availability::WarmingUp
+    );
+    assert_eq!(
+        rows[0].availability.get(Metric::Rss),
+        Availability::Available
+    );
+    fixture.write(2, 250, 250, 150);
+    let path = fixture.0.join("42/stat");
+    let stat = std::fs::read_to_string(&path).unwrap();
+    let end = stat.rfind(')').unwrap() + 1;
+    let mut fields = stat[end..]
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    fields[19] = "999999".into();
+    std::fs::write(&path, format!("{} {}", &stat[..end], fields.join(" "))).unwrap();
+    let (_, rows) = sampler.sample();
+    assert_eq!(
+        rows[0].availability.get(Metric::Cpu),
+        Availability::WarmingUp
+    );
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let (_, rows) = sampler.sample();
+    assert_eq!(
+        rows.len(),
+        1,
+        "an enumerated but unreadable task remains represented"
+    );
+    assert_eq!(rows[0].pid, 42);
+    assert_eq!(
+        rows[0].uid, 1000,
+        "independently readable identity is retained"
+    );
+    assert_eq!(
+        rows[0].availability.get(Metric::Rss),
+        Availability::ReadError
+    );
+}
+
+#[test]
 fn proc_table_reorder_is_a_permutation() {
     let mut sampler = Sampler::new(fixture_root());
     let (_snap, rows) = sampler.sample();

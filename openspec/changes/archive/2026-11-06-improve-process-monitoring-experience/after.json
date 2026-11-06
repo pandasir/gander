@@ -1,0 +1,45 @@
+{
+  "label": "improve-process-monitoring-experience-final",
+  "binary": "/Users/edy/www/gander/target/release/gander",
+  "sha256": "53e2a2b73f760dea07732c5bdfb0a7f144efc0e1bda07e24e569364740bb765c",
+  "platform": "macOS-15.7.1-arm64-arm-64bit-Mach-O",
+  "viewport": [
+    160,
+    32
+  ],
+  "args": [
+    "-d",
+    "1000"
+  ],
+  "config": "delay_ms = 1000\nlayout = \"panels\"\nshow_userland_threads = false\nshow_kernel_threads = true\nactive_tab = 0\n[[tabs]]\nname = \"Benchmark\"\ncolumns = [\"PID\", \"PERCENT_CPU\", \"PERCENT_MEM\", \"M_RESIDENT\", \"COMM\"]\n[tabs.sort]\nfield = \"PERCENT_CPU\"\ndesc = true\n",
+  "process_count": 515,
+  "windows": [
+    {
+      "seconds": 30.006585541996174,
+      "cpu_percent": 0.9299472486668782,
+      "rss_bytes": 10764288,
+      "terminal_bytes": 56567,
+      "input_latency_ms": 4.278708001947962
+    },
+    {
+      "seconds": 30.00362658299855,
+      "cpu_percent": 0.8685225077013236,
+      "rss_bytes": 11796480,
+      "terminal_bytes": 44831,
+      "input_latency_ms": 0.5743750080000609
+    },
+    {
+      "seconds": 30.006906999988132,
+      "cpu_percent": 0.6555100519581856,
+      "rss_bytes": 11681792,
+      "terminal_bytes": 61377,
+      "input_latency_ms": 1.4352500002132729
+    }
+  ],
+  "medians": {
+    "cpu_percent": 0.8685225077013236,
+    "rss_bytes": 11681792,
+    "terminal_bytes": 56567,
+    "input_latency_ms": 1.4352500002132729
+  }
+}

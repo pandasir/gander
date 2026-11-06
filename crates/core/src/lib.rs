@@ -17,6 +17,7 @@
 pub mod action;
 pub mod affinity;
 pub mod format;
+pub mod metrics;
 pub mod row;
 pub mod system;
 pub mod table;
@@ -202,6 +203,5 @@ pub mod capability {
     /// macOS is the exception: it exposes per-process `rusage` figures but no
     /// host-wide byte counter that avoids IOKit, and the design forbids a vendor
     /// SDK. The `DiskIO` meter says so there instead of drawing a permanent zero.
-    pub const HOST_DISK_IO: bool =
-        cfg!(any(target_os = "linux", target_os = "freebsd"));
+    pub const HOST_DISK_IO: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
 }

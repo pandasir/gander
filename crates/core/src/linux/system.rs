@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::metrics::{Availability, Metric, MetricAvailability};
 use crate::row::{CpuTicks, Row, RowFlags};
 use crate::system::{CpuTimes, DiskCounters, MemInfo, NetCounters, SwapInfo, SystemSnapshot};
 use crate::table::{cpu_percent, Cache};
@@ -35,6 +36,7 @@ pub struct Sampler {
     prev_cpu: Vec<CpuTimes>,
     /// Minimum per-process state needed for the next tick's delta.
     prev_rows: HashMap<Pid, PrevRow>,
+    prev_threads: HashMap<Pid, PrevRow>,
     /// Previous host counters, for the network/disk throughput meters.
     ///
     /// Held as `Option` so the first sample can tell "no previous sample" from
@@ -97,6 +99,7 @@ impl Sampler {
             cache: Cache::new(),
             prev_cpu: Vec::new(),
             prev_rows: HashMap::new(),
+            prev_threads: HashMap::new(),
             prev_net: None,
             prev_disk: None,
             use_rayon: true,
@@ -198,7 +201,7 @@ impl Sampler {
         let pids = scan::list_pids(&self.root).unwrap_or_default();
         let mut rows = self.read_rows(&pids, &cpu_delta, uptime, mem.total);
         if self.show_threads {
-            let threads = self.read_threads(&pids, &cpu_delta);
+            let threads = self.read_threads(&pids, &cpu_delta, mem.total);
             rows.extend(threads);
         }
 
@@ -240,7 +243,7 @@ impl Sampler {
     /// row, and duplicating it would make the tree show every process twice.
     /// Threads inherit the process's uid, command line and cgroup, so only the
     /// thread's own `stat` (and therefore its CPU%) is read here.
-    fn read_threads(&mut self, pids: &[Pid], cpu_delta: &[CpuTimes]) -> Vec<Row> {
+    fn read_threads(&mut self, pids: &[Pid], cpu_delta: &[CpuTimes], mem_total: u64) -> Vec<Row> {
         let root = self.root.clone();
         let page_size = self.page_size;
         let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0);
@@ -259,6 +262,7 @@ impl Sampler {
             }
         }
         if pairs.is_empty() {
+            self.prev_threads.clear();
             return Vec::new();
         }
 
@@ -275,9 +279,11 @@ impl Sampler {
             };
 
         let mut out = Vec::with_capacity(stats.len());
+        let mut next_threads = HashMap::with_capacity(stats.len());
         for (pid, tid, comm, fields) in stats {
             let starttime = fields.starttime;
-            let mut row = Row::default_for_test(tid);
+            let mut row = Row::new(tid);
+            row.availability = MetricAvailability::all(Availability::Available);
             row.pid = tid;
             // The tid is already unique across the system on Linux, but it is
             // stored through `thread_id` as well so that `Row::identity` means the
@@ -289,11 +295,13 @@ impl Sampler {
             row.ppid = pid;
             row.comm = comm;
 
-            let prev_thread_ticks = match self.prev_rows.get(&tid) {
-                Some(p) if p.starttime == starttime => p.proc_ticks,
-                _ => 0,
-            };
-            self.prev_rows.insert(
+            let previous = self
+                .prev_threads
+                .get(&tid)
+                .copied()
+                .filter(|p| p.starttime == starttime && p.proc_ticks <= fields.cpu_ticks());
+            let prev_thread_ticks = previous.map_or(0, |p| p.proc_ticks);
+            next_threads.insert(
                 tid,
                 PrevRow {
                     starttime,
@@ -305,6 +313,16 @@ impl Sampler {
 
             let delta = fields.cpu_ticks().saturating_sub(prev_thread_ticks);
             row.percent_cpu = cpu_percent(delta, total_delta, cpu_count);
+            if previous.is_none() || total_delta == 0 {
+                row.percent_cpu = 0.0;
+                row.availability.set(Metric::Cpu, Availability::WarmingUp);
+            }
+            if mem_total > 0 {
+                row.percent_mem = row.res as f32 * 100.0 / mem_total as f32;
+            } else {
+                row.availability
+                    .set(Metric::Memory, Availability::ReadError);
+            }
 
             // Identity is the process's, and already cached under the leader's pid.
             let stable = scan::read_identity(&self.root, pid, starttime, &mut self.cache);
@@ -326,6 +344,7 @@ impl Sampler {
 
             out.push(row);
         }
+        self.prev_threads = next_threads;
         out
     }
 
@@ -337,21 +356,17 @@ impl Sampler {
         uptime: u64,
         mem_total: u64,
     ) -> Vec<Row> {
-        let root = &self.root;
+        let root = self.root.clone();
         let page_size = self.page_size;
 
         // Phase 1: the per-process `stat` read. Read-only, so parallel-safe.
-        let stats: Vec<(Pid, crate::row::CommBuf, super::parse::StatFields)> =
-            if self.use_rayon && pids.len() >= PAR_THRESHOLD {
-                use rayon::prelude::*;
-                pids.par_iter()
-                    .filter_map(|&pid| scan::read_stat(root, pid).map(|(c, f)| (pid, c, f)))
-                    .collect()
-            } else {
-                pids.iter()
-                    .filter_map(|&pid| scan::read_stat(root, pid).map(|(c, f)| (pid, c, f)))
-                    .collect()
-            };
+        let read_one = |pid: &Pid| (*pid, scan::read_stat_checked(&root, *pid));
+        let stats: Vec<_> = if self.use_rayon && pids.len() >= PAR_THRESHOLD {
+            use rayon::prelude::*;
+            pids.par_iter().map(read_one).collect()
+        } else {
+            pids.iter().map(read_one).collect()
+        };
 
         // Phase 2: identity (uid, cmdline, exe) — cached, so mostly a hash hit.
         let mut out = Vec::with_capacity(stats.len());
@@ -359,16 +374,42 @@ impl Sampler {
         let total_delta = cpu_delta.first().map(|d| d.total()).unwrap_or(0);
         let cpu_count = cpu_delta.len().saturating_sub(1);
 
-        for (pid, comm, fields) in stats {
+        for (pid, result) in stats {
+            let (comm, fields) = match result {
+                Ok(stat) => stat,
+                Err(error) => {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        let mut row = Row::new(pid);
+                        row.state = b'?';
+                        row.availability =
+                            MetricAvailability::all(Availability::from_error(&error));
+                        if let Ok(status) = std::fs::read(root.join(pid.to_string()).join("status"))
+                        {
+                            row.uid = super::parse::parse_status_uid(&status).unwrap_or(0);
+                            if let Some(name) = status
+                                .split(|b| *b == b'\n')
+                                .find_map(|line| line.strip_prefix(b"Name:\t"))
+                            {
+                                let _ = row.comm.try_push_str(&String::from_utf8_lossy(name));
+                            }
+                        }
+                        out.push(row);
+                    }
+                    continue;
+                }
+            };
             let starttime = fields.starttime;
-            let mut row = Row::default_for_test(pid);
+            let mut row = Row::new(pid);
+            row.availability = MetricAvailability::all(Availability::Available);
 
             // Same (pid, starttime) means same process; otherwise this is either
             // a new process or a reused PID and the tick history is invalid.
-            let prev_proc_ticks = match self.prev_rows.get(&pid) {
-                Some(p) if p.starttime == starttime => p.proc_ticks,
-                _ => 0,
-            };
+            let previous = self
+                .prev_rows
+                .get(&pid)
+                .copied()
+                .filter(|p| p.starttime == starttime && p.proc_ticks <= fields.cpu_ticks());
+            let prev_proc_ticks = previous.map_or(0, |p| p.proc_ticks);
             next_prev.insert(
                 pid,
                 PrevRow {
@@ -417,6 +458,10 @@ impl Sampler {
 
             let d_proc = fields.cpu_ticks().saturating_sub(prev_proc_ticks);
             row.percent_cpu = cpu_percent(d_proc, total_delta, cpu_count);
+            if previous.is_none() || total_delta == 0 {
+                row.percent_cpu = 0.0;
+                row.availability.set(Metric::Cpu, Availability::WarmingUp);
+            }
 
             let stable = scan::read_identity(&self.root, pid, starttime, &mut self.cache);
             row.uid = stable.uid;
@@ -448,6 +493,10 @@ impl Sampler {
                 0.0
             };
 
+            if mem_total == 0 {
+                row.availability
+                    .set(Metric::Memory, Availability::ReadError);
+            }
             row.ticks = CpuTicks {
                 proc: fields.cpu_ticks(),
                 total: total_delta,

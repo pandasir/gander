@@ -19,15 +19,21 @@ Output "demo-raw.gif"
 
 Set Shell "bash"
 Set FontSize 13
+Set TypingSpeed 5ms
+Set Framerate 10
 Set Width 1600
 Set Height 760
 Set Padding 12
 Set Theme "Catppuccin Mocha"
 
 Hide
-Type "export GANDER_CONFIG=assets/demo-config.toml && ./target/release/gander -F 'pycharm|iTerm2|Docker|node|gander|postgres'"
+Type "demo_dir=$(mktemp -d) && cp assets/demo-config.toml $demo_dir/config.toml && GANDER_CONFIG=$demo_dir/config.toml XDG_STATE_HOME=$demo_dir/state ./target/release/gander"
 Enter
-Sleep 8s
+Sleep 2s
+Type '\'
+Type "iTerm.app/Contents/MacOS/iTerm2|com.docker.backend|Virtualization.framework|Google Chrome.app/Contents/MacOS/Google Chrome|./target/release/gander"
+Enter
+Sleep 6s
 Show
 Sleep 1200ms
 Down
@@ -35,15 +41,21 @@ Sleep 900ms
 Down
 Sleep 1600ms
 Screenshot "screenshot-panels.png"
+Sleep 300ms
 Type "t"
 Sleep 2200ms
 Screenshot "screenshot-tree.png"
+Sleep 300ms
 Type "t"
 Sleep 900ms
 Type "L"
 Sleep 2200ms
 Screenshot "screenshot-htop.png"
+Sleep 300ms
 Type "L"
 Sleep 1200ms
 Type "q"
 Sleep 400ms
+Hide
+Type "rm -rf $demo_dir"
+Enter

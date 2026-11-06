@@ -1,5 +1,10 @@
 # gander — Design
 
+Current process-data and interaction contracts are documented in
+[METRICS.md](METRICS.md), [KEYS.md](KEYS.md), and [RELEASE-NOTES.md](RELEASE-NOTES.md).
+Basic raw resource values have accompanying availability; invalid CPU baselines
+remain numerically safe internally but are not presented as measured zero.
+
 > A Rust reimplementation of htop's feature set. Linux first, others behind a
 > platform trait.
 
@@ -15,7 +20,7 @@ We are reimplementing against htop `main` (currently `3.6.0-dev`, GPL-2.0+).
 | What | Where |
 |---|---|
 | Feature list, keybindings, column semantics | `htop.1.in` (man page) |
-| Key mapping table | `Action.c` — copy the bindings verbatim |
+| Key mapping table | `Action.c` as a reference; supported bindings and differences are in `KEYS.md` |
 | Column enum / field IDs | `RowField.h` + `<platform>/ProcessField.h` |
 | Platform abstraction shape | `<platform>/Platform.c`, `*Machine.c`, `*ProcessTable.c`, `*Process.c` |
 | Meter inventory | `<platform>/Platform.c` → `Platform_meterTypes[]` |
@@ -39,7 +44,7 @@ actually do with htop. Ship that first.
 
 - [x] Scan `/proc`, build a `Row` per PID
 - [x] Columns: PID, COMM/Command, STATE, USER, PRIORITY, NICE, CPU%, MEM%, TIME
-- [x] Sort by any column, asc/desc (`F6`, `<`, `>`)
+- [x] Sort by any column, asc/desc (`F6` picker, `I` inversion, `<` / `>` cycling)
 - [x] Header row highlighting the active sort column
 - [x] Incremental search (`F3`, `/`)
 - [x] Incremental filter (`F4`, `\`) — fixed strings, `|`-separated, case-insensitive
@@ -562,10 +567,20 @@ impl App {
 }
 ```
 
-Copy htop's bindings verbatim (`F1`–`F10`, `Tab`, `Space`, `c`, `U`, `t`, `k`,
-`s`, `l`, `w`, `x`, `e`, `Z`, `m`, `b`, `H`, `K`, `I`, `+`/`-`/`*`, `u`, `.`,
-`<`/`>`, `[`/`]`, `^`, `$`, `PgUp`/`PgDn`, `Home`/`End`, `Ctrl-L`). Migration cost
-for a user trying gander should be zero.
+Use htop's familiar commands where implemented: F6 opens sorting, `I` reverses
+its direction, and tree `+/-` fold nodes. Gander-specific controls include `m`
+for meter mode, `[/]` for speed in either mode, and `B`/`V` for sidebar visibility.
+`KEYS.md` is the supported-key inventory; a reference binding is not evidence that
+it has a handler here.
+
+### Refresh scheduling
+
+The UI waits for terminal events, coalesced latest-sample notifications, and
+visible time-meter changes. A dirty flag gates drawing; polling alone never
+advances histories or redraws an unchanged view. Input remains independent of
+sampling, including at a ten-second interval. Worker shutdown is interruptible,
+and a terminal guard restores mouse capture, raw mode, cursor, and alternate
+screen on normal and recoverable error exits. See `PERFORMANCE.md` for checks.
 
 ---
 
@@ -748,7 +763,7 @@ Ship this before touching meters:
 
 1. Scan `/proc`, build `Vec<Row>` (single-threaded is fine for v0)
 2. Render a table: PID, COMMAND, USER, CPU%, MEM%, TIME
-3. Sort by any column; `F6` cycles; header highlights the active sort
+3. Sort by any column; `F6` opens a picker; the header identifies field and direction
 4. `/` search, `\` filter, `t` tree
 5. `F9` kill, `F7`/`F8` nice
 6. One CPU bar + one memory bar

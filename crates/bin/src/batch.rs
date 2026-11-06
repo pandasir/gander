@@ -83,35 +83,45 @@ pub fn run(config: &Config, batch: &Batch) -> std::process::ExitCode {
             .with_delayacct(sort.field.needs_delayacct()),
     );
 
-    for iteration in 0..iterations {
-        let rows = match sample_once(&mut sampler, sort, filter.as_ref()) {
-            Ok(rows) => rows,
-            Err(e) => {
-                eprintln!("gander: {e}");
-                return std::process::ExitCode::from(1);
+    let result = measured_samples(
+        iterations,
+        config.delay(),
+        || sample_once(&mut sampler, sort, filter.as_ref()),
+        std::thread::sleep,
+        |rows| {
+            if batch.json {
+                write_json(&mut out, &rows, batch.limit, config)?;
+            } else {
+                write_text(&mut out, &rows, batch.limit, sample_clk_tck())?;
             }
-        };
-
-        let result = if batch.json {
-            write_json(&mut out, &rows, batch.limit, config)
-        } else {
-            write_text(&mut out, &rows, batch.limit, sample_clk_tck())
-        };
-
-        if let Err(e) = result {
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                return std::process::ExitCode::SUCCESS;
-            }
-            eprintln!("gander: {e}");
-            return std::process::ExitCode::from(1);
+            std::io::Write::flush(&mut out)
+        },
+    );
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+            std::process::ExitCode::SUCCESS
         }
-
-        if iteration + 1 < iterations {
-            std::thread::sleep(config.delay());
+        Err(error) => {
+            eprintln!("gander: {error}");
+            std::process::ExitCode::from(1)
         }
     }
+}
 
-    std::process::ExitCode::SUCCESS
+fn measured_samples<T>(
+    iterations: usize,
+    delay: std::time::Duration,
+    mut sample: impl FnMut() -> std::io::Result<T>,
+    mut wait: impl FnMut(std::time::Duration),
+    mut emit: impl FnMut(T) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let _baseline = sample()?;
+    for _ in 0..iterations.max(1) {
+        wait(delay);
+        emit(sample()?)?;
+    }
+    Ok(())
 }
 
 /// Whether `name` is a column that exists on some other platform.
@@ -214,11 +224,27 @@ fn write_text(
             out,
             "{:>7} {:>6} {:>5} {:>5} {:>8} {:>8} : {}",
             row.pid,
-            format::percent_human(row.percent_cpu),
-            format::percent_human(row.percent_mem),
+            if row.availability.field(Field::PercentCpu).is_available() {
+                format::percent_human(row.percent_cpu).to_string()
+            } else {
+                "-".into()
+            },
+            if row.availability.field(Field::PercentMem).is_available() {
+                format::percent_human(row.percent_mem).to_string()
+            } else {
+                "-".into()
+            },
             row.nice,
-            format::bytes_human(row.res),
-            format::cpu_time_human(row.time_ticks, clk_tck),
+            if row.availability.field(Field::ResMem).is_available() {
+                format::bytes_human(row.res).to_string()
+            } else {
+                "-".into()
+            },
+            if row.availability.field(Field::Time).is_available() {
+                format::cpu_time_human(row.time_ticks, clk_tck).to_string()
+            } else {
+                "-".into()
+            },
             command
         )?;
     }
@@ -235,110 +261,19 @@ fn write_json(
     writeln!(out, "[")?;
     for (i, row) in rows.iter().take(take).enumerate() {
         let comma = if i + 1 == take { "" } else { "," };
-        // The M3 memory figures are emitted as a nested object rather than as
-        // four more top-level keys: they are one concept (the `smaps_rollup`
-        // breakdown), they are all `null` together when the read was skipped, and
-        // a consumer should be able to test one thing to know whether it has them.
-        //
-        // `null` rather than `0` throughout: zero is a measurement, and these are
-        // an absence. A monitoring script that averages `pss` over the table must
-        // not silently include processes whose PSS was never read.
-        writeln!(
-            out,
-            "  {{\"pid\":{},\"ppid\":{},\"uid\":{},\"comm\":{},\"state\":\"{}\",\
-             \"cpu_percent\":{:.2},\"mem_percent\":{:.2},\"rss\":{},\"vsize\":{},\
-             \"nice\":{},\"priority\":{},\"threads\":{},\"elapsed\":{},\"is_thread\":{},\
-             \"identity\":{},\"cmdline\":{},\"memory\":{}}}{}",
-            row.pid,
-            row.ppid,
-            row.uid,
-            json_string(row.comm.as_str()),
-            row.state as char,
-            row.percent_cpu,
-            row.percent_mem,
-            row.res,
-            row.virt,
-            row.nice,
-            row.priority,
-            row.nlwp,
-            row.elapsed,
-            row.is_thread,
-            row.identity(),
-            json_string(row.display_command()),
-            memory_json(row),
-            comma
-        )?;
+        write!(out, "  ")?;
+        serde_json::to_writer(&mut *out, &crate::export::Process::from(row)).map_err(|error| {
+            std::io::Error::new(
+                error
+                    .io_error_kind()
+                    .unwrap_or(std::io::ErrorKind::InvalidData),
+                error,
+            )
+        })?;
+        writeln!(out, "{comma}")?;
     }
     writeln!(out, "]")?;
     Ok(())
-}
-
-/// The `smaps_rollup` and GPU figures for one row, as a JSON object.
-///
-/// Every value is an unquoted number or `null`; nothing here needs escaping, so
-/// this is assembled with `format!` rather than going through a serializer.
-#[cfg(target_os = "linux")]
-fn memory_json(row: &Row) -> String {
-    let opt = |v: Option<u64>| match v {
-        Some(n) => n.to_string(),
-        None => "null".to_string(),
-    };
-    // Percentages carry two decimals, and `null` rather than `0.00` for unread:
-    // a JSON consumer has the same need to distinguish "not measured" from
-    // "measured as nothing" as the TUI does.
-    let fopt = |v: Option<f32>| match v {
-        Some(p) => format!("{p:.2}"),
-        None => "null".to_string(),
-    };
-    format!(
-        concat!(
-            "{{\"pss\":{},\"epss\":{},\"private\":{},\"swap\":{},\"gpu_percent\":{},",
-            "\"gpu_ns\":{},\"cpu_delay_percent\":{},\"io_delay_percent\":{},",
-            "\"swap_delay_percent\":{}}}"
-        ),
-        opt(row.pss),
-        opt(row.epss),
-        opt(row.private),
-        opt(row.swap_bytes),
-        fopt(row.gpu_percent),
-        opt(row.gpu_ns),
-        fopt(row.cpu_delay_percent),
-        fopt(row.io_delay_percent),
-        fopt(row.swap_delay_percent)
-    )
-}
-
-/// macOS has no `smaps_rollup`, no `drm-usage-stats`, and no per-process
-/// equivalent that maps onto the same fields.
-///
-/// Emitted as `null` rather than as an absent key so the schema is the same on
-/// both platforms: a consumer can read `row.memory.pss` unconditionally and get
-/// `null`, instead of having to test whether the key exists.
-#[cfg(not(target_os = "linux"))]
-fn memory_json(_row: &Row) -> String {
-    "null".to_string()
-}
-
-/// Minimal JSON string escaping: quotes, backslashes and control characters.
-fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write as _;
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]
@@ -407,11 +342,10 @@ mod tests {
 
     #[test]
     fn json_escaping() {
-        assert_eq!(json_string("plain"), "\"plain\"");
-        assert_eq!(json_string("a\"b"), "\"a\\\"b\"");
-        assert_eq!(json_string("a\\b"), "\"a\\\\b\"");
-        assert_eq!(json_string("a\nb"), "\"a\\nb\"");
-        assert_eq!(json_string("a\u{1}b"), "\"a\\u0001b\"");
+        for input in ["plain", "a\"b", "a\\b", "a\nb", "a\u{1}b"] {
+            let encoded = serde_json::to_string(input).unwrap();
+            assert_eq!(serde_json::from_str::<String>(&encoded).unwrap(), input);
+        }
     }
 
     #[test]
@@ -432,7 +366,56 @@ mod tests {
         assert!(text.starts_with('['));
         assert!(text.trim_end().ends_with(']'));
         assert_eq!(text.matches("{\"pid\"").count(), 2);
-        assert_eq!(text.matches("},").count(), 1, "comma only between entries");
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn warmup_does_not_count_as_output_and_every_output_follows_a_wait() {
+        use std::cell::{Cell, RefCell};
+        for iterations in [0, 1, 2] {
+            let scanned = Cell::new(0usize);
+            let emitted = RefCell::new(Vec::new());
+            let events = RefCell::new(Vec::new());
+            measured_samples(
+                iterations,
+                Config::default().delay(),
+                || {
+                    scanned.set(scanned.get() + 1);
+                    events.borrow_mut().push("scan");
+                    Ok(scanned.get())
+                },
+                |_| events.borrow_mut().push("wait"),
+                |value| {
+                    events.borrow_mut().push("emit");
+                    emitted.borrow_mut().push(value);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(scanned.get(), iterations.max(1) + 1);
+            assert_eq!(emitted.borrow().len(), iterations.max(1));
+            assert_eq!(emitted.borrow()[0], 2);
+            assert_eq!(&events.borrow()[..4], ["scan", "wait", "scan", "emit"]);
+        }
+    }
+
+    #[test]
+    fn broken_pipe_stops_sampling_without_an_extra_output() {
+        let mut scanned = 0;
+        let error = measured_samples(
+            5,
+            std::time::Duration::ZERO,
+            || {
+                scanned += 1;
+                Ok(scanned)
+            },
+            |_| {},
+            |_| Err(std::io::ErrorKind::BrokenPipe.into()),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(scanned, 2);
     }
 
     #[test]

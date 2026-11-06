@@ -15,6 +15,7 @@ use crate::app::{App, Key};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -23,7 +24,9 @@ mod platform {
     use gander_core::system::SystemSnapshot;
     use gander_core::PlatformSampler as _;
     use ratatui::backend::CrosstermBackend;
-    use ratatui::crossterm::event::{self, Event};
+    use ratatui::crossterm::event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
+    };
     use ratatui::crossterm::execute;
     use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
     use ratatui::Terminal;
@@ -56,10 +59,24 @@ mod platform {
     /// Shared slot written by the sampler thread and read by the renderer.
     pub type Slot = Arc<ArcSwap<Option<Sample>>>;
 
-    /// Input poll interval: keeps the UI responsive between samples.
-    /// A 30 Hz cap is well below the terminal's refresh rate and far below the
-    /// cost of a `/proc` scan.
-    const TICK: Duration = Duration::from_millis(33);
+    enum RuntimeEvent {
+        Input(std::io::Result<Event>),
+        SampleReady,
+    }
+
+    #[derive(Default)]
+    struct Redraw {
+        dirty: bool,
+    }
+
+    impl Redraw {
+        fn invalidate(&mut self) {
+            self.dirty = true;
+        }
+        fn take(&mut self) -> bool {
+            std::mem::take(&mut self.dirty)
+        }
+    }
 
     /// Shared "which expensive per-process reads are needed" slot.
     ///
@@ -94,23 +111,51 @@ mod platform {
 
         let options = Arc::new(AtomicU64::new(encode_options(app.scan_options())));
         let delay_ms = Arc::new(AtomicU64::new(clamp_delay_ms(app.config.delay_ms)));
-        let (handle, stop) = spawn_sampler(slot.clone(), delay_ms.clone(), options.clone());
-
         let mut terminal = init_terminal()?;
-        let result = event_loop(&mut terminal, &mut app, &slot, &options, &delay_ms);
-
+        let (sender, receiver) = mpsc::channel();
+        let (handle, stop) = spawn_sampler_notified(
+            slot.clone(),
+            delay_ms.clone(),
+            options.clone(),
+            Some(sender.clone()),
+        );
+        let input_stop = stop.clone();
+        let input = std::thread::spawn(move || {
+            while !input_stop.load(Ordering::Relaxed) {
+                match event::poll(Duration::from_millis(50)) {
+                    Ok(false) => continue,
+                    Ok(true) => {
+                        let result = event::read();
+                        let failed = result.is_err();
+                        if sender.send(RuntimeEvent::Input(result)).is_err() || failed {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.send(RuntimeEvent::Input(Err(error)));
+                        break;
+                    }
+                }
+            }
+        });
+        let result = event_loop(
+            &mut terminal.terminal,
+            &mut app,
+            &slot,
+            &options,
+            &delay_ms,
+            &receiver,
+        );
         stop.store(true, Ordering::Relaxed);
         let _ = handle.join();
-        // Restore the terminal before returning: a lost config is annoying, a
-        // terminal left in raw mode is unusable.
-        restore_terminal(&mut terminal)?;
+        let _ = input.join();
+        terminal.restore()?;
 
         // History is written on every submission, but a final flush covers a
         // prompt that was still open at exit.
         app.save_history();
 
-        // A failed event loop still hands back the config: the user got as far as
-        // editing it, and throwing that away on an unrelated error is hostile.
+        // Only a normal exit returns writable configuration.
         result.map(|()| app.config)
     }
 
@@ -135,10 +180,20 @@ mod platform {
         }
     }
 
+    #[cfg(test)]
     fn spawn_sampler(
         slot: Slot,
         delay_ms: DelayMs,
         options: OptionsSlot,
+    ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+        spawn_sampler_notified(slot, delay_ms, options, None)
+    }
+
+    fn spawn_sampler_notified(
+        slot: Slot,
+        delay_ms: DelayMs,
+        options: OptionsSlot,
+        sender: Option<Sender<RuntimeEvent>>,
     ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
@@ -154,17 +209,15 @@ mod platform {
                         decode_options(options.load(Ordering::Relaxed)),
                     );
                     let (snapshot, rows) = sampler.sample();
-                    slot.store(Arc::new(Some(Sample { snapshot, rows })));
+                    publish_sample(&slot, sender.as_ref(), Sample { snapshot, rows });
 
                     // The delay is re-read every cycle, so `+`/`-` take effect on
                     // the next one rather than at the next restart.
-                    let delay = Duration::from_millis(delay_ms.load(Ordering::Relaxed));
-
-                    // Sleep the remainder in small steps so a quit is honoured
-                    // promptly even with a long sample delay, and so a delay that
-                    // gets *shorter* is noticed instead of finishing the old one.
-                    let step = Duration::from_millis(20).min(delay);
-                    while started.elapsed() < delay && !stop_flag.load(Ordering::Relaxed) {
+                    let step = Duration::from_millis(20);
+                    while started.elapsed()
+                        < Duration::from_millis(delay_ms.load(Ordering::Relaxed))
+                        && !stop_flag.load(Ordering::Relaxed)
+                    {
                         std::thread::sleep(step);
                     }
                 }
@@ -172,6 +225,15 @@ mod platform {
             .expect("spawn sampler thread");
 
         (handle, stop)
+    }
+
+    fn publish_sample(slot: &Slot, sender: Option<&Sender<RuntimeEvent>>, sample: Sample) {
+        let previous = slot.swap(Arc::new(Some(sample)));
+        if previous.is_none() {
+            if let Some(sender) = sender {
+                let _ = sender.send(RuntimeEvent::SampleReady);
+            }
+        }
     }
 
     fn publish_settings(app: &App, options: &OptionsSlot, delay_ms: &DelayMs) {
@@ -185,68 +247,282 @@ mod platform {
         slot: &Slot,
         options: &OptionsSlot,
         delay_ms: &DelayMs,
+        receiver: &Receiver<RuntimeEvent>,
     ) -> std::io::Result<()> {
-        let mut last_draw = Instant::now() - TICK;
-
+        let mut redraw = Redraw::default();
+        redraw.invalidate();
+        let mut timed = timed_token(app);
         loop {
-            // Adopt the newest sample, if there is one. `swap` clears the slot so
-            // each sample is applied exactly once. The sample is *moved* out, not
-            // cloned: `Row` owns three `Box<str>`s, so cloning the vector copied
-            // thousands of strings per second for nothing
-            // (`docs/DESIGN.md` §9.4).
-            let taken = slot.swap(Arc::new(None));
-            if let Ok(Some(sample)) = Arc::try_unwrap(taken) {
-                app.apply_sample(sample.snapshot, sample.rows);
-            }
-
-            if last_draw.elapsed() >= TICK {
+            if redraw.take() {
                 terminal.draw(|frame| app.draw(frame))?;
-                last_draw = Instant::now();
             }
-
-            if event::poll(TICK)? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        if let Some(k) = super::translate(key) {
-                            if app.handle_key(k) == Reaction::Quit || app.quit {
-                                return Ok(());
-                            }
-                            // Publish everything the sampler thread reads, after
-                            // every key. It used to publish only the thread flag;
-                            // the delay was passed by value at startup, so `+`/`-`
-                            // changed nothing until the next run.
-                            publish_settings(app, options, delay_ms);
-                        }
-                    }
-                    Event::Resize(_, _) => {
-                        terminal.draw(|frame| app.draw(frame))?;
-                        last_draw = Instant::now();
-                    }
-                    _ => {}
+            let event = if timed.is_some() {
+                match receiver.recv_timeout(Duration::from_millis(100)) {
+                    Ok(event) => Some(event),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 }
+            } else {
+                Some(
+                    receiver
+                        .recv()
+                        .map_err(|_| std::io::Error::other("terminal event channel closed"))?,
+                )
+            };
+            for event in event.into_iter().chain(receiver.try_iter()).take(128) {
+                if dispatch_event(event, app, slot, options, delay_ms, &mut redraw)? {
+                    return Ok(());
+                }
+            }
+            let next_timed = timed_token(app);
+            if next_timed != timed {
+                app.refresh_timed_meters();
+                redraw.invalidate();
+                timed = next_timed;
             }
         }
     }
 
-    fn init_terminal() -> std::io::Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
-        terminal::enable_raw_mode()?;
-        let mut stdout = std::io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
-        let backend = CrosstermBackend::new(stdout);
-        Terminal::new(backend)
+    fn timed_token(app: &App) -> Option<String> {
+        if app.layout != crate::app::LayoutKind::Htop
+            || app.screen != crate::app::Screen::ProcessList
+        {
+            return None;
+        }
+        let clock = app.meters.iter().any(|meter| meter.name() == "Clock");
+        let date = app.meters.iter().any(|meter| meter.name() == "Date");
+        if clock {
+            Some(crate::meters_impl::local_clock())
+        } else if date {
+            Some(crate::meters_impl::local_date())
+        } else {
+            None
+        }
     }
 
-    fn restore_terminal(
-        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    ) -> std::io::Result<()> {
-        terminal::disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-        terminal.show_cursor()
+    fn dispatch_event(
+        event: RuntimeEvent,
+        app: &mut App,
+        slot: &Slot,
+        options: &OptionsSlot,
+        delay_ms: &DelayMs,
+        redraw: &mut Redraw,
+    ) -> std::io::Result<bool> {
+        match event {
+            RuntimeEvent::SampleReady => {
+                let taken = slot.swap(Arc::new(None));
+                if let Ok(Some(sample)) = Arc::try_unwrap(taken) {
+                    app.apply_sample(sample.snapshot, sample.rows);
+                    redraw.invalidate();
+                }
+            }
+            RuntimeEvent::Input(event) => match event? {
+                Event::Key(key) => {
+                    if key.modifiers.contains(super::KeyModifiers::CONTROL)
+                        && key.code == super::KeyCode::Char('c')
+                    {
+                        return Err(std::io::ErrorKind::Interrupted.into());
+                    }
+                    if let Some(key) = super::translate(key) {
+                        if app.handle_key(key) == Reaction::Quit || app.quit {
+                            return Ok(true);
+                        }
+                        publish_settings(app, options, delay_ms);
+                        redraw.invalidate();
+                    }
+                }
+                Event::Resize(_, _) => {
+                    app.invalidate_geometry();
+                    redraw.invalidate();
+                }
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                    app.click_header(mouse.column, mouse.row);
+                    redraw.invalidate();
+                }
+                _ => {}
+            },
+        }
+        Ok(false)
+    }
+
+    struct TerminalSession {
+        terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
+        restored: bool,
+    }
+
+    impl TerminalSession {
+        fn restore(&mut self) -> std::io::Result<()> {
+            let raw = terminal::disable_raw_mode();
+            let screen = execute!(
+                self.terminal.backend_mut(),
+                DisableMouseCapture,
+                LeaveAlternateScreen
+            );
+            let cursor = self.terminal.show_cursor();
+            self.restored = raw.is_ok() && screen.is_ok() && cursor.is_ok();
+            raw.and(screen).and(cursor)
+        }
+    }
+
+    impl Drop for TerminalSession {
+        fn drop(&mut self) {
+            if !self.restored {
+                let _ = self.restore();
+            }
+        }
+    }
+
+    fn init_terminal() -> std::io::Result<TerminalSession> {
+        terminal::enable_raw_mode()?;
+        let mut stdout = std::io::stdout();
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
+            let _ = terminal::disable_raw_mode();
+            return Err(error);
+        }
+        match Terminal::new(CrosstermBackend::new(stdout)) {
+            Ok(terminal) => Ok(TerminalSession {
+                terminal,
+                restored: false,
+            }),
+            Err(error) => {
+                let _ = execute!(std::io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
+                let _ = terminal::disable_raw_mode();
+                Err(error)
+            }
+        }
     }
 
     #[cfg(test)]
     mod sampler_tests {
         use super::*;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        #[test]
+        fn idle_rendering_is_initial_plus_adopted_samples_not_poll_count() {
+            let mut redraw = Redraw::default();
+            redraw.invalidate();
+            let mut draws = usize::from(redraw.take());
+            let mut app = App::new(gander_config::Config::default());
+            let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
+            let options = Arc::new(AtomicU64::new(0));
+            let delay = Arc::new(AtomicU64::new(10_000));
+            for _ in 0..10 {
+                publish_sample(
+                    &slot,
+                    None,
+                    Sample {
+                        snapshot: SystemSnapshot::default(),
+                        rows: Vec::new(),
+                    },
+                );
+                dispatch_event(
+                    RuntimeEvent::SampleReady,
+                    &mut app,
+                    &slot,
+                    &options,
+                    &delay,
+                    &mut redraw,
+                )
+                .unwrap();
+                draws += usize::from(redraw.take());
+                for _ in 0..30 {
+                    assert!(!redraw.take());
+                }
+            }
+            assert_eq!(draws, 11);
+            let history = app.cpu_history.len();
+            dispatch_event(
+                RuntimeEvent::Input(Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Char('I'),
+                    KeyModifiers::NONE,
+                )))),
+                &mut app,
+                &slot,
+                &options,
+                &delay,
+                &mut redraw,
+            )
+            .unwrap();
+            assert!(
+                redraw.take(),
+                "input invalidates immediately even at a ten-second delay"
+            );
+            assert_eq!(
+                app.cpu_history.len(),
+                history,
+                "repainting does not sample histories"
+            );
+        }
+
+        #[test]
+        fn ctrl_c_interrupts_modals_instead_of_applying_their_f10_action() {
+            let mut app = App::new(gander_config::Config::default());
+            app.handle_key(crate::app::Key::F(2));
+            let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
+            let options = Arc::new(AtomicU64::new(0));
+            let delay = Arc::new(AtomicU64::new(10_000));
+            let error = dispatch_event(
+                RuntimeEvent::Input(Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Char('c'),
+                    KeyModifiers::CONTROL,
+                )))),
+                &mut app,
+                &slot,
+                &options,
+                &delay,
+                &mut Redraw::default(),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+            assert_eq!(app.screen, crate::app::Screen::Setup);
+        }
+
+        #[test]
+        fn visible_time_meters_have_deadlines_without_advancing_cpu_history() {
+            let mut config = gander_config::Config {
+                layout: "htop".into(),
+                ..Default::default()
+            };
+            config.meters_left = vec![gander_config::MeterConfig::new("Clock", "text")];
+            config.meters_right = vec![gander_config::MeterConfig::new("Date", "text")];
+            let mut app = App::new(config);
+            app.apply_sample(SystemSnapshot::default(), Vec::new());
+            assert_eq!(timed_token(&app), Some(crate::meters_impl::local_clock()));
+            let history = app.cpu_history.len();
+            app.refresh_timed_meters();
+            assert_eq!(app.cpu_history.len(), history);
+            app.layout = crate::app::LayoutKind::Panels;
+            assert_eq!(timed_token(&app), None);
+        }
+
+        #[test]
+        fn sample_wakes_are_coalesced_without_losing_a_post_swap_sample() {
+            let slot: Slot = Arc::new(ArcSwap::from_pointee(None));
+            let (sender, receiver) = mpsc::channel();
+            for pid in 1..=3 {
+                publish_sample(
+                    &slot,
+                    Some(&sender),
+                    Sample {
+                        snapshot: SystemSnapshot::default(),
+                        rows: vec![Row::default_for_test(pid)],
+                    },
+                );
+            }
+            assert_eq!(receiver.try_iter().count(), 1);
+            let latest = slot.swap(Arc::new(None));
+            assert_eq!(latest.as_ref().as_ref().unwrap().rows[0].pid, 3);
+            publish_sample(
+                &slot,
+                Some(&sender),
+                Sample {
+                    snapshot: SystemSnapshot::default(),
+                    rows: Vec::new(),
+                },
+            );
+            assert!(receiver.recv_timeout(Duration::from_millis(100)).is_ok());
+        }
 
         struct RunningSampler(std::thread::JoinHandle<()>, Arc<AtomicBool>);
 
